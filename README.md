@@ -14,13 +14,30 @@ Early development. No runnable application yet.
 
 ## Local setup
 
-Setup steps will be added here as the application skeleton is built. For now, copy the environment template:
+Install the Python dependencies. `uv` creates `.venv/` using Python 3.13:
+
+```bash
+uv sync
+```
+
+Copy the environment template, then edit `.env` with your local values. `.env` is ignored by Git and must never be committed.
 
 ```bash
 cp .env.example .env
 ```
 
-Edit `.env` with your local values. It is ignored by Git and must never be committed.
+If a required setting is missing or invalid, the application stops at startup with an error. The error names the setting but never prints its value.
+
+## Checks
+
+Run all four before opening a pull request:
+
+```bash
+uv run ruff check .          # lint
+uv run ruff format --check . # formatting
+uv run mypy                  # type checks
+uv run pytest                # tests
+```
 
 ## Documentation
 
