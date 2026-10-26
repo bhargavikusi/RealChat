@@ -28,6 +28,28 @@ cp .env.example .env
 
 If a required setting is missing or invalid, the application stops at startup with an error. The error names the setting but never prints its value.
 
+Start PostgreSQL and Redis, then apply the database migrations:
+
+```bash
+docker compose up -d --wait
+uv run alembic upgrade head
+```
+
+PostgreSQL listens on `localhost:5433`, not the default 5432, so it doesn't clash with a PostgreSQL installed directly on the machine. Redis listens on `localhost:6379`. Both ports accept connections from this machine only.
+
+Start the API:
+
+```bash
+uv run uvicorn --factory apps.api.main:create_app --reload
+```
+
+To check that it's running:
+
+* `GET /health` returns 200 while the process is running.
+* `GET /ready` returns 200 when PostgreSQL and Redis are both reachable. Otherwise it returns 503 and names the failing service.
+
+To stop the services, run `docker compose down`. Data is kept in Docker volumes. Add `-v` to delete it as well.
+
 ## Checks
 
 Run all four before opening a pull request:
@@ -37,6 +59,14 @@ uv run ruff check .          # lint
 uv run ruff format --check . # formatting
 uv run mypy                  # type checks
 uv run pytest                # tests
+```
+
+Integration tests use the `realchat_test` database and Redis database 15, configured by `TEST_DATABASE_URL` and `TEST_REDIS_URL` in `.env`. They need `docker compose up` to be running. Without those settings the tests are skipped. Set `REQUIRE_INTEGRATION=1` to make missing settings a failure instead, as CI does.
+
+The test database is created only when the PostgreSQL volume is first created. If your volume is older than the init script, create the database once with:
+
+```bash
+docker compose exec postgres createdb -U realchat realchat_test
 ```
 
 ## Documentation
