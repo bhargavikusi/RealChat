@@ -1,0 +1,31 @@
+# Secrets and local configuration
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+dist/
+build/
+*.egg-info/
+
+# Node / Mini App
+node_modules/
+*.log
+
+# Generated knowledge graph
+graphify-out/
+
+# Editors and OS
+.vscode/
+.idea/
+.DS_Store
