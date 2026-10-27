@@ -3,12 +3,11 @@
 DRAFT for development only. It must be replaced with legally reviewed text before
 launch (O-007). Changing the text requires a new TERMS_VERSION so users re-accept.
 
-Only describe what the product actually does: blocking, reporting, and account
-deletion are added here when those features ship, and the retention period once
-it is decided (O-002).
+Only describe what the product actually does: blocking and reporting are added
+here when those features ship, and the retention period once it is decided (O-002).
 """
 
-TERMS_VERSION = "draft-2"
+TERMS_VERSION = "draft-3"
 
 TERMS_TEXT = """\
 DRAFT - not for launch
@@ -22,7 +21,10 @@ the profile details you choose to add — never your Telegram name, username, or
 Conversations may be kept to investigate reports and abuse; how long is not decided yet.
 • Be respectful. Harassment, threats, hate, sexual content involving minors, spam, \
 scams, and sharing other people's private information are not allowed.
-• Accounts that break these rules may be restricted or banned."""
+• Accounts that break these rules may be restricted or banned.
+• You can delete your account at any time from your profile (Advanced settings). \
+Your profile is erased immediately. A minimal record (your Telegram user ID, account \
+status, and dates) is kept so that restrictions can't be avoided by signing up again."""
 
 TERMS_QUESTION = "Do you agree to these terms and the privacy notice?"
 

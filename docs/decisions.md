@@ -236,6 +236,30 @@ Work happens on short-lived issue branches, such as `feature/12-onboarding`, cre
 **Why:** Moderators can see a pattern of changes, such as a user who keeps switching gender, which last-changed timestamps alone would not show.
 **Consequence:** The history holds age and gender values, so account deletion (D-016) must erase it with the rest of the profile data. How long it is kept otherwise is open (O-009).
 
+### D-025 — Account deletion in the bot
+
+**Date:** 2026-10-27
+**Decision:**
+
+* Deletion is reached from the **⚙️ Advanced settings** button on the profile card, which opens a **🗑 Delete account** button. A second, explicit "Yes, delete my account" confirmation is always required. The confirmation buttons belong to one request, so an old or repeated confirmation does nothing.
+* Deletion follows D-016 and also erases the age and gender change history (D-024) and the terms acceptances.
+* A returning user starts onboarding from the terms. Accepting them makes a deleted account active again. `deleted_at` keeps the time of the last deletion.
+* Deleting needs no terms acceptance: a user can always erase their data.
+* The draft terms describe deletion (terms version `draft-3`).
+
+**Why:** Owner preference for the entry point. Erasing terms acceptances makes a return a genuinely fresh start.
+
+### D-026 — Suspended and banned users
+
+**Date:** 2026-10-27
+**Decision:**
+
+* Suspended and banned users are stopped before any feature handler runs. They receive a notice that offers a **🗑 Delete account** button, and in group chats nothing is sent.
+* They can still read `/help` and delete their account. Deleting erases their profile, but the account stays suspended or banned, so they cannot sign up again.
+* Suspensions have no end date yet: restrictions are set and lifted manually until moderation tools exist.
+
+**Why:** Owner decision. It respects users' ability to erase their data without weakening a ban.
+
 ---
 
 ## Open

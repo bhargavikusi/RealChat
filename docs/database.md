@@ -14,10 +14,10 @@ There is one row per Telegram account.
 |---|---|---|
 | `id` | bigint identity | Internal primary key. Other tables reference this, never the Telegram ID. |
 | `telegram_user_id` | bigint, unique | Telegram's stable numeric user ID. Usernames change and are never used as keys. |
-| `status` | varchar(16) | One of `active`, `suspended`, `banned`, `deleted`. Defaults to `active`. A constraint requires `deleted_at` whenever the status is `deleted`. |
+| `status` | varchar(16) | One of `active`, `suspended`, `banned`, `deleted`. Defaults to `active`. A constraint requires `deleted_at` whenever the status is `deleted`. `suspended` and `banned` are set manually until moderation tools exist (D-026). |
 | `created_at` | timestamptz | |
 | `last_active_at` | timestamptz | |
-| `deleted_at` | timestamptz, nullable | Set when the user deletes their account (D-016). |
+| `deleted_at` | timestamptz, nullable | When the user last deleted their account (D-016). Kept if they return. |
 
 ### `profiles`
 
@@ -81,4 +81,10 @@ Rules that are hard to express in SQL, such as the link detection and the ISO co
 
 ## Deletion and retention
 
-**Planned, not implemented yet.** Account deletion (D-016) will erase the profile fields but keep the `users` row, with status `deleted` and `deleted_at` set. A deleted user then cannot bypass a moderation restriction by registering again. The deletion operation is part of the account safety controls issue. Until then, no code path deletes or erases accounts.
+Account deletion (`service.delete_account`, D-016, D-025) runs in one transaction with the `users` row locked:
+
+* The `profiles` row is replaced by an empty one, which erases every profile field.
+* All `profile_changes` and `terms_acceptances` rows for the user are deleted.
+* The `users` row is kept with its Telegram user ID and timestamps, and `deleted_at` is set. An `active` account becomes `deleted`. A `suspended` or `banned` account keeps its status, so deleting cannot be used to escape a restriction.
+
+A deleted user who returns goes through onboarding again. Accepting the terms sets the status back to `active`; a restricted status is never changed this way.

@@ -7,12 +7,18 @@ helpers work on an already loaded Profile and do no I/O.
 
 from datetime import date, datetime, timedelta
 
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.modules.users import validation
-from backend.modules.users.models import Profile, ProfileChange, TermsAcceptance, User
+from backend.modules.users.models import (
+    RESTRICTED_STATUSES,
+    Profile,
+    ProfileChange,
+    TermsAcceptance,
+    User,
+)
 from backend.modules.users.validation import Visibility
 
 
@@ -52,12 +58,51 @@ async def has_accepted_terms(session: AsyncSession, user_id: int, terms_version:
 
 
 async def accept_terms(session: AsyncSession, user_id: int, terms_version: str) -> None:
-    """Record acceptance of a terms version. Repeating it keeps the first timestamp."""
+    """Record acceptance of a terms version. Repeating it keeps the first timestamp.
+
+    A deleted account that accepts the terms again becomes active: this is how a
+    returning user re-registers (D-025). Restricted accounts are never reactivated.
+    """
     await session.execute(
         insert(TermsAcceptance)
         .values(user_id=user_id, terms_version=terms_version)
         .on_conflict_do_nothing(index_elements=["user_id", "terms_version"])
     )
+    await session.execute(
+        update(User).where(User.id == user_id, User.status == "deleted").values(status="active")
+    )
+
+
+async def get_status(session: AsyncSession, telegram_user_id: int) -> str | None:
+    """The account status for a Telegram user, or None if they have no account."""
+    return await session.scalar(
+        select(User.status).where(User.telegram_user_id == telegram_user_id)
+    )
+
+
+def is_restricted(status: str | None) -> bool:
+    return status in RESTRICTED_STATUSES
+
+
+async def delete_account(session: AsyncSession, user_id: int, now: datetime) -> None:
+    """Erase a user's personal data and keep a minimal account record (D-016, D-025).
+
+    Erased: every profile field (the profile is replaced by an empty one), the age
+    and gender change history, and terms acceptances, so a returning user starts a
+    fresh onboarding. Kept: the Telegram user ID, the status, and timestamps. An
+    active account becomes "deleted"; a suspended or banned one keeps its status, so
+    deleting cannot be used to escape a restriction.
+    """
+    user = (
+        await session.execute(select(User).where(User.id == user_id).with_for_update())
+    ).scalar_one()
+    await session.execute(delete(ProfileChange).where(ProfileChange.user_id == user_id))
+    await session.execute(delete(TermsAcceptance).where(TermsAcceptance.user_id == user_id))
+    await session.execute(delete(Profile).where(Profile.user_id == user_id))
+    await session.execute(insert(Profile).values(user_id=user_id))
+    if user.status not in RESTRICTED_STATUSES:
+        user.status = "deleted"
+    user.deleted_at = now
 
 
 class ChangeCooldownError(Exception):
