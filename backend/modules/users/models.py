@@ -40,7 +40,10 @@ class User(Base):
     """One row per Telegram account. Kept (minimal) after account deletion (D-016)."""
 
     __tablename__ = "users"
-    __table_args__ = (CheckConstraint(_in("status", USER_STATUSES), name="status"),)
+    __table_args__ = (
+        CheckConstraint(_in("status", USER_STATUSES), name="status"),
+        CheckConstraint("status <> 'deleted' OR deleted_at IS NOT NULL", name="deleted_at_set"),
+    )
 
     id: Mapped[int] = mapped_column(BigInteger, Identity(), primary_key=True)
     # Telegram's stable numeric ID. Usernames change and are never used as keys.
@@ -68,6 +71,10 @@ class Profile(Base):
         CheckConstraint("country_code ~ '^[A-Z]{2}$'", name="country_code_format"),
         CheckConstraint(f"char_length(city) BETWEEN 1 AND {CITY_MAX_LENGTH}", name="city_length"),
         CheckConstraint(f"char_length(bio) BETWEEN 1 AND {BIO_MAX_LENGTH}", name="bio_length"),
+        # The service trims text; these stop blank or padded values written directly.
+        CheckConstraint("nickname = btrim(nickname)", name="nickname_trimmed"),
+        CheckConstraint("city = btrim(city)", name="city_trimmed"),
+        CheckConstraint("bio = btrim(bio)", name="bio_trimmed"),
         CheckConstraint(_in("visibility", tuple(v.value for v in Visibility)), name="visibility"),
         CheckConstraint(
             "onboarding_completed_at IS NULL OR (nickname IS NOT NULL AND age_at_entry IS NOT NULL"

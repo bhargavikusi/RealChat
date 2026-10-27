@@ -42,9 +42,15 @@ class ProfileValidationError(ValueError):
 
 # Links and contact handles are rejected in public text fields: they are the most
 # common way spam and off-platform contact requests are injected into profiles.
+# Bare domains are caught by their ending: common generic endings plus every
+# two-letter country ending (ISO 3166 codes, plus "uk" and "eu").
+_GENERIC_TLDS = (
+    "com net org info biz xyz app dev link site online top club shop store live pro name mobi"
+).split()
+_COUNTRY_TLDS = sorted({c.alpha_2.lower() for c in pycountry.countries} | {"uk", "eu"})
 _LINK = re.compile(
-    r"(?i)(?:\b[a-z][a-z0-9+.-]*://|\bwww\.|\bt(?:elegram)?\.me/|\b[a-z0-9-]+\.(?:com|net|org|"
-    r"io|me|ru|info|biz|xyz|app|dev|link|site|online|top|ly|gg|tv|co)\b)"
+    r"(?i)(?:\b[a-z][a-z0-9+.-]*://|\bwww\.|\bt(?:elegram)?\.me/"
+    r"|\b[a-z0-9-]+\.(?:" + "|".join(_GENERIC_TLDS + _COUNTRY_TLDS) + r")\b)"
 )
 _HANDLE = re.compile(r"@[A-Za-z0-9_]{5,}")
 _WHITESPACE = re.compile(r"\s+")
@@ -76,9 +82,9 @@ def validate_nickname(raw: str) -> str:
 
 
 def validate_age(age: int, minimum_age: int) -> int:
-    if minimum_age < AGE_FLOOR:
+    if not AGE_FLOOR <= minimum_age <= AGE_MAX:
         # A configuration error, not user input: fail loudly.
-        raise ValueError(f"minimum age setting must be at least {AGE_FLOOR}")
+        raise ValueError(f"minimum age setting must be between {AGE_FLOOR} and {AGE_MAX}")
     if age < minimum_age:
         raise ProfileValidationError("age", f"You must be at least {minimum_age} to use RealChat.")
     if age > AGE_MAX:
@@ -88,9 +94,14 @@ def validate_age(age: int, minimum_age: int) -> int:
 
 def parse_age(raw: str) -> int:
     text = raw.strip()
-    if not text.isdigit() or len(text) > 3:
+    # isdecimal (not isdigit): characters such as "²" count as digits but int() rejects them.
+    # Decimal digits from other scripts (e.g. Arabic-Indic) are accepted.
+    if not text.isdecimal() or len(text) > 3:
         raise ProfileValidationError("age", "Please send your age as a number, e.g. 24.")
-    return int(text)
+    try:
+        return int(text)
+    except ValueError:
+        raise ProfileValidationError("age", "Please send your age as a number, e.g. 24.") from None
 
 
 def validate_gender(raw: str) -> Gender:

@@ -1,7 +1,8 @@
 """User and profile operations shared by the bot and any future API.
 
-Every function takes an AsyncSession and leaves committing to the caller, so a
-caller can group several operations into one transaction.
+Database operations take an AsyncSession and leave committing to the caller, so a
+caller can group several operations into one transaction. Profile setters and
+helpers work on an already loaded Profile and do no I/O.
 """
 
 from datetime import date

@@ -42,6 +42,9 @@ def upgrade() -> None:
         sa.CheckConstraint(
             "status IN ('active', 'suspended', 'banned', 'deleted')", name=op.f("ck_users_status")
         ),
+        sa.CheckConstraint(
+            "status <> 'deleted' OR deleted_at IS NOT NULL", name=op.f("ck_users_deleted_at_set")
+        ),
         sa.PrimaryKeyConstraint("id", name=op.f("pk_users")),
         sa.UniqueConstraint("telegram_user_id", name=op.f("uq_users_telegram_user_id")),
     )
@@ -79,6 +82,9 @@ def upgrade() -> None:
         sa.CheckConstraint(
             "visibility IN ('visible', 'hidden')", name=op.f("ck_profiles_visibility")
         ),
+        sa.CheckConstraint("nickname = btrim(nickname)", name=op.f("ck_profiles_nickname_trimmed")),
+        sa.CheckConstraint("city = btrim(city)", name=op.f("ck_profiles_city_trimmed")),
+        sa.CheckConstraint("bio = btrim(bio)", name=op.f("ck_profiles_bio_trimmed")),
         sa.CheckConstraint(
             "(age_at_entry IS NULL) = (age_entered_on IS NULL)", name=op.f("ck_profiles_age_pair")
         ),

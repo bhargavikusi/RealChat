@@ -6,6 +6,7 @@ from sqlalchemy import func, select, text
 from sqlalchemy.exc import DBAPIError, IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from backend.database.engine import Base
 from backend.modules.users import service
 from backend.modules.users.models import Profile, TermsAcceptance, User
 from backend.modules.users.validation import ProfileValidationError, Visibility
@@ -96,6 +97,9 @@ async def test_service_rejects_invalid_values_before_the_database(
     [
         ("nickname", "x"),
         ("nickname", "x" * 21),
+        ("nickname", "  "),
+        ("nickname", " Al"),
+        ("city", "Paris "),
         ("age_at_entry", 12),
         ("age_at_entry", 100),
         ("gender", "robot"),
@@ -108,17 +112,20 @@ async def test_database_constraints_reject_invalid_values(
     session_factory: async_sessionmaker[AsyncSession], column: str, value: object
 ) -> None:
     # Bypasses the service on purpose: the database is the last line of defence.
-    # A check constraint raises IntegrityError; a column length limit raises DataError.
+    # The asyncpg dialect reports some data errors as a plain DBAPIError, so the
+    # PostgreSQL error class is checked instead: 23 (integrity constraint violation)
+    # or 22 (data exception, e.g. value too long). A connection failure has neither.
     async with session_factory() as session:
         user = await service.get_or_create_user(session, TELEGRAM_ID)
         await session.commit()
         extra = ", age_entered_on = current_date" if column == "age_at_entry" else ""
         # `column` comes from the fixed parametrize list above, never from input.
-        with pytest.raises(DBAPIError):
+        with pytest.raises(DBAPIError) as excinfo:
             await session.execute(
                 text(f"UPDATE profiles SET {column} = :value{extra} WHERE user_id = :id"),  # noqa: S608
                 {"value": value, "id": user.id},
             )
+        assert str(excinfo.value.orig.sqlstate)[:2] in {"22", "23"}  # type: ignore[union-attr]
 
 
 async def test_completed_onboarding_requires_all_required_fields(
@@ -149,3 +156,44 @@ async def test_terms_acceptance_is_recorded_once_per_version(
         assert not await service.has_accepted_terms(session, user.id, "draft-2")
         count = await session.scalar(select(func.count()).select_from(TermsAcceptance))
         assert count == 1
+
+
+async def test_deleted_status_requires_deleted_at(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    async with session_factory() as session:
+        user_id = (await service.get_or_create_user(session, TELEGRAM_ID)).id
+        await session.commit()
+        with pytest.raises(IntegrityError):
+            await session.execute(
+                text("UPDATE users SET status = 'deleted' WHERE id = :id"), {"id": user_id}
+            )
+        await session.rollback()
+        await session.execute(
+            text("UPDATE users SET status = 'deleted', deleted_at = now() WHERE id = :id"),
+            {"id": user_id},
+        )
+        await session.commit()
+
+
+async def test_model_check_constraints_match_the_database(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    # alembic check does not compare check constraints, so a constraint added to a
+    # model but not to a migration (or vice versa) would otherwise go unnoticed.
+    expected = {
+        str(constraint.name)
+        for name in ("users", "profiles", "terms_acceptances")
+        for table in [Base.metadata.tables[name]]
+        for constraint in table.constraints
+        if constraint.__class__.__name__ == "CheckConstraint"
+    }
+    async with session_factory() as session:
+        rows = await session.execute(
+            text(
+                "SELECT conname FROM pg_constraint WHERE contype = 'c' AND conrelid IN "
+                "('users'::regclass, 'profiles'::regclass, 'terms_acceptances'::regclass)"
+            )
+        )
+        actual = {row[0] for row in rows}
+    assert actual == expected
