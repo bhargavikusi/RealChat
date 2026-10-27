@@ -62,7 +62,7 @@ During development the bot uses long polling, so it needs no public URL. It stop
 
 While Redis is available, two protections apply:
 
-* An update that Telegram delivers again after being handled successfully is dropped for `BOT_UPDATE_DEDUP_TTL_SECONDS`. An update whose handling failed or was interrupted is processed again.
+* An update that Telegram delivers again after being handled successfully is dropped for `BOT_UPDATE_DEDUP_TTL_SECONDS`. If the bot stops or crashes while handling an update, Telegram redelivers it after the restart and it is processed. An update whose handler fails with an error is **not** retried automatically. The user is told something went wrong and can try again.
 * Each user is subject to a flood limit of `BOT_FLOOD_LIMIT` updates per `BOT_FLOOD_WINDOW_SECONDS`.
 
 If Redis is unavailable, both protections let updates through so the bot stays online. Handlers with side effects, such as charges or matches, must therefore enforce their own idempotency in the database.

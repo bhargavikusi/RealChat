@@ -38,7 +38,13 @@ class DeduplicateUpdatesMiddleware(BaseMiddleware):
        process's id. A redelivery while the lease is held by this process is dropped.
     2. After the handler succeeds, the update is marked done for `ttl_seconds`, and
        later redeliveries are dropped.
-    3. If the handler raises, the claim is released so a redelivery is processed.
+    3. If the handler raises, the claim is released and the error propagates.
+
+    Telegram only redelivers updates that were never confirmed, i.e. when the process
+    stopped mid-update; aiogram confirms an update once received, even if its handler
+    fails, so failed updates are not retried (the user gets a generic error instead).
+    The lease takeover in `_CLAIM_SCRIPT` makes sure a redelivery after a crash is
+    processed rather than dropped.
 
     If Redis is unavailable the update is processed anyway: dropping every update
     would take the bot offline, and operations with side effects (charges, matches)
