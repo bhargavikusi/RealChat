@@ -189,6 +189,27 @@ async def test_cancelled_or_superseded_confirmations_delete_nothing(
     assert (await _user(session_factory)).status == "active"
 
 
+async def test_old_buttons_cannot_delete_without_the_current_terms(
+    chat: Chat, session_factory: Sessions, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    await complete_onboarding(chat)
+    await chat.send("/profile")
+    settings = chat.session.last_buttons()[ac.ADVANCED_SETTINGS]
+    await chat.press(ac.ADVANCED_SETTINGS)
+    delete = chat.session.last_buttons()[ac.DELETE_BUTTON]
+    await chat.press(ac.DELETE_BUTTON)
+    confirm = chat.session.last_buttons()[ac.CONFIRM_BUTTON]
+
+    monkeypatch.setattr(ob, "TERMS_VERSION", "draft-99")  # the terms change
+    for data in (confirm, settings, delete):
+        sent = len(chat.session.sent_texts())
+        await chat.press_data(data)
+        assert chat.session.sent_texts()[sent:] == [TERMS]  # the new terms, nothing else
+
+    assert (await load_profile(session_factory)).nickname == "Night Owl"
+    assert (await _user(session_factory)).status == "active"
+
+
 # --- Bot: access gate ------------------------------------------------------------------
 
 

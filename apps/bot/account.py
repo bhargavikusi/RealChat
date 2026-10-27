@@ -5,9 +5,9 @@ notice shown to suspended and banned users. It always needs a second, explicit
 confirmation. The confirmation buttons carry a random id kept in FSM state, so a
 confirmation button from a cancelled, finished, or older request does nothing.
 
-Deletion handlers do not check terms acceptance themselves: ordinary users reach
-them only from the profile card, which requires the current terms (D-025), and
-restricted users reach them from their notice (D-026).
+Ordinary users must have accepted the current terms (D-025); otherwise, even from
+an older profile card, they are shown the terms instead. Suspended and banned users
+may delete without that, from their notice (D-026).
 """
 
 import secrets
@@ -30,6 +30,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from apps.bot.menu import HelpAction
 from apps.bot.middlewares import Handler
+from apps.bot.onboarding import load_context, prompt_next
+from backend.config.settings import BotSettings
 from backend.modules.users import service
 
 
@@ -84,14 +86,49 @@ def restriction_notice(status: str) -> str:
     return f"{NOTICES[status]}\n\n{NOTICE_OPTIONS}"
 
 
-async def show_settings(query: CallbackQuery, bot: Bot) -> None:
+async def _may_delete(
+    query: CallbackQuery,
+    bot: Bot,
+    session: AsyncSession,
+    state: FSMContext,
+    settings: BotSettings,
+) -> bool:
+    """True for restricted users and users who accepted the current terms.
+
+    Anyone else is shown the current terms, as every other feature does.
+    """
+    ctx = await load_context(session, query.from_user)
+    if service.is_restricted(ctx.user.status) or ctx.terms_accepted:
+        return True
+    await query.answer()
+    await prompt_next(bot, query.from_user.id, session, ctx, state, settings)
+    return False
+
+
+async def show_settings(
+    query: CallbackQuery,
+    bot: Bot,
+    session: AsyncSession,
+    state: FSMContext,
+    settings: BotSettings,
+) -> None:
+    if not await _may_delete(query, bot, session, state, settings):
+        return
     await query.answer()
     await bot.send_message(
         query.from_user.id, ADVANCED_SETTINGS_TEXT, reply_markup=_delete_keyboard()
     )
 
 
-async def ask_to_confirm(query: CallbackQuery, bot: Bot, state: FSMContext) -> None:
+async def ask_to_confirm(
+    query: CallbackQuery,
+    bot: Bot,
+    session: AsyncSession,
+    state: FSMContext,
+    settings: BotSettings,
+) -> None:
+    if not await _may_delete(query, bot, session, state, settings):
+        return
     request = secrets.token_hex(4)
     await state.set_state(AccountDeletion.confirm)
     await state.set_data({"request": request})
@@ -120,9 +157,12 @@ async def on_confirm(
     callback_data: AccountAction,
     session: AsyncSession,
     state: FSMContext,
+    settings: BotSettings,
 ) -> None:
     if not await _is_current(state, callback_data.request):
         await query.answer(EXPIRED)
+        return
+    if not await _may_delete(query, bot, session, state, settings):
         return
     user = await service.get_or_create_user(session, query.from_user.id)
     restricted = service.is_restricted(user.status)
