@@ -1,7 +1,6 @@
 """Redis client setup. Redis holds temporary state only; PostgreSQL is the source of truth."""
 
 from redis.asyncio import Redis
-import os  # temporary: deliberately unused to verify CI fails
 
 
 def create_redis(redis_url: str) -> Redis:
