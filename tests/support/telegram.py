@@ -89,24 +89,37 @@ def _user(user_id: int) -> User:
     return User(id=user_id, is_bot=False, first_name="Test")
 
 
-def message_update(update_id: int, user_id: int, text: str) -> Update:
+def _chat(user_id: int, chat_type: str) -> Chat:
+    # A private chat's id equals the user's id; groups get a negative id like Telegram's.
+    return Chat(id=user_id if chat_type == "private" else -user_id, type=chat_type)
+
+
+def message_update(update_id: int, user_id: int, text: str, chat_type: str = "private") -> Update:
     return Update(
         update_id=update_id,
         message=Message(
             message_id=update_id,
             date=datetime.now(UTC),
-            chat=Chat(id=user_id, type="private"),
+            chat=_chat(user_id, chat_type),
             from_user=_user(user_id),
             text=text,
         ),
     )
 
 
-def callback_update(update_id: int, user_id: int, data: str) -> Update:
+def callback_update(update_id: int, user_id: int, data: str, chat_type: str = "private") -> Update:
+    # The message the button was attached to, as Telegram includes it.
+    button_message = Message(
+        message_id=update_id, date=datetime.now(UTC), chat=_chat(user_id, chat_type), text="-"
+    )
     return Update(
         update_id=update_id,
         callback_query=CallbackQuery(
-            id=str(update_id), from_user=_user(user_id), chat_instance="test", data=data
+            id=str(update_id),
+            from_user=_user(user_id),
+            chat_instance="test",
+            data=data,
+            message=button_message,
         ),
     )
 

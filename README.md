@@ -58,7 +58,7 @@ Create a development bot with [@BotFather](https://t.me/BotFather), keeping it s
 uv run python -m apps.bot.main
 ```
 
-During development the bot uses long polling, so it needs no public URL. It stops on Ctrl+C. The minimum age is `MIN_AGE` (default 18; see D-009).
+During development the bot uses long polling, so it needs no public URL. It stops on Ctrl+C. The minimum age is `MIN_AGE` (default 18 for development; see D-009). With `APP_ENV=production` the bot refuses to start unless `MIN_AGE` is set explicitly.
 
 While Redis is available, two protections apply:
 

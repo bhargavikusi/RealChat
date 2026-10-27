@@ -1,7 +1,7 @@
 """End-to-end onboarding through the simulated Telegram, against real PostgreSQL and Redis."""
 
+import asyncio
 from collections.abc import AsyncIterator
-from datetime import date
 from itertools import count
 
 import pytest
@@ -120,7 +120,8 @@ async def test_full_onboarding_using_only_the_bot(chat: Chat, session_factory: S
 
     profile = await _profile(session_factory)
     assert (profile.nickname, profile.gender, profile.country_code) == ("Night Owl", "female", "IN")
-    assert (profile.age_at_entry, profile.age_entered_on) == (24, date.today())
+    assert profile.age_at_entry == 24
+    assert profile.age_entered_on is not None  # exact date not compared: could cross midnight
     assert profile.city == "Hyderabad"
     assert profile.photo_file_id == "AgAC-large-photo"  # the largest size is kept
     assert profile.onboarding_completed_at is not None
@@ -266,3 +267,71 @@ async def test_skip_still_works_if_fsm_state_was_lost(
     await chat.press_data(skip_city)
 
     assert chat.last() == ob.PROMPTS["photo"]
+
+
+async def test_button_for_an_older_terms_version_cannot_accept(
+    chat: Chat, session_factory: Sessions
+) -> None:
+    await chat.send("/start")
+    old_agree = ob.TermsChoice(version="draft-0", accept=True).pack()
+
+    await chat.press_data(old_agree)
+
+    assert chat.last() == TERMS  # the current terms are shown again
+    async with session_factory() as session:
+        assert await session.scalar(select(func.count()).select_from(TermsAcceptance)) == 0
+
+
+async def test_terms_update_mid_onboarding_blocks_profile_data(
+    chat: Chat, session_factory: Sessions, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    await chat.send("/start")
+    await chat.press("I agree")  # waiting for the nickname now
+
+    monkeypatch.setattr(ob, "TERMS_VERSION", "draft-99")  # the terms change
+    reply = await chat.send("Night Owl")
+
+    assert reply == TERMS
+    assert (await _profile(session_factory)).nickname is None
+
+
+async def test_onboarding_is_ignored_in_group_chats(chat: Chat, session_factory: Sessions) -> None:
+    await chat.dispatcher.feed_update(
+        chat.bot, message_update(9001, USER_ID, "/start", chat_type="group")
+    )
+    await chat.dispatcher.feed_update(
+        chat.bot, message_update(9002, USER_ID, "Night Owl", chat_type="supergroup")
+    )
+
+    assert chat.session.sent_texts() == []
+    async with session_factory() as session:
+        assert await session.scalar(select(func.count()).select_from(Profile)) == 0
+
+
+async def test_photo_is_kept_even_if_fsm_state_was_lost(
+    chat: Chat, redis: Redis, session_factory: Sessions
+) -> None:
+    await _complete_required_steps(chat)
+    assert await chat.press("Skip") == ob.PROMPTS["photo"]
+    await redis.flushdb()
+
+    assert await chat.send_photo("AgAC-after-state-loss") == ob.ONBOARDING_COMPLETE
+    assert (await _profile(session_factory)).photo_file_id == "AgAC-after-state-loss"
+
+
+async def test_quick_successive_messages_are_processed_in_order(
+    chat: Chat, session_factory: Sessions
+) -> None:
+    await chat.send("/start")
+    await chat.press("I agree")
+
+    # Both arrive before the first has been handled. Without per-user isolation the
+    # second would also be routed by the "nickname" state and overwrite the nickname.
+    await asyncio.gather(
+        chat.dispatcher.feed_update(chat.bot, message_update(9101, USER_ID, "Night Owl")),
+        chat.dispatcher.feed_update(chat.bot, message_update(9102, USER_ID, "24")),
+    )
+
+    profile = await _profile(session_factory)
+    assert profile.nickname == "Night Owl"
+    assert profile.age_at_entry == 24

@@ -2,29 +2,28 @@
 
 Where a user is in onboarding is derived from the database whenever possible:
 terms acceptance and the required fields (D-013) are durable, so a user who leaves
-or hits a bot restart always resumes at the right required step. Only the position
-within the optional steps (city, photo) lives in FSM state in Redis; if that is lost
-the optional steps are simply offered again.
+or hits a bot restart always resumes at the right required step. FSM state in Redis
+records which answer is expected and the position within the optional steps (city,
+photo); if it is lost, text is not taken as an answer and the step is asked again.
 
-Handlers commit before replying, so no transaction stays open across Telegram calls.
+Rules every handler follows:
+* Onboarding works only in private chats, so profile answers are never posted in a group.
+* No profile data is saved unless the user has accepted the current terms version;
+  a user who has not (e.g. after a terms update) is shown the current terms instead.
+* The database transaction is ended before any Telegram API call, so no transaction
+  or pooled connection is held across network latency.
 """
 
-from datetime import UTC, date, datetime
+from datetime import UTC, datetime
 
 from aiogram import Bot, F, Router
+from aiogram.enums import ChatType
 from aiogram.filters import CommandStart
 from aiogram.filters.callback_data import CallbackData
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
-from aiogram.types import (
-    CallbackQuery,
-    InlineKeyboardButton,
-    InlineKeyboardMarkup,
-    Message,
-)
-from aiogram.types import (
-    User as TelegramUser,
-)
+from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
+from aiogram.types import User as TelegramUser
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.config.settings import BotSettings
@@ -46,6 +45,8 @@ class Onboarding(StatesGroup):
 
 
 class TermsChoice(CallbackData, prefix="terms"):
+    # The version shown with the buttons, so an old button cannot accept newer terms.
+    version: str
     accept: bool
 
 
@@ -76,6 +77,7 @@ TERMS_DECLINED = (
     "You need to accept the terms to use RealChat. Send /start whenever you change your mind."
 )
 TERMS_REQUIRED = "Please accept the terms first."
+TERMS_UPDATED = "The terms have been updated. Please review the current version."
 UNDER_AGE_RETRY = "If you entered your age by mistake, send it again."
 COUNTRY_NOT_FOUND = "I couldn't find that country. Please type its name in English, e.g. Germany."
 COUNTRY_PICK = "Did you mean one of these?"
@@ -97,12 +99,11 @@ def _keyboard(*rows: list[InlineKeyboardButton]) -> InlineKeyboardMarkup:
 
 
 def _terms_keyboard() -> InlineKeyboardMarkup:
-    return _keyboard(
-        [
-            InlineKeyboardButton(text="I agree", callback_data=TermsChoice(accept=True).pack()),
-            InlineKeyboardButton(text="Decline", callback_data=TermsChoice(accept=False).pack()),
-        ]
-    )
+    def button(text: str, accept: bool) -> InlineKeyboardButton:
+        data = TermsChoice(version=TERMS_VERSION, accept=accept).pack()
+        return InlineKeyboardButton(text=text, callback_data=data)
+
+    return _keyboard([button("I agree", True), button("Decline", False)])
 
 
 def _gender_keyboard() -> InlineKeyboardMarkup:
@@ -120,30 +121,58 @@ def _skip_keyboard(step: str) -> InlineKeyboardMarkup:
     return _keyboard([InlineKeyboardButton(text="Skip", callback_data=SkipStep(step=step).pack())])
 
 
-async def _load(session: AsyncSession, telegram_user: TelegramUser) -> tuple[User, Profile]:
+def _now() -> datetime:
+    return datetime.now(UTC)
+
+
+class Context:
+    """The user's account and profile, loaded at the start of a handler."""
+
+    def __init__(self, user: User, profile: Profile, terms_accepted: bool) -> None:
+        self.user = user
+        self.profile = profile
+        self.terms_accepted = terms_accepted
+
+    @property
+    def in_optional_steps(self) -> bool:
+        return (
+            self.terms_accepted
+            and not service.missing_required_fields(self.profile)
+            and self.profile.onboarding_completed_at is None
+        )
+
+
+async def _load(session: AsyncSession, telegram_user: TelegramUser) -> Context:
+    """Load the user's state and end the transaction before any Telegram call."""
     user = await service.get_or_create_user(session, telegram_user.id)
-    return user, await service.get_profile(session, user.id)
+    profile = await service.get_profile(session, user.id)
+    accepted = await service.has_accepted_terms(session, user.id, TERMS_VERSION)
+    await session.commit()
+    return Context(user, profile, accepted)
 
 
 async def prompt_next(
     bot: Bot,
     chat_id: int,
     session: AsyncSession,
-    user: User,
-    profile: Profile,
+    ctx: Context,
     state: FSMContext,
     settings: BotSettings,
     after: str | None = None,
 ) -> None:
-    """Send the next onboarding prompt. `after` names the optional step just finished."""
-    if not await service.has_accepted_terms(session, user.id, TERMS_VERSION):
+    """Send the next onboarding prompt. `after` names the optional step just finished.
+
+    Callers must have committed their changes; this function writes only the
+    completion timestamp, and commits it before replying.
+    """
+    if not ctx.terms_accepted:
         await state.set_state(Onboarding.terms)
         await bot.send_message(
             chat_id, terms_text(settings.min_age), reply_markup=_terms_keyboard()
         )
         return
 
-    missing = service.missing_required_fields(profile)
+    missing = service.missing_required_fields(ctx.profile)
     if missing:
         step = missing[0]
         await state.set_state(REQUIRED_STEPS[step])
@@ -151,7 +180,7 @@ async def prompt_next(
         await bot.send_message(chat_id, PROMPTS[step], reply_markup=markup)
         return
 
-    if profile.onboarding_completed_at is not None:
+    if ctx.profile.onboarding_completed_at is not None:
         await state.clear()
         await bot.send_message(chat_id, WELCOME_BACK)
         return
@@ -163,10 +192,20 @@ async def prompt_next(
         await state.set_state(Onboarding.photo)
         await bot.send_message(chat_id, PROMPTS["photo"], reply_markup=_skip_keyboard("photo"))
     else:
-        profile.onboarding_completed_at = datetime.now(UTC)
+        ctx.profile.onboarding_completed_at = _now()
         await session.commit()
         await state.clear()
         await bot.send_message(chat_id, ONBOARDING_COMPLETE)
+
+
+async def _gate(
+    ctx: Context, bot: Bot, chat_id: int, session: AsyncSession, state: FSMContext, s: BotSettings
+) -> bool:
+    """True if the user may give profile data; otherwise show the current terms."""
+    if ctx.terms_accepted:
+        return True
+    await prompt_next(bot, chat_id, session, ctx, state, s)
+    return False
 
 
 async def _retry(message: Message, error: ProfileValidationError, step: str) -> None:
@@ -181,16 +220,25 @@ async def start(
 ) -> None:
     if message.from_user is None:
         return
-    user, profile = await _load(session, message.from_user)
-    await session.commit()
-    await prompt_next(bot, message.chat.id, session, user, profile, state, settings)
+    ctx = await _load(session, message.from_user)
+    await prompt_next(bot, message.chat.id, session, ctx, state, settings)
 
 
 async def resume(
     message: Message, bot: Bot, session: AsyncSession, state: FSMContext, settings: BotSettings
 ) -> None:
-    """Any message that no step is waiting for: show the current step again."""
-    await start(message, bot, session, state, settings)
+    """A message no step is waiting for: show the current step again.
+
+    One exception: a photo sent during the optional steps after FSM state was lost is
+    still accepted as the profile photo rather than dropped.
+    """
+    if message.from_user is None:
+        return
+    ctx = await _load(session, message.from_user)
+    if message.photo and ctx.in_optional_steps and await state.get_state() is None:
+        await _save_photo(message, bot, session, ctx, state, settings)
+        return
+    await prompt_next(bot, message.chat.id, session, ctx, state, settings)
 
 
 # --- Terms ---------------------------------------------------------------------------
@@ -204,9 +252,14 @@ async def on_terms(
     state: FSMContext,
     settings: BotSettings,
 ) -> None:
-    user, profile = await _load(session, query.from_user)
-    if await service.has_accepted_terms(session, user.id, TERMS_VERSION):
-        # A repeated or stale press: nothing to record and no prompt to repeat.
+    ctx = await _load(session, query.from_user)
+    if callback_data.version != TERMS_VERSION:
+        # A button from an older version: the user has not seen the current terms.
+        await query.answer(TERMS_UPDATED, show_alert=True)
+        await prompt_next(bot, query.from_user.id, session, ctx, state, settings)
+        return
+    if ctx.terms_accepted:
+        # A repeated press: nothing to record and no prompt to repeat.
         await query.answer(ALREADY_DONE)
         return
     if not callback_data.accept:
@@ -214,10 +267,11 @@ async def on_terms(
         await query.answer()
         await bot.send_message(query.from_user.id, TERMS_DECLINED)
         return
-    await service.accept_terms(session, user.id, TERMS_VERSION)
+    await service.accept_terms(session, ctx.user.id, TERMS_VERSION)
     await session.commit()
+    ctx.terms_accepted = True
     await query.answer()
-    await prompt_next(bot, query.from_user.id, session, user, profile, state, settings)
+    await prompt_next(bot, query.from_user.id, session, ctx, state, settings)
 
 
 async def terms_pending(message: Message) -> None:
@@ -232,14 +286,16 @@ async def on_nickname(
 ) -> None:
     if message.from_user is None or message.text is None:
         return
-    user, profile = await _load(session, message.from_user)
+    ctx = await _load(session, message.from_user)
+    if not await _gate(ctx, bot, message.chat.id, session, state, settings):
+        return
     try:
-        service.set_nickname(profile, message.text)
+        service.set_nickname(ctx.profile, message.text)
     except ProfileValidationError as error:
         await _retry(message, error, "nickname")
         return
     await session.commit()
-    await prompt_next(bot, message.chat.id, session, user, profile, state, settings)
+    await prompt_next(bot, message.chat.id, session, ctx, state, settings)
 
 
 async def on_age(
@@ -247,7 +303,9 @@ async def on_age(
 ) -> None:
     if message.from_user is None or message.text is None:
         return
-    user, profile = await _load(session, message.from_user)
+    ctx = await _load(session, message.from_user)
+    if not await _gate(ctx, bot, message.chat.id, session, state, settings):
+        return
     try:
         age = parse_age(message.text)
     except ProfileValidationError as error:
@@ -260,12 +318,12 @@ async def on_age(
         )
         return
     try:
-        service.set_age(profile, age, minimum_age=settings.min_age, today=date.today())
+        service.set_age(ctx.profile, age, minimum_age=settings.min_age, today=_now().date())
     except ProfileValidationError as error:
         await _retry(message, error, "age")
         return
     await session.commit()
-    await prompt_next(bot, message.chat.id, session, user, profile, state, settings)
+    await prompt_next(bot, message.chat.id, session, ctx, state, settings)
 
 
 async def on_gender(
@@ -276,17 +334,21 @@ async def on_gender(
     state: FSMContext,
     settings: BotSettings,
 ) -> None:
-    user, profile = await _load(session, query.from_user)
-    if profile.gender is not None or service.missing_required_fields(profile)[:1] != ["gender"]:
+    ctx = await _load(session, query.from_user)
+    if not await _gate(ctx, bot, query.from_user.id, session, state, settings):
+        await query.answer()
+        return
+    if service.missing_required_fields(ctx.profile)[:1] != ["gender"]:
         await query.answer(ALREADY_DONE)
         return
-    service.set_gender(profile, callback_data.value)
+    service.set_gender(ctx.profile, callback_data.value)
     await session.commit()
     await query.answer()
-    await prompt_next(bot, query.from_user.id, session, user, profile, state, settings)
+    await prompt_next(bot, query.from_user.id, session, ctx, state, settings)
 
 
 async def on_country_text(message: Message) -> None:
+    # Saves nothing: the choice is confirmed with a button, which is gated.
     if message.text is None:
         return
     matches = match_country(message.text)
@@ -311,10 +373,11 @@ async def on_country_choice(
     state: FSMContext,
     settings: BotSettings,
 ) -> None:
-    user, profile = await _load(session, query.from_user)
-    if profile.country_code is not None or service.missing_required_fields(profile)[:1] != [
-        "country"
-    ]:
+    ctx = await _load(session, query.from_user)
+    if not await _gate(ctx, bot, query.from_user.id, session, state, settings):
+        await query.answer()
+        return
+    if service.missing_required_fields(ctx.profile)[:1] != ["country"]:
         await query.answer(ALREADY_DONE)
         return
     await query.answer()
@@ -322,12 +385,12 @@ async def on_country_choice(
         await bot.send_message(query.from_user.id, PROMPTS["country"])
         return
     try:
-        service.set_country(profile, callback_data.code)
+        service.set_country(ctx.profile, callback_data.code)
     except ProfileValidationError:
         await bot.send_message(query.from_user.id, COUNTRY_NOT_FOUND)
         return
     await session.commit()
-    await prompt_next(bot, query.from_user.id, session, user, profile, state, settings)
+    await prompt_next(bot, query.from_user.id, session, ctx, state, settings)
 
 
 # --- Optional steps ------------------------------------------------------------------
@@ -338,16 +401,34 @@ async def on_city(
 ) -> None:
     if message.from_user is None or message.text is None:
         return
-    user, profile = await _load(session, message.from_user)
+    ctx = await _load(session, message.from_user)
+    if not await _gate(ctx, bot, message.chat.id, session, state, settings):
+        return
     try:
-        service.set_city(profile, message.text)
+        service.set_city(ctx.profile, message.text)
     except ProfileValidationError as error:
         await message.answer(
             f"{error.message}\n\n{PROMPTS['city']}", reply_markup=_skip_keyboard("city")
         )
         return
     await session.commit()
-    await prompt_next(bot, message.chat.id, session, user, profile, state, settings, "city")
+    await prompt_next(bot, message.chat.id, session, ctx, state, settings, "city")
+
+
+async def _save_photo(
+    message: Message,
+    bot: Bot,
+    session: AsyncSession,
+    ctx: Context,
+    state: FSMContext,
+    settings: BotSettings,
+) -> None:
+    if not message.photo:
+        return
+    # Only Telegram's file identifier of the largest size is stored; never the image.
+    service.set_photo(ctx.profile, message.photo[-1].file_id)
+    await session.commit()
+    await prompt_next(bot, message.chat.id, session, ctx, state, settings, "photo")
 
 
 async def on_photo(
@@ -355,11 +436,10 @@ async def on_photo(
 ) -> None:
     if message.from_user is None or not message.photo:
         return
-    user, profile = await _load(session, message.from_user)
-    # Only Telegram's file identifier is stored; the image itself is never downloaded.
-    service.set_photo(profile, message.photo[-1].file_id)
-    await session.commit()
-    await prompt_next(bot, message.chat.id, session, user, profile, state, settings, "photo")
+    ctx = await _load(session, message.from_user)
+    if not await _gate(ctx, bot, message.chat.id, session, state, settings):
+        return
+    await _save_photo(message, bot, session, ctx, state, settings)
 
 
 async def photo_expected(message: Message) -> None:
@@ -374,27 +454,26 @@ async def on_skip(
     state: FSMContext,
     settings: BotSettings,
 ) -> None:
-    user, profile = await _load(session, query.from_user)
+    ctx = await _load(session, query.from_user)
     current = await state.get_state()
     expected = {"city": Onboarding.city.state, "photo": Onboarding.photo.state}.get(
         callback_data.step
     )
-    in_optional_steps = (
-        profile.onboarding_completed_at is None and not service.missing_required_fields(profile)
-    )
     # Stale Skip buttons are ignored. If FSM state was lost (current is None) the
     # database still shows whether the user is in the optional steps.
-    if expected is None or not in_optional_steps or current not in (None, expected):
+    if expected is None or not ctx.in_optional_steps or current not in (None, expected):
         await query.answer(ALREADY_DONE)
         return
     await query.answer()
-    await prompt_next(
-        bot, query.from_user.id, session, user, profile, state, settings, callback_data.step
-    )
+    await prompt_next(bot, query.from_user.id, session, ctx, state, settings, callback_data.step)
 
 
 def create_router() -> Router:
     router = Router(name="onboarding")
+    # Private chats only: in a group, prompts and answers would be visible to everyone.
+    router.message.filter(F.chat.type == ChatType.PRIVATE)
+    router.callback_query.filter(F.message.chat.type == ChatType.PRIVATE)
+
     router.message.register(start, CommandStart())
 
     router.callback_query.register(on_terms, TermsChoice.filter())

@@ -28,8 +28,10 @@ def test_ambiguous_names_offer_choices() -> None:
     assert codes == {"KP", "KR"}
 
 
-def test_candidates_are_capped() -> None:
-    assert len(match_country("guinea")) <= MAX_CANDIDATES
+def test_fuzzy_candidates_are_capped() -> None:
+    # "guin" is not an exact name and fuzzily matches more than MAX_CANDIDATES
+    # countries (Guinea, Guinea-Bissau, Equatorial Guinea, Papua New Guinea).
+    assert len(match_country("guin")) == MAX_CANDIDATES
 
 
 @pytest.mark.parametrize("query", ["", "   ", "Atlantis", "x" * 61])

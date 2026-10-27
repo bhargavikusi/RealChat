@@ -3,7 +3,7 @@
 from typing import Literal
 
 from aiogram.utils.token import TokenValidationError, validate_token
-from pydantic import Field, SecretStr, ValidationError, field_validator
+from pydantic import Field, SecretStr, ValidationError, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -48,6 +48,14 @@ class BotSettings(Settings):
             # Raised without the original message, which may describe the token.
             raise ValueError("not a valid Telegram bot token format") from None
         return value
+
+    @model_validator(mode="after")
+    def _require_explicit_production_age(self) -> "BotSettings":
+        # The default is a development value; the launch value is still open (O-001),
+        # so production must never fall back to it silently.
+        if self.app_env == "production" and "min_age" not in self.model_fields_set:
+            raise ValueError("MIN_AGE must be set explicitly in production")
+        return self
 
 
 def load_settings(env_file: str | None = ".env") -> Settings:

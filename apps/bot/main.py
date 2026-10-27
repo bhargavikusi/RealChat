@@ -9,6 +9,7 @@ import time
 from collections.abc import Callable
 
 from aiogram import Bot, Dispatcher
+from aiogram.fsm.storage.memory import SimpleEventIsolation
 from aiogram.fsm.storage.redis import RedisStorage
 from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -33,7 +34,13 @@ def create_dispatcher(
     # FSM state (position within optional onboarding steps) lives in Redis so it
     # survives restarts; durable progress is in PostgreSQL. `settings` is passed to
     # every handler that declares a `settings` parameter.
-    dispatcher = Dispatcher(storage=RedisStorage(redis), settings=settings)
+    # Event isolation processes one update at a time per user and chat, so a quick
+    # second message cannot be routed by the FSM state the first one is changing.
+    # An in-process lock is sufficient because long polling allows a single consumer;
+    # webhooks with several workers would need RedisEventIsolation (see O-006).
+    dispatcher = Dispatcher(
+        storage=RedisStorage(redis), events_isolation=SimpleEventIsolation(), settings=settings
+    )
     # Order matters: duplicates are discarded before they count toward flood limits.
     dispatcher.update.outer_middleware(
         DeduplicateUpdatesMiddleware(
