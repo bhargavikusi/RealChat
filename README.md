@@ -52,7 +52,9 @@ To stop the services, run `docker compose down`. Data is kept in Docker volumes.
 
 ## Checks
 
-Run all four before opening a pull request:
+GitHub Actions runs these checks on every pull request to `develop`, `staging`, or `main`, and again after each merge (`.github/workflows/ci.yml`). The workflow also cycles the migrations on a clean database, runs `alembic check` to catch model changes that lack a migration, and scans dependencies for known vulnerabilities. Its PostgreSQL and Redis are throwaway containers with CI-only credentials; no repository secrets are used.
+
+Run all four locally before opening a pull request:
 
 ```bash
 uv run ruff check .          # lint

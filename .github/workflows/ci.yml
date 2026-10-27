@@ -1,0 +1,107 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [develop, staging, main]
+  # Also run after merges, to confirm the merged result on each long-lived branch.
+  push:
+    branches: [develop, staging, main]
+
+# Read-only token: this workflow never writes to the repository.
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  UV_VERSION: "0.9.18"
+
+jobs:
+  checks:
+    name: Lint, types, tests, migrations
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    services:
+      postgres:
+        image: postgres:18-alpine
+        env:
+          POSTGRES_USER: realchat
+          POSTGRES_PASSWORD: ci-only-password
+          POSTGRES_DB: realchat_ci
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U realchat -d realchat_ci"
+          --health-interval 5s --health-timeout 3s --health-retries 10
+      redis:
+        image: redis:8-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s --health-timeout 3s --health-retries 10
+
+    # Throwaway credentials for the CI-only service containers above; not secrets.
+    env:
+      DATABASE_URL: postgresql+asyncpg://realchat:ci-only-password@localhost:5432/realchat_ci
+      REDIS_URL: redis://localhost:6379/0
+      TEST_DATABASE_URL: postgresql+asyncpg://realchat:ci-only-password@localhost:5432/realchat_ci
+      TEST_REDIS_URL: redis://localhost:6379/15
+      # Integration tests must fail, not skip, if their configuration is missing.
+      REQUIRE_INTEGRATION: "1"
+
+    steps:
+      # Actions are pinned to full commit SHAs so a moved tag cannot change what runs.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        with:
+          version: ${{ env.UV_VERSION }}
+          enable-cache: true
+
+      - name: Install dependencies
+        run: uv sync --locked
+
+      - name: Lint
+        run: uv run ruff check .
+
+      - name: Formatting
+        run: uv run ruff format --check .
+
+      - name: Type check
+        run: uv run mypy
+
+      - name: Migrations upgrade, model drift check, downgrade, upgrade
+        run: |
+          uv run alembic upgrade head
+          uv run alembic check
+          uv run alembic downgrade base
+          uv run alembic upgrade head
+
+      - name: Tests
+        run: uv run pytest
+
+  dependency-audit:
+    name: Dependency vulnerability scan
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        with:
+          version: ${{ env.UV_VERSION }}
+
+      - name: Export locked dependencies
+        run: uv export --frozen --no-emit-project --format requirements-txt -o requirements-audit.txt
+
+      - name: Audit for known vulnerabilities
+        run: uvx pip-audit@2.10.1 --strict --disable-pip --require-hashes -r requirements-audit.txt
