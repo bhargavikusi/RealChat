@@ -5,7 +5,9 @@ notice shown to suspended and banned users. It always needs a second, explicit
 confirmation. The confirmation buttons carry a random id kept in FSM state, so a
 confirmation button from a cancelled, finished, or older request does nothing.
 
-Deleting needs no terms acceptance: a user can always erase their data.
+Deletion handlers do not check terms acceptance themselves: ordinary users reach
+them only from the profile card, which requires the current terms (D-025), and
+restricted users reach them from their notice (D-026).
 """
 
 import secrets
@@ -155,11 +157,17 @@ def create_router() -> Router:
 # --- Access gate ---------------------------------------------------------------------
 
 
-def _allowed_when_restricted(update: Update) -> bool:
+async def _allowed_when_restricted(update: Update, bot: Bot) -> bool:
     """Help and account deletion stay available to restricted users (D-026)."""
     if update.message is not None:
-        text = update.message.text or ""
-        return text.split(maxsplit=1)[:1] == ["/help"] or text.startswith("/help@")
+        command = (update.message.text or "").split(maxsplit=1)[:1]
+        if not command:
+            return False
+        name, _, mention = command[0].partition("@")
+        if name != "/help":
+            return False
+        # "/help@name" counts only when it names this bot.
+        return not mention or mention.casefold() == ((await bot.me()).username or "").casefold()
     if update.callback_query is not None:
         data = update.callback_query.data or ""
         allowed = (HelpAction.__prefix__, AccountAction.__prefix__)
@@ -168,7 +176,7 @@ def _allowed_when_restricted(update: Update) -> bool:
 
 
 class AccessGateMiddleware(BaseMiddleware):
-    """Stops suspended and banned users before any feature handler runs.
+    """Stops suspended and banned users before any handler other than help and deletion.
 
     Registered as an inner update middleware after the database session, so it runs
     for every update that passed deduplication and flood control. The status lookup
@@ -182,9 +190,13 @@ class AccessGateMiddleware(BaseMiddleware):
             return await handler(event, data)
         status = await service.get_status(session, user.id)
         await session.commit()
-        if status is None or not service.is_restricted(status) or _allowed_when_restricted(event):
-            return await handler(event, data)
         bot: Bot = data["bot"]
+        if (
+            status is None
+            or not service.is_restricted(status)
+            or await _allowed_when_restricted(event, bot)
+        ):
+            return await handler(event, data)
         if event.callback_query is not None:
             await event.callback_query.answer()
         chat = data.get("event_chat")

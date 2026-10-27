@@ -205,13 +205,18 @@ async def test_restricted_users_are_stopped_but_keep_help_and_deletion(
     assert await chat.send("Moon Child") == notice
     assert await chat.send("/profile") == notice
     assert await chat.send("/start") == notice
-    await chat.press_data(pr.EditField(field=pr.ProfileField.BIO).pack())
-    assert chat.last() == notice
-    await chat.press_data(ac.AccountAction(action="settings").pack())
-    assert chat.last() == notice
+    for data in (
+        pr.EditField(field=pr.ProfileField.BIO).pack(),
+        ac.AccountAction(action="settings").pack(),
+    ):
+        sent = len(chat.session.sent_texts())
+        await chat.press_data(data)
+        assert chat.session.sent_texts()[sent:] == [notice]  # a new notice, nothing else
     assert (await load_profile(session_factory)).nickname == "Night Owl"
 
     assert await chat.send("/help") == HELP_TEXT
+    assert await chat.send("/help@RealChatTestBot") == HELP_TEXT
+    assert await chat.send("/help@SomeOtherBot") == notice
 
     # The notice offers deletion, which erases the profile but keeps the restriction.
     await chat.send("/profile")

@@ -244,17 +244,18 @@ Work happens on short-lived issue branches, such as `feature/12-onboarding`, cre
 * Deletion is reached from the **⚙️ Advanced settings** button on the profile card, which opens a **🗑 Delete account** button. A second, explicit "Yes, delete my account" confirmation is always required. The confirmation buttons belong to one request, so an old or repeated confirmation does nothing.
 * Deletion follows D-016 and also erases the age and gender change history (D-024) and the terms acceptances.
 * A returning user starts onboarding from the terms. Accepting them makes a deleted account active again. `deleted_at` keeps the time of the last deletion.
-* Deleting needs no terms acceptance: a user can always erase their data.
+* Accepting the current terms is the first step for everyone, with no way around it. Deletion is therefore available once the current terms are accepted, through the profile card, and to suspended and banned users through their notice (D-026).
 * The draft terms describe deletion (terms version `draft-3`).
 
-**Why:** Owner preference for the entry point. Erasing terms acceptances makes a return a genuinely fresh start.
+**Why:** Owner preference for the entry point and for terms acceptance coming first. Erasing terms acceptances makes a return a genuinely fresh start.
+**Consequence:** A user who will not accept updated terms cannot delete their data in the bot and must ask support. Data-protection rules in some regions may require deletion without such a step, so this should be part of the legal review (O-007).
 
 ### D-026 — Suspended and banned users
 
 **Date:** 2026-10-27
 **Decision:**
 
-* Suspended and banned users are stopped before any feature handler runs. They receive a notice that offers a **🗑 Delete account** button, and in group chats nothing is sent.
+* Suspended and banned users are stopped before every handler except help and account deletion. Anything else gets a notice that offers a **🗑 Delete account** button, and in group chats nothing is sent.
 * They can still read `/help` and delete their account. Deleting erases their profile, but the account stays suspended or banned, so they cannot sign up again.
 * Suspensions have no end date yet: restrictions are set and lifted manually until moderation tools exist.
 
