@@ -4,7 +4,7 @@ RealChat is a Telegram-first anonymous chat and social discovery platform. Users
 
 ## Status
 
-Early development. The infrastructure runs locally: an API with health checks, PostgreSQL, Redis, database migrations, and a Telegram bot runtime that answers `/start` with a placeholder. No product features exist yet: there's no onboarding, profiles, matching, or chat.
+Early development. The infrastructure runs locally: an API with health checks, PostgreSQL, Redis, and database migrations. The Telegram bot supports `/start`, terms acceptance, and conversational profile creation. There's no main menu, profile editing, matching, or chat yet.
 
 ## Prerequisites
 
@@ -58,7 +58,7 @@ Create a development bot with [@BotFather](https://t.me/BotFather), keeping it s
 uv run python -m apps.bot.main
 ```
 
-During development the bot uses long polling, so it needs no public URL. It stops on Ctrl+C.
+During development the bot uses long polling, so it needs no public URL. It stops on Ctrl+C. The minimum age is `MIN_AGE` (default 18; see D-009).
 
 While Redis is available, two protections apply:
 

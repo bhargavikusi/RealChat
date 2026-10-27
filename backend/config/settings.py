@@ -27,6 +27,9 @@ class BotSettings(Settings):
 
     telegram_bot_token: SecretStr
 
+    # D-009: development value 18; the launch value is still open (O-001).
+    min_age: int = Field(default=18, ge=13, le=99)
+
     # Per-user flood control: at most `bot_flood_limit` updates per window.
     bot_flood_limit: int = Field(default=20, ge=1)
     bot_flood_window_seconds: int = Field(default=10, ge=1)

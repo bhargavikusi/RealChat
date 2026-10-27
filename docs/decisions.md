@@ -150,6 +150,16 @@ Work happens on short-lived issue branches, such as `feature/12-onboarding`, cre
 
 **Why:** It erases what other users could see or identify while preserving the integrity of bans.
 
+### D-017 — Under-age entries can be corrected
+
+**Date:** 2026-10-27
+**Decision:**
+
+* A user who enters an age below the configured minimum is refused politely and cannot continue.
+* The user may immediately send a different age. No block or cooldown is applied.
+
+**Why:** Owner preference. Age is self-declared (D-010), so the check stops honest under-age users and genuine typos. It cannot stop a determined false entry.
+
 ---
 
 ## Open
