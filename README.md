@@ -4,7 +4,7 @@ RealChat is a Telegram-first anonymous chat and social discovery platform. Users
 
 ## Status
 
-Early development. No runnable application yet.
+Early development. The infrastructure runs locally: an API with health checks, PostgreSQL, Redis, and database migrations. No product features exist yet; there's no Telegram bot, matching, or chat.
 
 ## Prerequisites
 
@@ -66,7 +66,7 @@ Integration tests use the `realchat_test` database and Redis database 15, config
 The test database is created only when the PostgreSQL volume is first created. If your volume is older than the init script, create the database once with:
 
 ```bash
-docker compose exec postgres createdb -U realchat realchat_test
+docker compose exec postgres sh -c 'createdb -U "$POSTGRES_USER" realchat_test'
 ```
 
 ## Documentation

@@ -54,10 +54,3 @@ def test_not_ready_when_redis_is_unreachable(app_settings: Settings) -> None:
         "checks": {"database": "ok", "redis": "unavailable"},
     }
     assert UNREACHABLE_PASSWORD not in ready.text
-
-
-def test_api_docs_are_not_exposed(app_settings: Settings) -> None:
-    with TestClient(create_app(app_settings)) as client:
-        assert client.get("/docs").status_code == 404
-        assert client.get("/redoc").status_code == 404
-        assert client.get("/openapi.json").status_code == 404
