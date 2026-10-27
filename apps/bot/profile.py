@@ -25,6 +25,7 @@ from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from apps.bot.account import settings_button
 from apps.bot.avatars import Avatars
 from apps.bot.onboarding import (
     COUNTRY_NOT_FOUND,
@@ -178,6 +179,7 @@ def _edit_keyboard() -> InlineKeyboardMarkup:
         [edit(ProfileField.NICKNAME), edit(ProfileField.AGE), edit(ProfileField.GENDER)],
         [edit(ProfileField.COUNTRY), edit(ProfileField.CITY), edit(ProfileField.BIO)],
         [edit(ProfileField.PHOTO)],
+        [settings_button()],
     )
 
 

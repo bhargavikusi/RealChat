@@ -10,6 +10,7 @@ from sqlalchemy import func, select
 
 from apps.bot import onboarding as ob
 from apps.bot import profile as pr
+from apps.bot.account import ADVANCED_SETTINGS
 from apps.bot.avatars import avatar_path
 from apps.bot.menu import BOT_COMMANDS, HELP_TEXT
 from backend.config.settings import BotSettings
@@ -76,7 +77,7 @@ async def test_profile_card_uses_the_default_avatar_for_the_gender(chat: Chat) -
     assert await chat.send("/profile") == CARD
     second = chat.session.sent_photos()[-1]
     assert isinstance(second.photo, str) and second.photo.startswith("uploaded-")
-    assert set(chat.session.last_buttons()) == set(pr.BUTTON_LABELS.values())
+    assert set(chat.session.last_buttons()) == {*pr.BUTTON_LABELS.values(), ADVANCED_SETTINGS}
 
 
 async def test_avatar_is_uploaded_again_if_the_cache_is_lost(chat: Chat, redis: Redis) -> None:
@@ -330,6 +331,7 @@ async def test_help_shows_the_guide_and_terms_without_unset_links(chat: Chat) ->
 
     assert await chat.press("📄 Terms and privacy") == terms_body(18)
     assert all(f"/{c.command}" in HELP_TEXT for c in BOT_COMMANDS)
+    assert "not end-to-end encrypted" in HELP_TEXT
 
 
 async def test_help_shows_configured_links(

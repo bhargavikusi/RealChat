@@ -108,6 +108,9 @@ def bot_settings(database_url: str, redis_url: str) -> BotSettings:
         database_url=SecretStr(database_url),
         redis_url=SecretStr(redis_url),
         telegram_bot_token=SecretStr(FAKE_TOKEN),
+        # End-to-end tests send many updates in quick succession; flood control has
+        # its own tests (test_bot_middlewares.py) and must not drop updates here.
+        bot_flood_limit=10_000,
     )
 
 

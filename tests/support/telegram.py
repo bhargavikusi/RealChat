@@ -10,7 +10,7 @@ from typing import Any
 
 from aiogram import Bot
 from aiogram.client.session.base import BaseSession
-from aiogram.methods import AnswerCallbackQuery, SendMessage, SendPhoto, TelegramMethod
+from aiogram.methods import AnswerCallbackQuery, GetMe, SendMessage, SendPhoto, TelegramMethod
 from aiogram.methods.base import TelegramType
 from aiogram.types import (
     CallbackQuery,
@@ -25,6 +25,7 @@ from aiogram.types import (
 
 # Obviously fake, see tests/unit/test_logging.py for why it avoids the real token prefix.
 FAKE_TOKEN = "123456789:TEST-fake-token-for-bot-tests-only"
+BOT_USER = User(id=123456789, is_bot=True, first_name="RealChat Test", username="RealChatTestBot")
 
 
 class RecordingSession(BaseSession):
@@ -71,6 +72,8 @@ class RecordingSession(BaseSession):
                 ],
             )
             return sent  # type: ignore[return-value]
+        if isinstance(method, GetMe):
+            return BOT_USER  # type: ignore[return-value]
         # Most other methods (answerCallbackQuery, etc.) return True.
         return True  # type: ignore[return-value]
 

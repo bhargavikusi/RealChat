@@ -236,6 +236,31 @@ Work happens on short-lived issue branches, such as `feature/12-onboarding`, cre
 **Why:** Moderators can see a pattern of changes, such as a user who keeps switching gender, which last-changed timestamps alone would not show.
 **Consequence:** The history holds age and gender values, so account deletion (D-016) must erase it with the rest of the profile data. How long it is kept otherwise is open (O-009).
 
+### D-025 — Account deletion in the bot
+
+**Date:** 2026-10-27
+**Decision:**
+
+* Deletion is reached from the **⚙️ Advanced settings** button on the profile card, which opens a **🗑 Delete account** button. A second, explicit "Yes, delete my account" confirmation is always required. The confirmation buttons belong to one request, so an old or repeated confirmation does nothing.
+* Deletion follows D-016 and also erases the age and gender change history (D-024) and the terms acceptances.
+* A returning user starts onboarding from the terms. Accepting them makes a deleted account active again. `deleted_at` keeps the time of the last deletion.
+* Accepting the current terms comes first. Deletion is available to users who have accepted the current terms, through the profile card. A profile card sent before a terms update shows the new terms instead. The one exception is suspended and banned users, who can delete from their notice without accepting the terms (D-026).
+* The draft terms describe deletion (terms version `draft-3`).
+
+**Why:** Owner preference for the entry point and for terms acceptance coming first. Erasing terms acceptances makes a return a genuinely fresh start.
+**Consequence:** An unrestricted user who will not accept updated terms cannot delete their data in the bot and must ask support. Data-protection rules in some regions may require deletion without such a step, so this should be part of the legal review (O-007).
+
+### D-026 — Suspended and banned users
+
+**Date:** 2026-10-27
+**Decision:**
+
+* Suspended and banned users are stopped before every handler except help and account deletion. Anything else gets a notice that offers a **🗑 Delete account** button, and in group chats nothing is sent.
+* They can still read `/help` and delete their account. Deleting erases their profile, but the account stays suspended or banned, so they cannot sign up again.
+* Suspensions have no end date yet: restrictions are set and lifted manually until moderation tools exist.
+
+**Why:** Owner decision. It respects users' ability to erase their data without weakening a ban.
+
 ---
 
 ## Open

@@ -14,7 +14,8 @@ from aiogram.types import BotCommandScopeAllPrivateChats
 from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from apps.bot import errors, menu, onboarding, profile
+from apps.bot import account, errors, menu, onboarding, profile
+from apps.bot.account import AccessGateMiddleware
 from apps.bot.avatars import Avatars
 from apps.bot.db import DbSessionMiddleware
 from apps.bot.middlewares import DeduplicateUpdatesMiddleware, FloodControlMiddleware
@@ -63,10 +64,13 @@ def create_dispatcher(
     )
     # Inner middleware: runs only for updates that passed deduplication and flood control.
     dispatcher.update.middleware(DbSessionMiddleware(session_factory))
+    # Then suspended and banned users are stopped before any feature handler (D-026).
+    dispatcher.update.middleware(AccessGateMiddleware())
     # Onboarding comes last: its final handler answers any message no other router took.
     dispatcher.include_routers(
         errors.create_router(),
         menu.create_router(),
+        account.create_router(),
         profile.create_router(),
         onboarding.create_router(),
     )

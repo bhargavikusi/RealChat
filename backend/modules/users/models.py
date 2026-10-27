@@ -31,6 +31,8 @@ from backend.modules.users.validation import (
 )
 
 USER_STATUSES = ("active", "suspended", "banned", "deleted")
+# Restricted accounts may only read help and delete their account (D-026).
+RESTRICTED_STATUSES = ("suspended", "banned")
 # Fields whose changes are limited by a cooldown and kept in the change history (D-019).
 COOLDOWN_FIELDS = ("age", "gender")
 

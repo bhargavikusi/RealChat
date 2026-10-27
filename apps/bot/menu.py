@@ -37,7 +37,8 @@ HELP_TEXT = (
     "RealChat help\n\n"
     "RealChat is an anonymous chat on Telegram. Other users see only your nickname and "
     "the profile details you choose to add, never your Telegram name, username, or "
-    "phone number.\n\n"
+    "phone number. Messages pass through the RealChat bot and are not end-to-end "
+    "encrypted.\n\n"
     "Commands (also in the menu next to the message box):\n"
     + "\n".join(f"/{name} - {text}" for name, text in COMMANDS)
 )
