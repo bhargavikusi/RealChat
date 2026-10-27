@@ -6,12 +6,18 @@ When they are missing the tests are skipped, unless REQUIRE_INTEGRATION=1 is set
 """
 
 import os
+from collections.abc import AsyncIterator
 
 import pytest
+from alembic import command
+from alembic.config import Config
 from pydantic import SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
+from sqlalchemy import text
+from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
 from backend.config.settings import Settings
+from backend.database.engine import create_engine, create_session_factory
 
 
 class IntegrationSettings(BaseSettings):
@@ -52,3 +58,29 @@ def app_settings(database_url: str, redis_url: str) -> Settings:
         database_url=SecretStr(database_url),
         redis_url=SecretStr(redis_url),
     )
+
+
+@pytest.fixture(scope="session")
+def migrated_database_url(integration_settings: IntegrationSettings) -> str:
+    """The test database, migrated to the latest schema once per test session."""
+    assert integration_settings.database_url is not None
+    url = integration_settings.database_url.get_secret_value()
+    config = Config("alembic.ini")
+    config.attributes["database_url"] = url
+    command.upgrade(config, "head")
+    return url
+
+
+@pytest.fixture
+async def db_engine(migrated_database_url: str) -> AsyncIterator[AsyncEngine]:
+    engine = create_engine(migrated_database_url)
+    async with engine.begin() as connection:
+        # Each test starts from empty tables. CASCADE covers dependent tables.
+        await connection.execute(text("TRUNCATE users RESTART IDENTITY CASCADE"))
+    yield engine
+    await engine.dispose()
+
+
+@pytest.fixture
+def session_factory(db_engine: AsyncEngine) -> async_sessionmaker[AsyncSession]:
+    return create_session_factory(db_engine)
