@@ -63,6 +63,93 @@ Work happens on short-lived issue branches, such as `feature/12-onboarding`, cre
 **Decision:** Commits are authored as `bhargavikusi <bhargavikusi@gmail.com>`, and project work carries no AI attribution.
 **Why:** The project belongs solely to the `bhargavikusi` account.
 
+### D-008 — Branch protection ruleset
+
+**Date:** 2026-10-27
+**Decision:** The repository ruleset "Protect long-lived branches" covers `develop`, `staging`, and `main`:
+
+* Changes go through pull requests.
+* Both CI jobs ("Lint, types, tests, migrations" and "Dependency vulnerability scan") must pass.
+* Force pushes and branch deletion are blocked.
+* No reviewer approval is required, because GitHub does not let the sole maintainer approve their own pull requests.
+* Repository admins may bypass the rules only when merging a pull request, never by pushing directly.
+
+**Why:** It enforces in GitHub the workflow `CLAUDE.md` requires. A direct push to `develop` was tested and rejected.
+
+### D-009 — Minimum age for development: 18
+
+**Date:** 2026-10-27
+**Decision:** Onboarding rejects users below a configurable minimum age, set to **18** for development.
+**Why:** Anonymous chat with strangers carries adult-content and grooming risks.
+**Still open:** The final launch value, ideally after jurisdiction-specific legal review (see O-001).
+
+### D-010 — Age entered as a number
+
+**Date:** 2026-10-27
+**Decision:**
+
+* Users enter their age as a whole number. No birth date or birth year is collected.
+* The entered age is stored with the date it was entered. The displayed age is an **estimate**: that number plus the number of full years since. It advances on the anniversary of entry, not the user's birthday, so it can be up to a year below the real age.
+* Other users only ever see the current age.
+
+**Why:** It collects the least personal data while keeping ages current without users re-entering them.
+**Consequence:** Eligibility depends on the user telling the truth. Identity and age verification are not required at launch (requirements §7).
+
+### D-011 — Gender options: Male, Female, Other
+
+**Date:** 2026-10-27
+**Decision:** Profiles offer exactly Male, Female, and Other. Paid gender-specific matching can target any of the three.
+**Why:** The options are simple to match on, and they give users who are neither male nor female an accurate choice.
+
+### D-012 — Display name is a user-chosen nickname
+
+**Date:** 2026-10-27
+**Decision:**
+
+* Onboarding asks for a nickname.
+* The user's Telegram name is never shown to other users and is not used as a default.
+
+**Why:** It protects anonymity. Many users would otherwise expose their real first name without realizing it.
+
+### D-013 — Required onboarding fields
+
+**Date:** 2026-10-27
+**Decision:**
+
+* **Required** before reaching the main menu: nickname, age, gender, and country. Country is typed and matched against the ISO 3166 country list.
+* **Optional** at any time: city, photo, and bio.
+
+**Why:** It keeps the time to a first chat short, as requirements §3 asks, while capturing the country that discovery depends on.
+
+### D-014 — Interests deferred to discovery work
+
+**Date:** 2026-10-27
+**Decision:** Profile interests are not built with onboarding. They will be designed together with nearby discovery, which is what uses them.
+**Why:** It keeps onboarding small and avoids locking in a data model before its main consumer exists.
+
+### D-015 — Draft terms and privacy text during development
+
+**Date:** 2026-10-27
+**Decision:**
+
+* Development uses a short, plain-English terms and privacy draft, clearly labelled "DRAFT – not for launch".
+* The text is versioned, and users must re-accept it whenever the version changes.
+
+**Still open:** Legally reviewed text must replace the draft before launch.
+
+### D-016 — Account deletion
+
+**Date:** 2026-10-27
+**Decision:**
+
+* Deleting an account requires confirmation.
+* All profile data is erased immediately: nickname, age, gender, country, city, bio, and photo reference.
+* A minimal account record is kept: the Telegram user ID, the account status, and timestamps. This prevents moderation restrictions from being bypassed by deleting the account and re-registering.
+* A deleted user who returns starts onboarding again, unless they are restricted.
+* Financial records will be kept as required by law, even after deletion.
+
+**Why:** It erases what other users could see or identify while preserving the integrity of bans.
+
 ---
 
 ## Open
@@ -71,7 +158,8 @@ Each of these needs the owner's decision. Until then, the behavior stays configu
 
 | ID | Question | Needed before | Notes |
 |---|---|---|---|
-| O-001 | Minimum eligible age | Public launch | Age is user-entered, with no document verification (approved in requirements §7). Jurisdiction-specific legal review is recommended. |
+| O-001 | Final minimum eligible age | Public launch | Development uses 18 (D-009). Age is user-entered, with no document verification (requirements §7). Jurisdiction-specific legal review is recommended. |
+| O-007 | Final terms of service and privacy policy text | Public launch | Development uses a versioned draft (D-015). It needs legal review. |
 | O-002 | Retention period for conversation content | Public launch | Kept separate from the retention of payment, moderation, security, and audit records (requirements §20). |
 | O-003 | Terms of the 1-coin activity notification | Before that feature is built | What event triggers it, how long it lasts, and whether it is one alert or several (requirements §15). |
 | O-004 | Price of gender-specific matching | Before that feature is built | Must be configurable (requirements §9). |
