@@ -4,7 +4,16 @@ This document describes RealChat's architecture and technical boundaries. Sectio
 
 ## Current state
 
-The repository contains documentation only. No application code exists yet.
+Implemented so far:
+
+* **Configuration:** `backend/config/settings.py` loads and validates settings at startup. Errors name the problem setting but never its value.
+* **Logging:** `backend/core/logging.py` writes JSON logs to stdout and redacts credentials, bot tokens, and sensitive fields.
+* **Database:** `backend/database/engine.py` provides the async SQLAlchemy engine, the session factory, and a declarative `Base` with fixed constraint-naming rules. `migrations/` holds the Alembic setup and an empty baseline migration. The database URL comes from settings, never from `alembic.ini`.
+* **Redis:** `backend/core/redis.py` provides the client.
+* **API:** `apps/api/main.py` serves `/health` (the process is running) and `/ready` (PostgreSQL and Redis are reachable, each checked with a 2-second timeout). Failure details go to the server log and never into the HTTP response. Interactive docs and the OpenAPI schema are disabled.
+* **Local services:** `docker-compose.yml` runs PostgreSQL 18 and Redis 8, both ARM64-compatible, bound to `127.0.0.1` only.
+
+No domain tables, Telegram bot, or worker exist yet.
 
 ## Overview (planned)
 
