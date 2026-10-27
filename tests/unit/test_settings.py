@@ -2,7 +2,7 @@ from pathlib import Path
 
 import pytest
 
-from backend.config.settings import SettingsError, load_settings
+from backend.config.settings import SettingsError, load_bot_settings, load_settings
 
 DB_SECRET = "db-pass-8f3k2"
 REDIS_SECRET = "redis-pass-71ab"
@@ -12,7 +12,7 @@ REDIS_URL = f"redis://:{REDIS_SECRET}@localhost:6379/0"
 
 @pytest.fixture(autouse=True)
 def clean_env(monkeypatch: pytest.MonkeyPatch) -> None:
-    for name in ("APP_ENV", "LOG_LEVEL", "DATABASE_URL", "REDIS_URL"):
+    for name in ("APP_ENV", "LOG_LEVEL", "DATABASE_URL", "REDIS_URL", "TELEGRAM_BOT_TOKEN"):
         monkeypatch.delenv(name, raising=False)
 
 
@@ -77,3 +77,48 @@ def test_reads_env_file(tmp_path: Path) -> None:
 
     assert settings.log_level == "DEBUG"
     assert settings.redis_url.get_secret_value() == REDIS_URL
+
+
+BOT_TOKEN = "123456789:TEST-fake-token-for-settings-tests"
+
+
+def test_bot_settings_load_valid_token(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("DATABASE_URL", DATABASE_URL)
+    monkeypatch.setenv("REDIS_URL", REDIS_URL)
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", BOT_TOKEN)
+
+    settings = load_bot_settings(env_file=None)
+
+    assert settings.telegram_bot_token.get_secret_value() == BOT_TOKEN
+    assert BOT_TOKEN not in repr(settings)
+
+
+def test_bot_settings_require_token(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("DATABASE_URL", DATABASE_URL)
+    monkeypatch.setenv("REDIS_URL", REDIS_URL)
+
+    with pytest.raises(SettingsError) as excinfo:
+        load_bot_settings(env_file=None)
+
+    assert "TELEGRAM_BOT_TOKEN" in str(excinfo.value)
+
+
+def test_malformed_bot_token_is_rejected_without_echo(monkeypatch: pytest.MonkeyPatch) -> None:
+    malformed = "not-a-token-x8k3"
+    monkeypatch.setenv("DATABASE_URL", DATABASE_URL)
+    monkeypatch.setenv("REDIS_URL", REDIS_URL)
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", malformed)
+
+    with pytest.raises(SettingsError) as excinfo:
+        load_bot_settings(env_file=None)
+
+    message = str(excinfo.value)
+    assert "TELEGRAM_BOT_TOKEN" in message
+    assert malformed not in message
+
+
+def test_non_bot_processes_do_not_need_a_token(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("DATABASE_URL", DATABASE_URL)
+    monkeypatch.setenv("REDIS_URL", REDIS_URL)
+
+    assert load_settings(env_file=None).app_env == "development"

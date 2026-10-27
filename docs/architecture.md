@@ -10,10 +10,11 @@ Implemented so far:
 * **Logging:** `backend/core/logging.py` writes JSON logs to stdout and redacts credentials, bot tokens, and sensitive fields.
 * **Database:** `backend/database/engine.py` provides the async SQLAlchemy engine, the session factory, and a declarative `Base` with fixed constraint-naming rules. `migrations/` holds the Alembic setup and an empty baseline migration. The database URL comes from settings, never from `alembic.ini`.
 * **Redis:** `backend/core/redis.py` provides the client.
+* **Bot:** `apps/bot/main.py` runs the aiogram dispatcher with long polling. Two Redis-backed outer middlewares (`apps/bot/middlewares.py`) run before every handler. The first drops updates whose `update_id` was already processed. The second drops updates from a user over a per-window limit. Both let updates through if Redis is unavailable, because side-effecting operations will carry their own database-level idempotency. `apps/bot/errors.py` logs handler failures without message content and sends the user a generic reply. `/start` currently replies with a placeholder until onboarding exists. Messages are sent as plain text with no parse mode, so user content can never be interpreted as markup. The bot token is only required by the bot process (`BotSettings`).
 * **API:** `apps/api/main.py` serves `/health` (the process is running) and `/ready` (PostgreSQL and Redis are reachable, each checked with a 2-second timeout). Failure details go to the server log and never into the HTTP response. Interactive docs and the OpenAPI schema are disabled.
 * **Local services:** `docker-compose.yml` runs PostgreSQL 18 and Redis 8, both ARM64-compatible, bound to `127.0.0.1` only.
 
-No domain tables, Telegram bot, or worker exist yet.
+No domain tables, user-facing bot flows, or worker exist yet.
 
 ## Overview (planned)
 

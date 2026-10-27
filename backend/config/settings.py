@@ -2,7 +2,8 @@
 
 from typing import Literal
 
-from pydantic import SecretStr, ValidationError
+from aiogram.utils.token import TokenValidationError, validate_token
+from pydantic import Field, SecretStr, ValidationError, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -21,14 +22,44 @@ class Settings(BaseSettings):
     redis_url: SecretStr
 
 
+class BotSettings(Settings):
+    """Settings for the Telegram bot process. Other processes do not need the token."""
+
+    telegram_bot_token: SecretStr
+
+    # Per-user flood control: at most `bot_flood_limit` updates per window.
+    bot_flood_limit: int = Field(default=20, ge=1)
+    bot_flood_window_seconds: int = Field(default=10, ge=1)
+    # How long a processed update_id is remembered to discard redeliveries.
+    bot_update_dedup_ttl_seconds: int = Field(default=86_400, ge=60)
+
+    @field_validator("telegram_bot_token")
+    @classmethod
+    def _check_token_format(cls, value: SecretStr) -> SecretStr:
+        try:
+            validate_token(value.get_secret_value())
+        except TokenValidationError:
+            # Raised without the original message, which may describe the token.
+            raise ValueError("not a valid Telegram bot token format") from None
+        return value
+
+
 def load_settings(env_file: str | None = ".env") -> Settings:
+    return _load(Settings, env_file)
+
+
+def load_bot_settings(env_file: str | None = ".env") -> BotSettings:
+    return _load(BotSettings, env_file)
+
+
+def _load[SettingsT: Settings](settings_cls: type[SettingsT], env_file: str | None) -> SettingsT:
     """Load settings, failing fast with a readable error.
 
     Pydantic's own error text includes the rejected input, which could be a secret,
     so it is replaced with a message that names only the setting and the problem.
     """
     try:
-        return Settings(_env_file=env_file)
+        return settings_cls(_env_file=env_file)
     except ValidationError as exc:
         problems = [
             f"{'.'.join(str(part) for part in error['loc']).upper()}: {error['msg']}"

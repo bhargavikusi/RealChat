@@ -50,6 +50,16 @@ To check that it's running:
 
 To stop the services, run `docker compose down`. Data is kept in Docker volumes. Add `-v` to delete it as well.
 
+### Telegram bot
+
+Create a development bot with [@BotFather](https://t.me/BotFather), keeping it separate from any production bot. Put its token in `.env` as `TELEGRAM_BOT_TOKEN`. Then, with PostgreSQL and Redis running, start the bot:
+
+```bash
+uv run python -m apps.bot.main
+```
+
+During development the bot uses long polling, so it needs no public URL. It stops on Ctrl+C. Updates that Telegram delivers twice are processed once, and each user is subject to a flood limit (`BOT_FLOOD_LIMIT` updates per `BOT_FLOOD_WINDOW_SECONDS`).
+
 ## Checks
 
 GitHub Actions runs these checks on every pull request to `develop`, `staging`, or `main`, and again after each merge (`.github/workflows/ci.yml`). The workflow also cycles the migrations on a clean database, runs `alembic check` to catch model changes that lack a migration, and scans dependencies for known vulnerabilities. Its PostgreSQL and Redis are throwaway containers with CI-only credentials; no repository secrets are used.
