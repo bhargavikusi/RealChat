@@ -131,7 +131,7 @@ async def test_city_and_bio_can_be_set_and_removed(chat: Chat, session_factory: 
     remove = chat.session.last_buttons()["Remove city"]
     assert (await chat.press("Remove city")).startswith(pr.REMOVED)
     await chat.press_data(remove)  # repeated press
-    assert chat.session.callback_answers()[-1] == pr.NOTHING_TO_REMOVE
+    assert chat.session.callback_answers()[-1] == pr.EXPIRED
 
     profile = await load_profile(session_factory)
     assert (profile.city, profile.bio) == (None, "Night walks and old films")
@@ -168,6 +168,32 @@ async def test_cancel_changes_nothing_and_a_stale_cancel_expires(
     # No edit is in progress, so this text is not taken as a nickname.
     assert await chat.send("Moon Child") == ob.WELCOME_BACK
     assert (await load_profile(session_factory)).nickname == "Night Owl"
+
+
+async def test_buttons_from_a_cancelled_edit_expire(chat: Chat, session_factory: Sessions) -> None:
+    await complete_onboarding(chat)
+    await chat.send("/profile")
+    await chat.press(pr.BUTTON_LABELS[pr.ProfileField.CITY])
+    await chat.send("Hyderabad")
+
+    # An old Remove button stops working once its edit is cancelled.
+    await chat.press(pr.BUTTON_LABELS[pr.ProfileField.CITY])
+    remove = chat.session.last_buttons()["Remove city"]
+    await chat.press("Cancel")
+    await chat.press_data(remove)
+    assert chat.session.callback_answers()[-1] == pr.EXPIRED
+
+    # A country choice from a cancelled edit is not accepted by a later one.
+    await chat.press_data(pr.EditField(field=pr.ProfileField.COUNTRY).pack())
+    await chat.send("germany")
+    germany = chat.session.last_buttons()["Germany"]
+    await chat.press("Cancel")
+    await chat.press_data(pr.EditField(field=pr.ProfileField.COUNTRY).pack())
+    await chat.press_data(germany)
+    assert chat.session.callback_answers()[-1] == pr.EXPIRED
+
+    profile = await load_profile(session_factory)
+    assert (profile.city, profile.country_code) == ("Hyderabad", "IN")
 
 
 async def test_a_photo_sent_to_a_text_step_is_not_saved(

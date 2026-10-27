@@ -60,7 +60,15 @@ class RecordingSession(BaseSession):
                 date=datetime.now(UTC),
                 chat=Chat(id=int(method.chat_id), type="private"),
                 caption=method.caption,
-                photo=[PhotoSize(file_id=file_id, file_unique_id=file_id, width=512, height=512)],
+                # Distinct from file_id, as on Telegram, so caching the wrong one shows up.
+                photo=[
+                    PhotoSize(
+                        file_id=file_id,
+                        file_unique_id=f"unique-{len(self.requests)}",
+                        width=512,
+                        height=512,
+                    )
+                ],
             )
             return sent  # type: ignore[return-value]
         # Most other methods (answerCallbackQuery, etc.) return True.

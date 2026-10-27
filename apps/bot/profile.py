@@ -6,11 +6,13 @@ The same rules as onboarding apply:
 * The database transaction is ended before any Telegram API call.
 
 Profile management opens once onboarding is complete; until then the user is
-sent back to their onboarding step. Which field is being edited is kept in FSM
-state; buttons from older messages that no longer match it are answered as
-expired and change nothing.
+sent back to their onboarding step. Each edit gets a random id, kept in FSM state
+with the field being edited and carried by that prompt's buttons. A button whose
+id is not the current edit's (from a cancelled, finished, or older edit) is
+answered as expired and changes nothing.
 """
 
+import secrets
 from datetime import UTC, date, datetime, timedelta
 from enum import StrEnum
 
@@ -70,20 +72,27 @@ class EditField(CallbackData, prefix="pedit"):
     field: ProfileField
 
 
+# Buttons inside an edit prompt carry `edit`, the id of the edit they belong to.
+
+
 class RemoveField(CallbackData, prefix="premove"):
     field: ProfileField
+    edit: str
 
 
 class CancelEdit(CallbackData, prefix="pcancel"):
     field: ProfileField
+    edit: str
 
 
 class PickGender(CallbackData, prefix="pgender"):
     value: Gender
+    edit: str
 
 
 class PickCountry(CallbackData, prefix="pcountry"):
     code: str  # empty string means "none of these"
+    edit: str
 
 
 EDIT_STATES = {
@@ -172,8 +181,8 @@ def _edit_keyboard() -> InlineKeyboardMarkup:
     )
 
 
-def _cancel_row(field: ProfileField) -> list[InlineKeyboardButton]:
-    return [_button("Cancel", CancelEdit(field=field))]
+def _cancel_row(field: ProfileField, edit: str) -> list[InlineKeyboardButton]:
+    return [_button("Cancel", CancelEdit(field=field, edit=edit))]
 
 
 def _current_value(profile: Profile, field: ProfileField) -> str | None:
@@ -224,8 +233,25 @@ async def _ready(
     return False
 
 
-async def _editing(state: FSMContext, field: ProfileField) -> bool:
-    return await state.get_state() == EDIT_STATES[field].state
+async def _start_edit(state: FSMContext, field: ProfileField) -> str:
+    """Begin editing `field`; returns the new edit's id. Replaces any earlier edit."""
+    edit = secrets.token_hex(4)
+    await state.set_state(EDIT_STATES[field])
+    await state.set_data({"edit": edit})
+    return edit
+
+
+async def _current_edit(state: FSMContext) -> str:
+    return str((await state.get_data()).get("edit", ""))
+
+
+async def _editing(state: FSMContext, field: ProfileField, edit: str) -> bool:
+    """True if `field` is being edited and `edit` is that edit's id."""
+    return (
+        await state.get_state() == EDIT_STATES[field].state
+        and bool(edit)
+        and await _current_edit(state) == edit
+    )
 
 
 # --- Viewing -------------------------------------------------------------------------
@@ -277,14 +303,14 @@ async def on_edit(
             return
         prompt = f"{prompt}\n{cooldown_note(field, settings.profile_change_cooldown_days)}"
 
+    edit = await _start_edit(state, field)
     rows: list[list[InlineKeyboardButton]] = []
     if field is ProfileField.GENDER:
-        rows.append([_button(g.value.capitalize(), PickGender(value=g)) for g in Gender])
+        rows.append([_button(g.value.capitalize(), PickGender(value=g, edit=edit)) for g in Gender])
     if field in REMOVABLE_FIELDS and _current_value(ctx.profile, field) is not None:
-        rows.append([_button(f"Remove {field.value}", RemoveField(field=field))])
-    rows.append(_cancel_row(field))
+        rows.append([_button(f"Remove {field.value}", RemoveField(field=field, edit=edit))])
+    rows.append(_cancel_row(field, edit))
 
-    await state.set_state(EDIT_STATES[field])
     await query.answer()
     await bot.send_message(chat_id, prompt, reply_markup=_keyboard(*rows))
 
@@ -292,7 +318,7 @@ async def on_edit(
 async def on_cancel(
     query: CallbackQuery, bot: Bot, callback_data: CancelEdit, state: FSMContext
 ) -> None:
-    if not await _editing(state, callback_data.field):
+    if not await _editing(state, callback_data.field, callback_data.edit):
         await query.answer(EXPIRED)
         return
     await state.clear()
@@ -315,14 +341,12 @@ async def on_remove(
         await query.answer()
         return
     field = callback_data.field
-    if field not in REMOVABLE_FIELDS:
+    if field not in REMOVABLE_FIELDS or not await _editing(state, field, callback_data.edit):
+        # A repeated press, or a button from a cancelled, finished, or older edit.
         await query.answer(EXPIRED)
         return
-    was_editing = await _editing(state, field)
     if _current_value(ctx.profile, field) is None:
-        # Already removed, e.g. a repeated press: nothing changes.
-        if was_editing:
-            await state.clear()
+        await state.clear()
         await query.answer(NOTHING_TO_REMOVE)
         return
     if field is ProfileField.CITY:
@@ -332,8 +356,7 @@ async def on_remove(
     else:
         service.set_photo(ctx.profile, None)
     await session.commit()
-    if was_editing:
-        await state.clear()
+    await state.clear()
     await query.answer()
     await _send_card(bot, chat_id, ctx.profile, avatars, REMOVED)
 
@@ -369,7 +392,8 @@ async def on_text_answer(
     except ProfileValidationError as error:
         await session.rollback()
         await message.answer(
-            f"{error.message}\n\n{EDIT_PROMPTS[field]}", reply_markup=_keyboard(_cancel_row(field))
+            f"{error.message}\n\n{EDIT_PROMPTS[field]}",
+            reply_markup=_keyboard(_cancel_row(field, await _current_edit(state))),
         )
         return
     await session.commit()
@@ -390,7 +414,7 @@ async def on_age_answer(
     ctx = await load_context(session, message.from_user)
     if not await _ready(ctx, bot, message.chat.id, session, state, settings):
         return
-    retry = _keyboard(_cancel_row(ProfileField.AGE))
+    retry = _keyboard(_cancel_row(ProfileField.AGE, await _current_edit(state)))
     try:
         age = parse_age(message.text)
     except ProfileValidationError as error:
@@ -445,7 +469,7 @@ async def on_gender_pick(
     if not await _ready(ctx, bot, chat_id, session, state, settings):
         await query.answer()
         return
-    if not await _editing(state, ProfileField.GENDER):
+    if not await _editing(state, ProfileField.GENDER, callback_data.edit):
         # A repeated press after saving, or a button from an older message.
         await query.answer(EXPIRED)
         return
@@ -466,17 +490,18 @@ async def on_gender_pick(
     await _send_card(bot, chat_id, ctx.profile, avatars, header)
 
 
-async def on_country_text(message: Message) -> None:
+async def on_country_text(message: Message, state: FSMContext) -> None:
     # Saves nothing: the choice is confirmed with a button, which is gated.
     if message.text is None:
         return
     matches = match_country(message.text)
-    cancel = _cancel_row(ProfileField.COUNTRY)
+    edit = await _current_edit(state)
+    cancel = _cancel_row(ProfileField.COUNTRY, edit)
     if not matches:
         await message.answer(COUNTRY_NOT_FOUND, reply_markup=_keyboard(cancel))
         return
-    rows = [[_button(m.name, PickCountry(code=m.code))] for m in matches]
-    rows.append([_button("None of these", PickCountry(code=""))])
+    rows = [[_button(m.name, PickCountry(code=m.code, edit=edit))] for m in matches]
+    rows.append([_button("None of these", PickCountry(code="", edit=edit))])
     rows.append(cancel)
     await message.answer(COUNTRY_PICK, reply_markup=_keyboard(*rows))
 
@@ -495,11 +520,11 @@ async def on_country_pick(
     if not await _ready(ctx, bot, chat_id, session, state, settings):
         await query.answer()
         return
-    if not await _editing(state, ProfileField.COUNTRY):
+    if not await _editing(state, ProfileField.COUNTRY, callback_data.edit):
         await query.answer(EXPIRED)
         return
     await query.answer()
-    cancel = _keyboard(_cancel_row(ProfileField.COUNTRY))
+    cancel = _keyboard(_cancel_row(ProfileField.COUNTRY, callback_data.edit))
     if not callback_data.code:
         await bot.send_message(chat_id, EDIT_PROMPTS[ProfileField.COUNTRY], reply_markup=cancel)
         return
@@ -534,15 +559,18 @@ async def on_photo_answer(
     await _send_card(bot, message.chat.id, ctx.profile, avatars, SAVED)
 
 
-async def photo_expected(message: Message) -> None:
-    await message.answer(PHOTO_EXPECTED, reply_markup=_keyboard(_cancel_row(ProfileField.PHOTO)))
+async def photo_expected(message: Message, state: FSMContext) -> None:
+    cancel = _cancel_row(ProfileField.PHOTO, await _current_edit(state))
+    await message.answer(PHOTO_EXPECTED, reply_markup=_keyboard(cancel))
 
 
 async def text_expected(message: Message, state: FSMContext) -> None:
     current = await state.get_state()
     field = next(f for f, s in EDIT_STATES.items() if s.state == current)
     text = CHOICE_EXPECTED if field is ProfileField.GENDER else TEXT_EXPECTED
-    await message.answer(text, reply_markup=_keyboard(_cancel_row(field)))
+    await message.answer(
+        text, reply_markup=_keyboard(_cancel_row(field, await _current_edit(state)))
+    )
 
 
 def create_router() -> Router:

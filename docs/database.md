@@ -62,7 +62,7 @@ An append-only history of age and gender changes made after onboarding (D-024). 
 | `old_value`, `new_value` | varchar(16) | For age, the displayed (current) age at the time of the change. For gender, the stored value. |
 | `changed_at` | timestamptz | |
 
-The index on `(user_id, field, changed_at)` serves the "latest change of this field" lookup. While a change is checked and written, the user's `profiles` row is locked (`SELECT ... FOR UPDATE`), so two simultaneous changes cannot both pass the cooldown. Account deletion (D-016) must erase these rows along with the rest of the profile data.
+The index on `(user_id, field, changed_at)` serves the "latest change of this field" lookup. While a change is checked and written, the user's `profiles` row is locked (`SELECT ... FOR UPDATE`), so two simultaneous changes cannot both pass the cooldown. Account deletion (D-016) must erase these rows along with the rest of the profile data. Their retention period is otherwise still open (O-009).
 
 ## Where rules are enforced
 

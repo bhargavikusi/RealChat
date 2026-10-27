@@ -214,7 +214,7 @@ Work happens on short-lived issue branches, such as `feature/12-onboarding`, cre
 * The keyboard under the message box holds only the primary actions, in at most two rows: 🎭 New Anonymous Chat on the first row, 📍 Nearby Peoples and 🔎 Browse People on the second. A Mini App button may join them if it fits within the two rows.
 * Each keyboard button is added when its feature ships. Until matching exists, no keyboard is shown.
 * Everything else, such as the profile, help, and later the coin balance, is reached from Telegram's command menu (`/start`, `/profile`, `/help`) or, if built, the Mini App.
-* Tapping a keyboard button or command sends a message with inline buttons for that section.
+* Section entries, such as the keyboard buttons, `/profile`, and `/help`, reply with a message carrying inline buttons for that section. `/start` replies with plain text.
 
 **Why:** Owner preference. The most frequent actions stay one tap away, and the keyboard never shows a button that does not work.
 
@@ -234,7 +234,7 @@ Work happens on short-lived issue branches, such as `feature/12-onboarding`, cre
 * Values set during onboarding are not recorded.
 
 **Why:** Moderators can see a pattern of changes, such as a user who keeps switching gender, which last-changed timestamps alone would not show.
-**Consequence:** The history holds age and gender values, so account deletion (D-016) must erase it with the rest of the profile data, and its retention falls under O-002.
+**Consequence:** The history holds age and gender values, so account deletion (D-016) must erase it with the rest of the profile data. How long it is kept otherwise is open (O-009).
 
 ---
 
@@ -252,3 +252,4 @@ Each of these needs the owner's decision. Until then, the behavior stays configu
 | O-005 | Coin package and VIP pricing in Telegram Stars | Before payments are built | Also covers what VIP includes and how many coins it grants (requirements §17). |
 | O-006 | Webhook or long polling for receiving Telegram updates in production | Before deployment | Development will use polling. Webhooks require a public HTTPS endpoint. |
 | O-008 | Which premium offer includes hiding the profile, and what happens when it ends | Before the VIP work | D-021. For example, whether the profile becomes visible again automatically. |
+| O-009 | Retention period for the age and gender change history | Public launch | D-024. Separate from conversation content (O-002), because moderators use the history to spot repeated switching. Until decided, rows are kept until account deletion. |
