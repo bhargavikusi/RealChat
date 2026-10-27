@@ -183,7 +183,7 @@ async def test_model_check_constraints_match_the_database(
     # model but not to a migration (or vice versa) would otherwise go unnoticed.
     expected = {
         str(constraint.name)
-        for name in ("users", "profiles", "terms_acceptances")
+        for name in ("users", "profiles", "terms_acceptances", "profile_changes")
         for table in [Base.metadata.tables[name]]
         for constraint in table.constraints
         if constraint.__class__.__name__ == "CheckConstraint"
@@ -192,7 +192,8 @@ async def test_model_check_constraints_match_the_database(
         rows = await session.execute(
             text(
                 "SELECT conname FROM pg_constraint WHERE contype = 'c' AND conrelid IN "
-                "('users'::regclass, 'profiles'::regclass, 'terms_acceptances'::regclass)"
+                "('users'::regclass, 'profiles'::regclass, 'terms_acceptances'::regclass,"
+                " 'profile_changes'::regclass)"
             )
         )
         actual = {row[0] for row in rows}

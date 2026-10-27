@@ -9,6 +9,7 @@ from sqlalchemy import (
     DateTime,
     ForeignKey,
     Identity,
+    Index,
     SmallInteger,
     String,
     Text,
@@ -30,6 +31,8 @@ from backend.modules.users.validation import (
 )
 
 USER_STATUSES = ("active", "suspended", "banned", "deleted")
+# Fields whose changes are limited by a cooldown and kept in the change history (D-019).
+COOLDOWN_FIELDS = ("age", "gender")
 
 
 def _in(column: str, values: tuple[str, ...]) -> str:
@@ -117,3 +120,26 @@ class TermsAcceptance(Base):
     accepted_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
+
+
+class ProfileChange(Base):
+    """Append-only history of age and gender changes after onboarding (D-019, D-024).
+
+    The latest row per field drives the change cooldown; the history is kept for
+    moderation. Rows are never updated.
+    """
+
+    __tablename__ = "profile_changes"
+    __table_args__ = (
+        CheckConstraint(_in("field", COOLDOWN_FIELDS), name="field"),
+        # Serves "latest change of this field for this user".
+        Index("ix_profile_changes_user_field_changed_at", "user_id", "field", "changed_at"),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, Identity(), primary_key=True)
+    user_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("users.id", ondelete="CASCADE"))
+    field: Mapped[str] = mapped_column(String(16))
+    # Age as the displayed (current) age at the time of the change; gender as stored.
+    old_value: Mapped[str] = mapped_column(String(16))
+    new_value: Mapped[str] = mapped_column(String(16))
+    changed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

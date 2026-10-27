@@ -19,6 +19,9 @@ def clean_env(monkeypatch: pytest.MonkeyPatch) -> None:
         "REDIS_URL",
         "TELEGRAM_BOT_TOKEN",
         "MIN_AGE",
+        "PROFILE_CHANGE_COOLDOWN_DAYS",
+        "ANNOUNCEMENT_CHANNEL_URL",
+        "SUPPORT_CONTACT",
     ):
         monkeypatch.delenv(name, raising=False)
 
@@ -142,3 +145,42 @@ def test_production_requires_explicit_min_age(monkeypatch: pytest.MonkeyPatch) -
 
     monkeypatch.setenv("MIN_AGE", "18")
     assert load_bot_settings(env_file=None).min_age == 18
+
+
+def _bot_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("DATABASE_URL", DATABASE_URL)
+    monkeypatch.setenv("REDIS_URL", REDIS_URL)
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", BOT_TOKEN)
+
+
+def test_profile_change_cooldown_defaults_to_30_days(monkeypatch: pytest.MonkeyPatch) -> None:
+    _bot_env(monkeypatch)
+    assert load_bot_settings(env_file=None).profile_change_cooldown_days == 30
+
+    monkeypatch.setenv("PROFILE_CHANGE_COOLDOWN_DAYS", "0")
+    with pytest.raises(SettingsError, match="PROFILE_CHANGE_COOLDOWN_DAYS"):
+        load_bot_settings(env_file=None)
+
+
+def test_help_links_are_optional(monkeypatch: pytest.MonkeyPatch) -> None:
+    _bot_env(monkeypatch)
+    monkeypatch.setenv("ANNOUNCEMENT_CHANNEL_URL", "")  # empty in .env means unset
+
+    settings = load_bot_settings(env_file=None)
+
+    assert settings.announcement_channel_url is None
+    assert settings.support_contact is None
+
+
+def test_help_links_must_be_https(monkeypatch: pytest.MonkeyPatch) -> None:
+    _bot_env(monkeypatch)
+    monkeypatch.setenv("ANNOUNCEMENT_CHANNEL_URL", "https://t.me/realchat_news")
+    monkeypatch.setenv("SUPPORT_CONTACT", "http://t.me/realchat_support")
+
+    with pytest.raises(SettingsError, match="SUPPORT_CONTACT"):
+        load_bot_settings(env_file=None)
+
+    monkeypatch.setenv("SUPPORT_CONTACT", "https://t.me/realchat_support")
+    settings = load_bot_settings(env_file=None)
+    assert str(settings.announcement_channel_url) == "https://t.me/realchat_news"
+    assert str(settings.support_contact) == "https://t.me/realchat_support"

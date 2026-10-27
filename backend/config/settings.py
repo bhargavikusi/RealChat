@@ -3,7 +3,14 @@
 from typing import Literal
 
 from aiogram.utils.token import TokenValidationError, validate_token
-from pydantic import Field, SecretStr, ValidationError, field_validator, model_validator
+from pydantic import (
+    Field,
+    HttpUrl,
+    SecretStr,
+    ValidationError,
+    field_validator,
+    model_validator,
+)
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -20,6 +27,9 @@ class Settings(BaseSettings):
     # Connection URLs can embed passwords, so they are stored as secrets.
     database_url: SecretStr
     redis_url: SecretStr
+
+    # D-019: age and gender can each be changed once per this many days after onboarding.
+    profile_change_cooldown_days: int = Field(default=30, ge=1, le=365)
 
 
 class BotSettings(Settings):
@@ -38,6 +48,23 @@ class BotSettings(Settings):
     # How long an update stays claimed while being processed; a safety net in case
     # the claim is never settled (it is normally released or marked done at once).
     bot_update_lease_seconds: int = Field(default=60, ge=5)
+
+    # D-023: optional links shown in /help only when set.
+    announcement_channel_url: HttpUrl | None = None
+    support_contact: HttpUrl | None = None
+
+    @field_validator("announcement_channel_url", "support_contact", mode="before")
+    @classmethod
+    def _empty_link_is_unset(cls, value: object) -> object:
+        # An empty value in .env means the link is not configured.
+        return None if value == "" else value
+
+    @field_validator("announcement_channel_url", "support_contact")
+    @classmethod
+    def _require_https(cls, value: HttpUrl | None) -> HttpUrl | None:
+        if value is not None and value.scheme != "https":
+            raise ValueError("must be an https:// link")
+        return value
 
     @field_validator("telegram_bot_token")
     @classmethod

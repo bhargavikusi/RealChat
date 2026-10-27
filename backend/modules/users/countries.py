@@ -51,6 +51,11 @@ def _match(code: str) -> CountryMatch:
     return CountryMatch(code=country.alpha_2, name=getattr(country, "common_name", country.name))
 
 
+def country_name(code: str) -> str:
+    """Display name for a stored ISO 3166-1 alpha-2 code."""
+    return _match(code).name
+
+
 def match_country(query: str) -> list[CountryMatch]:
     """Up to MAX_CANDIDATES countries matching the query, best first. Empty if none.
 

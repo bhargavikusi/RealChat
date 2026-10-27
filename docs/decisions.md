@@ -170,6 +170,72 @@ Work happens on short-lived issue branches, such as `feature/12-onboarding`, cre
 
 **Why:** The in-process alternative (`SimpleEventIsolation`) keeps one lock per user forever, so memory grows until restart. It also only works within a single process. Redis locks keep no per-user memory in the process, and they stay correct if webhooks with several workers are adopted (O-006). The cost is about two Redis calls per update. Onboarding already depends on Redis for FSM state, so this adds no new point of failure.
 
+### D-019 — Age and gender changes are limited by a cooldown
+
+**Date:** 2026-10-27
+**Decision:**
+
+* After onboarding, age and gender can each be changed at most once per cooldown period. The period is the setting `PROFILE_CHANGE_COOLDOWN_DAYS`, 30 days by default.
+* The first change after onboarding is always allowed, so a typo can be fixed straight away.
+* A new age must still meet the minimum age (D-009). An under-age entry is refused and can be corrected (D-017).
+* Choosing the current value is not a change and does not start the cooldown.
+* Nickname, country, city, bio, and photo can be changed at any time.
+
+**Why:** Age and gender drive eligibility and paid gender matching. Free switching would let users game paid matching, while a full lock would stop honest users fixing mistakes.
+
+### D-020 — Default avatar per gender
+
+**Date:** 2026-10-27
+**Decision:**
+
+* A profile without a photo is shown with a neutral default avatar. There is one image each for Male, Female, and Other (`apps/bot/assets/avatars/`).
+* Each image is uploaded to Telegram once and reused by its file identifier, cached in Redis per bot. If the cache is lost, the image is uploaded again.
+* The current images are simple placeholders. Final artwork belongs to the pre-launch polish pass.
+
+**Why:** Owner preference. Every profile card then has the same shape, a photo with the profile as its caption.
+
+### D-021 — Hidden profiles are a premium feature
+
+**Date:** 2026-10-27
+**Decision:**
+
+* A hidden profile does not appear in nearby discovery or other users' browse lists, and cannot be visited.
+* A hidden user can still use random matching and chat, and chat partners still see their profile.
+* Hiding the profile is a premium feature. The setting is built with the VIP work, not with profile management. Until then every profile stays visible (the stored default).
+
+**Why:** It is a privacy control that does not stop the user using the core product. Owner decision to make it premium.
+**Still open:** Which premium offer includes it, and what happens to a hidden profile when that offer ends (O-008).
+
+### D-022 — Main menu layout
+
+**Date:** 2026-10-27
+**Decision:**
+
+* The keyboard under the message box holds only the primary actions, in at most two rows: 🎭 New Anonymous Chat on the first row, 📍 Nearby Peoples and 🔎 Browse People on the second. A Mini App button may join them if it fits within the two rows.
+* Each keyboard button is added when its feature ships. Until matching exists, no keyboard is shown.
+* Everything else, such as the profile, help, and later the coin balance, is reached from Telegram's command menu (`/start`, `/profile`, `/help`) or, if built, the Mini App.
+* Section entries, such as the keyboard buttons, `/profile`, and `/help`, reply with a message carrying inline buttons for that section. `/start` replies with plain text.
+
+**Why:** Owner preference. The most frequent actions stay one tap away, and the keyboard never shows a button that does not work.
+
+### D-023 — Help contents
+
+**Date:** 2026-10-27
+**Decision:** `/help` shows a short guide to RealChat, the available commands, and a button to read the current terms again. Links to the announcement channel (`ANNOUNCEMENT_CHANNEL_URL`) and support (`SUPPORT_CONTACT`) are shown only when they are configured, and must be `https://` links.
+**Why:** Requirements §25 asks for a way to reach help and the announcement channel. Neither exists yet, so nothing links to a missing page.
+
+### D-024 — Change history for age and gender
+
+**Date:** 2026-10-27
+**Decision:**
+
+* Every age or gender change after onboarding adds a row to the append-only `profile_changes` table: the field, the old value, the new value, and the time.
+* The cooldown (D-019) is read from this history. The profile row is locked while a change is checked and written, so two simultaneous changes cannot both pass the cooldown.
+* Values set during onboarding are not recorded.
+
+**Why:** Moderators can see a pattern of changes, such as a user who keeps switching gender, which last-changed timestamps alone would not show.
+**Consequence:** The history holds age and gender values, so account deletion (D-016) must erase it with the rest of the profile data. How long it is kept otherwise is open (O-009).
+
 ---
 
 ## Open
@@ -185,3 +251,5 @@ Each of these needs the owner's decision. Until then, the behavior stays configu
 | O-004 | Price of gender-specific matching | Before that feature is built | Must be configurable (requirements §9). |
 | O-005 | Coin package and VIP pricing in Telegram Stars | Before payments are built | Also covers what VIP includes and how many coins it grants (requirements §17). |
 | O-006 | Webhook or long polling for receiving Telegram updates in production | Before deployment | Development will use polling. Webhooks require a public HTTPS endpoint. |
+| O-008 | Which premium offer includes hiding the profile, and what happens when it ends | Before the VIP work | D-021. For example, whether the profile becomes visible again automatically. |
+| O-009 | Retention period for the age and gender change history | Public launch | D-024. Separate from conversation content (O-002), because moderators use the history to spot repeated switching. Until decided, rows are kept until account deletion. |

@@ -10,10 +10,12 @@ from collections.abc import Callable
 
 from aiogram import Bot, Dispatcher
 from aiogram.fsm.storage.redis import RedisEventIsolation, RedisStorage
+from aiogram.types import BotCommandScopeAllPrivateChats
 from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from apps.bot import errors, onboarding
+from apps.bot import errors, menu, onboarding, profile
+from apps.bot.avatars import Avatars
 from apps.bot.db import DbSessionMiddleware
 from apps.bot.middlewares import DeduplicateUpdatesMiddleware, FloodControlMiddleware
 from backend.config.settings import BotSettings, load_bot_settings
@@ -32,7 +34,7 @@ def create_dispatcher(
 ) -> Dispatcher:
     # FSM state (position within optional onboarding steps) lives in Redis so it
     # survives restarts; durable progress is in PostgreSQL. `settings` is passed to
-    # every handler that declares a `settings` parameter.
+    # every handler that declares a `settings` parameter, and `avatars` likewise.
     # Event isolation processes one update at a time per user and chat, so a quick
     # second message cannot be routed by the FSM state the first one is changing.
     # The locks live in Redis: they expire on their own (no per-user memory kept in
@@ -41,6 +43,7 @@ def create_dispatcher(
         storage=RedisStorage(redis),
         events_isolation=RedisEventIsolation(redis),
         settings=settings,
+        avatars=Avatars(redis),
     )
     # Order matters: duplicates are discarded before they count toward flood limits.
     dispatcher.update.outer_middleware(
@@ -60,7 +63,13 @@ def create_dispatcher(
     )
     # Inner middleware: runs only for updates that passed deduplication and flood control.
     dispatcher.update.middleware(DbSessionMiddleware(session_factory))
-    dispatcher.include_routers(errors.create_router(), onboarding.create_router())
+    # Onboarding comes last: its final handler answers any message no other router took.
+    dispatcher.include_routers(
+        errors.create_router(),
+        menu.create_router(),
+        profile.create_router(),
+        onboarding.create_router(),
+    )
     return dispatcher
 
 
@@ -78,6 +87,8 @@ async def run() -> None:
     bot = create_bot(settings)
     dispatcher = create_dispatcher(settings, redis, create_session_factory(engine))
     try:
+        # The menu next to the message box (D-022); private chats only.
+        await bot.set_my_commands(menu.BOT_COMMANDS, scope=BotCommandScopeAllPrivateChats())
         logger.info("bot starting (long polling)")
         await dispatcher.start_polling(
             bot, allowed_updates=dispatcher.resolve_used_update_types(), handle_signals=True

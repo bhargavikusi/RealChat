@@ -33,7 +33,7 @@ There is one row per user. The primary key is also a foreign key to `users.id`, 
 | `city` | varchar(60) | Optional. No leading or trailing spaces. Stored as entered otherwise; normalization comes with discovery work. |
 | `bio` | varchar(300) | Optional. No leading or trailing spaces. |
 | `photo_file_id` | text | Optional. A Telegram file identifier only; the application never downloads or stores image files. |
-| `visibility` | varchar(8) | `visible` (default) or `hidden`. |
+| `visibility` | varchar(8) | `visible` (default) or `hidden`. Nothing sets `hidden` yet: hiding the profile is a premium feature built with the VIP work (D-021). |
 | `onboarding_completed_at` | timestamptz | A constraint allows this to be set only once nickname, age, gender, and country are present (D-013). |
 | `created_at`, `updated_at` | timestamptz | |
 
@@ -49,6 +49,20 @@ Records which terms version each user accepted, and when (D-015).
 | `accepted_at` | timestamptz | |
 
 `(user_id, terms_version)` is unique, so repeated acceptance of the same version keeps the first timestamp. That unique index also serves lookups by user.
+
+### `profile_changes`
+
+An append-only history of age and gender changes made after onboarding (D-024). The latest row for a field drives the change cooldown (D-019). Rows are never updated.
+
+| Column | Type | Notes |
+|---|---|---|
+| `id` | bigint identity | |
+| `user_id` | bigint | References `users.id`, with `ON DELETE CASCADE`. |
+| `field` | varchar(16) | `age` or `gender`. |
+| `old_value`, `new_value` | varchar(16) | For age, the displayed (current) age at the time of the change. For gender, the stored value. |
+| `changed_at` | timestamptz | |
+
+The index on `(user_id, field, changed_at)` serves the "latest change of this field" lookup. While a change is checked and written, the user's `profiles` row is locked (`SELECT ... FOR UPDATE`), so two simultaneous changes cannot both pass the cooldown. Account deletion (D-016) must erase these rows along with the rest of the profile data. Their retention period is otherwise still open (O-009).
 
 ## Where rules are enforced
 

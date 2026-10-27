@@ -5,14 +5,14 @@ caller can group several operations into one transaction. Profile setters and
 helpers work on an already loaded Profile and do no I/O.
 """
 
-from datetime import date
+from datetime import date, datetime, timedelta
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.modules.users import validation
-from backend.modules.users.models import Profile, TermsAcceptance, User
+from backend.modules.users.models import Profile, ProfileChange, TermsAcceptance, User
 from backend.modules.users.validation import Visibility
 
 
@@ -58,6 +58,15 @@ async def accept_terms(session: AsyncSession, user_id: int, terms_version: str) 
         .values(user_id=user_id, terms_version=terms_version)
         .on_conflict_do_nothing(index_elements=["user_id", "terms_version"])
     )
+
+
+class ChangeCooldownError(Exception):
+    """An age or gender change was requested before the cooldown ended (D-019)."""
+
+    def __init__(self, field: str, available_at: datetime) -> None:
+        super().__init__(f"{field} can be changed again at {available_at.isoformat()}")
+        self.field = field
+        self.available_at = available_at
 
 
 # Field setters validate first, so invalid input never reaches the database.
@@ -111,3 +120,96 @@ def missing_required_fields(profile: Profile) -> list[str]:
         "country": profile.country_code,
     }
     return [name for name, value in required.items() if value is None]
+
+
+# --- Cooldown-limited changes after onboarding (D-019, D-024) ------------------------
+
+
+async def change_available_at(
+    session: AsyncSession, user_id: int, field: str, cooldown: timedelta
+) -> datetime | None:
+    """When `field` may next be changed, or None if it has never been changed.
+
+    The first change after onboarding is always allowed, so typos can be fixed.
+    """
+    last = await session.scalar(
+        select(func.max(ProfileChange.changed_at)).where(
+            ProfileChange.user_id == user_id, ProfileChange.field == field
+        )
+    )
+    return None if last is None else last + cooldown
+
+
+async def change_age(
+    session: AsyncSession,
+    user_id: int,
+    age: int,
+    *,
+    minimum_age: int,
+    now: datetime,
+    cooldown: timedelta,
+) -> bool:
+    """Change the age of an onboarded profile. Returns False if it is unchanged.
+
+    Raises ProfileValidationError or ChangeCooldownError; nothing is written then.
+    """
+    validation.validate_age(age, minimum_age)
+    profile = await _lock_profile(session, user_id)
+    old = profile_age(profile, now.date())
+    if old is None:
+        raise ValueError("age can only be changed after it has been set")
+    if old == age:
+        return False
+    await _check_cooldown(session, user_id, "age", now, cooldown)
+    set_age(profile, age, minimum_age, now.date())
+    _record_change(session, user_id, "age", str(old), str(age), now)
+    return True
+
+
+async def change_gender(
+    session: AsyncSession, user_id: int, raw: str, *, now: datetime, cooldown: timedelta
+) -> bool:
+    """Change the gender of an onboarded profile. Returns False if it is unchanged.
+
+    Raises ProfileValidationError or ChangeCooldownError; nothing is written then.
+    """
+    gender = validation.validate_gender(raw).value
+    profile = await _lock_profile(session, user_id)
+    old = profile.gender
+    if old is None:
+        raise ValueError("gender can only be changed after it has been set")
+    if old == gender:
+        return False
+    await _check_cooldown(session, user_id, "gender", now, cooldown)
+    profile.gender = gender
+    _record_change(session, user_id, "gender", old, gender, now)
+    return True
+
+
+async def _lock_profile(session: AsyncSession, user_id: int) -> Profile:
+    # Row lock held until commit: concurrent changes for the same user run one after
+    # the other, so the second sees the first's history row and hits the cooldown.
+    return (
+        await session.execute(
+            select(Profile)
+            .where(Profile.user_id == user_id)
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        )
+    ).scalar_one()
+
+
+async def _check_cooldown(
+    session: AsyncSession, user_id: int, field: str, now: datetime, cooldown: timedelta
+) -> None:
+    available_at = await change_available_at(session, user_id, field, cooldown)
+    if available_at is not None and now < available_at:
+        raise ChangeCooldownError(field, available_at)
+
+
+def _record_change(
+    session: AsyncSession, user_id: int, field: str, old: str, new: str, now: datetime
+) -> None:
+    session.add(
+        ProfileChange(user_id=user_id, field=field, old_value=old, new_value=new, changed_at=now)
+    )

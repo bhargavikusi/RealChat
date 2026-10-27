@@ -22,10 +22,16 @@ the profile details you choose to add — never your Telegram name, username, or
 Conversations may be kept to investigate reports and abuse; how long is not decided yet.
 • Be respectful. Harassment, threats, hate, sexual content involving minors, spam, \
 scams, and sharing other people's private information are not allowed.
-• Accounts that break these rules may be restricted or banned.
+• Accounts that break these rules may be restricted or banned."""
 
-Do you agree to these terms and the privacy notice?"""
+TERMS_QUESTION = "Do you agree to these terms and the privacy notice?"
+
+
+def terms_body(minimum_age: int) -> str:
+    """The terms alone, for reading again later (e.g. from /help)."""
+    return TERMS_TEXT.format(minimum_age=minimum_age)
 
 
 def terms_text(minimum_age: int) -> str:
-    return TERMS_TEXT.format(minimum_age=minimum_age)
+    """The terms followed by the acceptance question, as shown at onboarding."""
+    return f"{terms_body(minimum_age)}\n\n{TERMS_QUESTION}"
