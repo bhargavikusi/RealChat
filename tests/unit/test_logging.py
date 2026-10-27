@@ -8,7 +8,10 @@ import pytest
 
 from backend.core.logging import REDACTED, JsonFormatter, redact_text
 
-BOT_TOKEN = "123456789:AAHdqTcvCH1vGWJxfSeofSAs0K5PALDsaw1"
+# Obviously fake. It has the bot-token shape the redactor looks for (digits, colon,
+# 30+ token characters) but not the "AA" prefix of real tokens, so secret scanners
+# do not mistake it for a leaked credential.
+BOT_TOKEN = "123456789:TEST-fake-token-for-redaction-check"
 DB_URL = "postgresql+asyncpg://realchat:db-pass-8f3k2@localhost:5432/realchat"
 
 
