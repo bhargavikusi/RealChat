@@ -4,7 +4,7 @@ RealChat is a Telegram-first anonymous chat and social discovery platform. Users
 
 ## Status
 
-Early development. The infrastructure runs locally: an API with health checks, PostgreSQL, Redis, and database migrations. No product features exist yet; there's no Telegram bot, matching, or chat.
+Early development. The infrastructure runs locally: an API with health checks, PostgreSQL, Redis, database migrations, and a Telegram bot runtime that answers `/start` with a placeholder. No product features exist yet: there's no onboarding, profiles, matching, or chat.
 
 ## Prerequisites
 
@@ -58,7 +58,14 @@ Create a development bot with [@BotFather](https://t.me/BotFather), keeping it s
 uv run python -m apps.bot.main
 ```
 
-During development the bot uses long polling, so it needs no public URL. It stops on Ctrl+C. Updates that Telegram delivers twice are processed once, and each user is subject to a flood limit (`BOT_FLOOD_LIMIT` updates per `BOT_FLOOD_WINDOW_SECONDS`).
+During development the bot uses long polling, so it needs no public URL. It stops on Ctrl+C.
+
+While Redis is available, two protections apply:
+
+* An update that Telegram delivers again after being handled successfully is dropped for `BOT_UPDATE_DEDUP_TTL_SECONDS`. An update whose handling failed or was interrupted is processed again.
+* Each user is subject to a flood limit of `BOT_FLOOD_LIMIT` updates per `BOT_FLOOD_WINDOW_SECONDS`.
+
+If Redis is unavailable, both protections let updates through so the bot stays online. Handlers with side effects, such as charges or matches, must therefore enforce their own idempotency in the database.
 
 ## Checks
 

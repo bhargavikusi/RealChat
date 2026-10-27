@@ -89,7 +89,7 @@ Work happens on short-lived issue branches, such as `feature/12-onboarding`, cre
 **Decision:**
 
 * Users enter their age as a whole number. No birth date or birth year is collected.
-* The entered age is stored with the date it was entered. The current age is that number plus the number of full years since.
+* The entered age is stored with the date it was entered. The displayed age is an **estimate**: that number plus the number of full years since. It advances on the anniversary of entry, not the user's birthday, so it can be up to a year below the real age.
 * Other users only ever see the current age.
 
 **Why:** It collects the least personal data while keeping ages current without users re-entering them.

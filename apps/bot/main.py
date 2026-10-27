@@ -5,6 +5,8 @@ Run with: uv run python -m apps.bot.main
 
 import asyncio
 import logging
+import time
+from collections.abc import Callable
 
 from aiogram import Bot, Dispatcher
 from redis.asyncio import Redis
@@ -18,17 +20,24 @@ from backend.core.redis import create_redis
 logger = logging.getLogger(__name__)
 
 
-def create_dispatcher(settings: BotSettings, redis: Redis) -> Dispatcher:
+def create_dispatcher(
+    settings: BotSettings, redis: Redis, clock: Callable[[], float] = time.time
+) -> Dispatcher:
     dispatcher = Dispatcher()
     # Order matters: duplicates are discarded before they count toward flood limits.
     dispatcher.update.outer_middleware(
-        DeduplicateUpdatesMiddleware(redis, ttl_seconds=settings.bot_update_dedup_ttl_seconds)
+        DeduplicateUpdatesMiddleware(
+            redis,
+            ttl_seconds=settings.bot_update_dedup_ttl_seconds,
+            lease_seconds=settings.bot_update_lease_seconds,
+        )
     )
     dispatcher.update.outer_middleware(
         FloodControlMiddleware(
             redis,
             limit=settings.bot_flood_limit,
             window_seconds=settings.bot_flood_window_seconds,
+            clock=clock,
         )
     )
     dispatcher.include_routers(errors.create_router(), start.create_router())

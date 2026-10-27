@@ -15,7 +15,8 @@ SECRET_TEXT = "my private message 7q2w"
 
 
 async def fail_on_message(message: Message) -> None:
-    raise RuntimeError("handler failed")
+    # Exception messages can quote user input; the log must not contain it.
+    raise ValueError(f"invalid nickname: {message.text}")
 
 
 async def fail_on_callback(query: CallbackQuery) -> None:
@@ -51,6 +52,9 @@ async def test_message_error_is_reported_generically(captured_logs: io.StringIO)
     logs = captured_logs.getvalue()
     assert "unhandled error while processing update" in logs
     assert SECRET_TEXT not in logs
+    assert "invalid nickname" not in logs
+    assert '"error_type": "builtins.ValueError"' in logs
+    assert "in fail_on_message" in logs
 
 
 async def test_callback_error_is_reported_as_alert() -> None:

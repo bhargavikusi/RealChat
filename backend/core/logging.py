@@ -8,10 +8,28 @@ import json
 import logging
 import re
 import sys
+import traceback
 from datetime import UTC, datetime
 from typing import Any
 
 REDACTED = "[REDACTED]"
+
+
+def exception_summary(exc: BaseException, max_frames: int = 8) -> dict[str, str]:
+    """Describe an exception by type and code location only.
+
+    Exception messages can quote user input (e.g. a validation error repeating the
+    submitted text), so they are never included. Frame locations are file, line, and
+    function names from our own code, which cannot contain user content.
+    """
+    frames = traceback.extract_tb(exc.__traceback__)[-max_frames:]
+    return {
+        "error_type": f"{type(exc).__module__}.{type(exc).__qualname__}",
+        "error_location": " <- ".join(
+            f"{frame.filename}:{frame.lineno} in {frame.name}" for frame in reversed(frames)
+        ),
+    }
+
 
 # Any extra field whose name contains one of these fragments is replaced entirely.
 SENSITIVE_KEY_FRAGMENTS = (

@@ -11,6 +11,8 @@ from backend.core.redis import create_redis
 from tests.support.telegram import FAKE_TOKEN, make_bot, message_update
 
 FLOOD_LIMIT = 3
+# A frozen clock keeps every flood-test update inside one window.
+FROZEN_NOW = 1_000_000.0
 
 
 def _settings(database_url: str, redis_url: str) -> BotSettings:
@@ -61,7 +63,7 @@ async def test_duplicate_update_is_processed_once(bot_settings: BotSettings, red
 
 async def test_flood_limit_drops_excess_updates(bot_settings: BotSettings, redis: Redis) -> None:
     bot, session = make_bot()
-    dispatcher = create_dispatcher(bot_settings, redis)
+    dispatcher = create_dispatcher(bot_settings, redis, clock=lambda: FROZEN_NOW)
 
     for update_id in range(100, 100 + FLOOD_LIMIT + 2):
         await dispatcher.feed_update(bot, message_update(update_id, 7, "/start"))
@@ -71,7 +73,7 @@ async def test_flood_limit_drops_excess_updates(bot_settings: BotSettings, redis
 
 async def test_flood_limit_is_per_user(bot_settings: BotSettings, redis: Redis) -> None:
     bot, session = make_bot()
-    dispatcher = create_dispatcher(bot_settings, redis)
+    dispatcher = create_dispatcher(bot_settings, redis, clock=lambda: FROZEN_NOW)
 
     for update_id in range(200, 200 + FLOOD_LIMIT + 2):
         await dispatcher.feed_update(bot, message_update(update_id, 7, "/start"))

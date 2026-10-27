@@ -32,6 +32,9 @@ class BotSettings(Settings):
     bot_flood_window_seconds: int = Field(default=10, ge=1)
     # How long a processed update_id is remembered to discard redeliveries.
     bot_update_dedup_ttl_seconds: int = Field(default=86_400, ge=60)
+    # How long an update stays claimed while being processed; a safety net in case
+    # the claim is never settled (it is normally released or marked done at once).
+    bot_update_lease_seconds: int = Field(default=60, ge=5)
 
     @field_validator("telegram_bot_token")
     @classmethod

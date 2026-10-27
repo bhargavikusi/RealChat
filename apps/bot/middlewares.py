@@ -2,6 +2,7 @@
 
 import logging
 import time
+import uuid
 from collections.abc import Awaitable, Callable
 from typing import Any
 
@@ -14,37 +15,82 @@ logger = logging.getLogger(__name__)
 
 Handler = Callable[[TelegramObject, dict[str, Any]], Awaitable[Any]]
 
+DONE = "done"
+
+# Claims an update for this process unless it is already done or being processed by
+# this same process. A lease held by a different process is taken over: Telegram
+# allows only one long-polling consumer per bot, so another holder must have stopped
+# (e.g. crashed mid-update), and the redelivery should be processed, not dropped.
+_CLAIM_SCRIPT = """
+local current = redis.call('GET', KEYS[1])
+if current == false or (current ~= ARGV[1] and current ~= 'done') then
+    redis.call('SET', KEYS[1], ARGV[1], 'EX', ARGV[2])
+    return 1
+end
+return 0
+"""
+
 
 class DeduplicateUpdatesMiddleware(BaseMiddleware):
-    """Process each Telegram update_id at most once.
+    """Process each Telegram update_id once, without losing updates to failures.
 
-    Telegram can redeliver an update (e.g. after a restart before the offset was
-    confirmed). The first delivery claims the update_id in Redis; later ones are dropped.
+    1. Before handling, the update is claimed with a short lease tagged with this
+       process's id. A redelivery while the lease is held by this process is dropped.
+    2. After the handler succeeds, the update is marked done for `ttl_seconds`, and
+       later redeliveries are dropped.
+    3. If the handler raises, the claim is released so a redelivery is processed.
 
     If Redis is unavailable the update is processed anyway: dropping every update
     would take the bot offline, and operations with side effects (charges, matches)
     carry their own database-level idempotency rather than relying on this layer.
     """
 
-    def __init__(self, redis: Redis, ttl_seconds: int, key_prefix: str = "bot:update:") -> None:
+    def __init__(
+        self,
+        redis: Redis,
+        ttl_seconds: int,
+        lease_seconds: int,
+        key_prefix: str = "bot:update:",
+        instance_id: str | None = None,
+    ) -> None:
         self._redis = redis
         self._ttl = ttl_seconds
+        self._lease = lease_seconds
         self._prefix = key_prefix
+        self._lease_value = f"processing:{instance_id or uuid.uuid4().hex}"
 
     async def __call__(self, handler: Handler, event: TelegramObject, data: dict[str, Any]) -> Any:
         if not isinstance(event, Update):
             return await handler(event, data)
+        key = f"{self._prefix}{event.update_id}"
         try:
-            first = await self._redis.set(
-                f"{self._prefix}{event.update_id}", 1, nx=True, ex=self._ttl
+            claimed = await self._redis.eval(
+                _CLAIM_SCRIPT, 1, key, self._lease_value, str(self._lease)
             )
         except RedisError:
             logger.warning("update deduplication unavailable; processing update")
             return await handler(event, data)
-        if not first:
+        if not claimed:
             logger.info("duplicate update dropped", extra={"update_id": event.update_id})
             return None
-        return await handler(event, data)
+
+        try:
+            result = await handler(event, data)
+        except BaseException:
+            await self._settle(key, done=False)
+            raise
+        await self._settle(key, done=True)
+        return result
+
+    async def _settle(self, key: str, *, done: bool) -> None:
+        try:
+            if done:
+                await self._redis.set(key, DONE, ex=self._ttl)
+            else:
+                await self._redis.delete(key)
+        except RedisError:
+            # The lease expires on its own, so a failure here only delays a retry.
+            logger.warning("could not settle update deduplication state")
 
 
 class FloodControlMiddleware(BaseMiddleware):
@@ -54,19 +100,25 @@ class FloodControlMiddleware(BaseMiddleware):
     """
 
     def __init__(
-        self, redis: Redis, limit: int, window_seconds: int, key_prefix: str = "bot:flood:"
+        self,
+        redis: Redis,
+        limit: int,
+        window_seconds: int,
+        key_prefix: str = "bot:flood:",
+        clock: Callable[[], float] = time.time,
     ) -> None:
         self._redis = redis
         self._limit = limit
         self._window = window_seconds
         self._prefix = key_prefix
+        self._clock = clock
 
     async def __call__(self, handler: Handler, event: TelegramObject, data: dict[str, Any]) -> Any:
         user: User | None = data.get("event_from_user")
         if user is None:
             return await handler(event, data)
 
-        window = int(time.time()) // self._window
+        window = int(self._clock()) // self._window
         key = f"{self._prefix}{user.id}:{window}"
         try:
             async with self._redis.pipeline(transaction=True) as pipe:
