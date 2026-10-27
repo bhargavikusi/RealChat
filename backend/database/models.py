@@ -1,0 +1,6 @@
+"""Imports every model module so Base.metadata is complete.
+
+Alembic's env.py imports this; add each new model module here.
+"""
+
+from backend.modules.users import models as users  # noqa: F401

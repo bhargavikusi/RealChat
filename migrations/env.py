@@ -7,6 +7,7 @@ from sqlalchemy.engine import Connection
 from sqlalchemy.ext.asyncio import create_async_engine
 
 from backend.config.settings import load_settings
+from backend.database import models as _models  # noqa: F401  (registers all tables)
 from backend.database.engine import Base
 
 config = context.config

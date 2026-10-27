@@ -92,6 +92,7 @@ docker compose exec postgres sh -c 'createdb -U "$POSTGRES_USER" realchat_test'
 
 * [Product requirements](docs/requirements.md)
 * [Architecture](docs/architecture.md)
+* [Database schema](docs/database.md)
 * [Decisions and open questions](docs/decisions.md)
 * [Contributor instructions](CLAUDE.md)
 
