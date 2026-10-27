@@ -10,12 +10,13 @@ from typing import Any
 
 from aiogram import Bot
 from aiogram.client.session.base import BaseSession
-from aiogram.methods import SendMessage, TelegramMethod
+from aiogram.methods import AnswerCallbackQuery, SendMessage, SendPhoto, TelegramMethod
 from aiogram.methods.base import TelegramType
 from aiogram.types import (
     CallbackQuery,
     Chat,
     InlineKeyboardMarkup,
+    InputFile,
     Message,
     PhotoSize,
     Update,
@@ -46,6 +47,22 @@ class RecordingSession(BaseSession):
                 text=method.text,
             )
             return sent  # type: ignore[return-value]
+        if isinstance(method, SendPhoto):
+            # An uploaded file gets a new identifier, as Telegram assigns one; a file
+            # identifier that was sent is echoed back unchanged.
+            file_id = (
+                f"uploaded-{len(self.requests)}"
+                if isinstance(method.photo, InputFile)
+                else str(method.photo)
+            )
+            sent = Message(
+                message_id=len(self.requests),
+                date=datetime.now(UTC),
+                chat=Chat(id=int(method.chat_id), type="private"),
+                caption=method.caption,
+                photo=[PhotoSize(file_id=file_id, file_unique_id=file_id, width=512, height=512)],
+            )
+            return sent  # type: ignore[return-value]
         # Most other methods (answerCallbackQuery, etc.) return True.
         return True  # type: ignore[return-value]
 
@@ -64,16 +81,28 @@ class RecordingSession(BaseSession):
         pass
 
     def sent_texts(self) -> list[str]:
-        return [m.text for m in self.requests if isinstance(m, SendMessage)]
+        """Text of every message sent, using the caption for photos."""
+        return [
+            m.text if isinstance(m, SendMessage) else m.caption or ""
+            for m in self.requests
+            if isinstance(m, SendMessage | SendPhoto)
+        ]
+
+    def callback_answers(self) -> list[str]:
+        """Text of every callback answer (the short notice shown on a button press)."""
+        return [m.text or "" for m in self.requests if isinstance(m, AnswerCallbackQuery)]
+
+    def sent_photos(self) -> list[SendPhoto]:
+        return [m for m in self.requests if isinstance(m, SendPhoto)]
 
     def last_buttons(self) -> dict[str, str]:
-        """Button text -> callback data for the most recent message that had buttons."""
+        """Button text -> callback data (or URL) for the latest message that had buttons."""
         for method in reversed(self.requests):
-            if isinstance(method, SendMessage) and isinstance(
+            if isinstance(method, SendMessage | SendPhoto) and isinstance(
                 method.reply_markup, InlineKeyboardMarkup
             ):
                 return {
-                    button.text: str(button.callback_data)
+                    button.text: str(button.callback_data or button.url)
                     for row in method.reply_markup.inline_keyboard
                     for button in row
                 }

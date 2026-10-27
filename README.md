@@ -60,6 +60,8 @@ uv run python -m apps.bot.main
 
 During development the bot uses long polling, so it needs no public URL. It stops on Ctrl+C. The minimum age is `MIN_AGE` (default 18 for development; see D-009). With `APP_ENV=production` the bot refuses to start unless `MIN_AGE` is set explicitly.
 
+At startup the bot registers its command menu (`/start`, `/profile`, `/help`) with Telegram for private chats. Age and gender can each be changed once per `PROFILE_CHANGE_COOLDOWN_DAYS` (default 30). `/help` shows links to the announcement channel and support only when `ANNOUNCEMENT_CHANNEL_URL` and `SUPPORT_CONTACT` are set to `https://` links.
+
 While Redis is available, two protections apply:
 
 * An update that Telegram delivers again after being handled successfully is dropped for `BOT_UPDATE_DEDUP_TTL_SECONDS`. If the bot stops or crashes while handling an update, Telegram redelivers it after the restart and it is processed. An update whose handler fails with an error is **not** retried automatically. The user is told something went wrong and can try again.

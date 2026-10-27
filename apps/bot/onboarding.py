@@ -83,8 +83,9 @@ COUNTRY_NOT_FOUND = "I couldn't find that country. Please type its name in Engli
 COUNTRY_PICK = "Did you mean one of these?"
 PHOTO_EXPECTED = "Please send a photo, or tap Skip."
 ALREADY_DONE = "Already saved."
-ONBOARDING_COMPLETE = "You're all set! The main menu is coming soon."
-WELCOME_BACK = "Welcome back! The main menu is coming soon."
+MENU_HINT = "Open the menu any time: /profile to view or edit your profile, /help for help."
+ONBOARDING_COMPLETE = f"You're all set! {MENU_HINT}"
+WELCOME_BACK = f"Welcome back! {MENU_HINT}"
 
 REQUIRED_STEPS = {
     "nickname": Onboarding.nickname,
@@ -142,7 +143,7 @@ class Context:
         )
 
 
-async def _load(session: AsyncSession, telegram_user: TelegramUser) -> Context:
+async def load_context(session: AsyncSession, telegram_user: TelegramUser) -> Context:
     """Load the user's state and end the transaction before any Telegram call."""
     user = await service.get_or_create_user(session, telegram_user.id)
     profile = await service.get_profile(session, user.id)
@@ -220,7 +221,7 @@ async def start(
 ) -> None:
     if message.from_user is None:
         return
-    ctx = await _load(session, message.from_user)
+    ctx = await load_context(session, message.from_user)
     await prompt_next(bot, message.chat.id, session, ctx, state, settings)
 
 
@@ -234,7 +235,7 @@ async def resume(
     """
     if message.from_user is None:
         return
-    ctx = await _load(session, message.from_user)
+    ctx = await load_context(session, message.from_user)
     if message.photo and ctx.in_optional_steps and await state.get_state() is None:
         await _save_photo(message, bot, session, ctx, state, settings)
         return
@@ -252,7 +253,7 @@ async def on_terms(
     state: FSMContext,
     settings: BotSettings,
 ) -> None:
-    ctx = await _load(session, query.from_user)
+    ctx = await load_context(session, query.from_user)
     if callback_data.version != TERMS_VERSION:
         # A button from an older version: the user has not seen the current terms.
         await query.answer(TERMS_UPDATED, show_alert=True)
@@ -286,7 +287,7 @@ async def on_nickname(
 ) -> None:
     if message.from_user is None or message.text is None:
         return
-    ctx = await _load(session, message.from_user)
+    ctx = await load_context(session, message.from_user)
     if not await _gate(ctx, bot, message.chat.id, session, state, settings):
         return
     try:
@@ -303,7 +304,7 @@ async def on_age(
 ) -> None:
     if message.from_user is None or message.text is None:
         return
-    ctx = await _load(session, message.from_user)
+    ctx = await load_context(session, message.from_user)
     if not await _gate(ctx, bot, message.chat.id, session, state, settings):
         return
     try:
@@ -334,7 +335,7 @@ async def on_gender(
     state: FSMContext,
     settings: BotSettings,
 ) -> None:
-    ctx = await _load(session, query.from_user)
+    ctx = await load_context(session, query.from_user)
     if not await _gate(ctx, bot, query.from_user.id, session, state, settings):
         await query.answer()
         return
@@ -373,7 +374,7 @@ async def on_country_choice(
     state: FSMContext,
     settings: BotSettings,
 ) -> None:
-    ctx = await _load(session, query.from_user)
+    ctx = await load_context(session, query.from_user)
     if not await _gate(ctx, bot, query.from_user.id, session, state, settings):
         await query.answer()
         return
@@ -401,7 +402,7 @@ async def on_city(
 ) -> None:
     if message.from_user is None or message.text is None:
         return
-    ctx = await _load(session, message.from_user)
+    ctx = await load_context(session, message.from_user)
     if not await _gate(ctx, bot, message.chat.id, session, state, settings):
         return
     try:
@@ -436,7 +437,7 @@ async def on_photo(
 ) -> None:
     if message.from_user is None or not message.photo:
         return
-    ctx = await _load(session, message.from_user)
+    ctx = await load_context(session, message.from_user)
     if not await _gate(ctx, bot, message.chat.id, session, state, settings):
         return
     await _save_photo(message, bot, session, ctx, state, settings)
@@ -454,7 +455,7 @@ async def on_skip(
     state: FSMContext,
     settings: BotSettings,
 ) -> None:
-    ctx = await _load(session, query.from_user)
+    ctx = await load_context(session, query.from_user)
     # New terms are shown before anything else, even for a stale Skip button.
     if not await _gate(ctx, bot, query.from_user.id, session, state, settings):
         await query.answer()

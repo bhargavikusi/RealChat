@@ -13,11 +13,15 @@ from alembic import command
 from alembic.config import Config
 from pydantic import SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
+from redis.asyncio import Redis
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
-from backend.config.settings import Settings
+from backend.config.settings import BotSettings, Settings
+from backend.core.redis import create_redis
 from backend.database.engine import create_engine, create_session_factory
+from tests.support.chat import Chat
+from tests.support.telegram import FAKE_TOKEN
 
 
 class IntegrationSettings(BaseSettings):
@@ -84,3 +88,31 @@ async def db_engine(migrated_database_url: str) -> AsyncIterator[AsyncEngine]:
 @pytest.fixture
 def session_factory(db_engine: AsyncEngine) -> async_sessionmaker[AsyncSession]:
     return create_session_factory(db_engine)
+
+
+@pytest.fixture
+async def redis(redis_url: str) -> AsyncIterator[Redis]:
+    # TEST_REDIS_URL points at a database used only by tests, so flushing it is safe.
+    client = create_redis(redis_url)
+    await client.flushdb()
+    yield client
+    await client.flushdb()
+    await client.aclose()
+
+
+@pytest.fixture
+def bot_settings(database_url: str, redis_url: str) -> BotSettings:
+    return BotSettings(
+        _env_file=None,
+        app_env="test",
+        database_url=SecretStr(database_url),
+        redis_url=SecretStr(redis_url),
+        telegram_bot_token=SecretStr(FAKE_TOKEN),
+    )
+
+
+@pytest.fixture
+def chat(
+    bot_settings: BotSettings, redis: Redis, session_factory: async_sessionmaker[AsyncSession]
+) -> Chat:
+    return Chat(bot_settings, redis, session_factory)
