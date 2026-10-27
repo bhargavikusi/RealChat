@@ -12,7 +12,14 @@ REDIS_URL = f"redis://:{REDIS_SECRET}@localhost:6379/0"
 
 @pytest.fixture(autouse=True)
 def clean_env(monkeypatch: pytest.MonkeyPatch) -> None:
-    for name in ("APP_ENV", "LOG_LEVEL", "DATABASE_URL", "REDIS_URL", "TELEGRAM_BOT_TOKEN"):
+    for name in (
+        "APP_ENV",
+        "LOG_LEVEL",
+        "DATABASE_URL",
+        "REDIS_URL",
+        "TELEGRAM_BOT_TOKEN",
+        "MIN_AGE",
+    ):
         monkeypatch.delenv(name, raising=False)
 
 
@@ -122,3 +129,16 @@ def test_non_bot_processes_do_not_need_a_token(monkeypatch: pytest.MonkeyPatch) 
     monkeypatch.setenv("REDIS_URL", REDIS_URL)
 
     assert load_settings(env_file=None).app_env == "development"
+
+
+def test_production_requires_explicit_min_age(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("APP_ENV", "production")
+    monkeypatch.setenv("DATABASE_URL", DATABASE_URL)
+    monkeypatch.setenv("REDIS_URL", REDIS_URL)
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", BOT_TOKEN)
+
+    with pytest.raises(SettingsError, match="MIN_AGE must be set explicitly in production"):
+        load_bot_settings(env_file=None)
+
+    monkeypatch.setenv("MIN_AGE", "18")
+    assert load_bot_settings(env_file=None).min_age == 18

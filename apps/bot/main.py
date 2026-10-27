@@ -9,21 +9,39 @@ import time
 from collections.abc import Callable
 
 from aiogram import Bot, Dispatcher
+from aiogram.fsm.storage.redis import RedisEventIsolation, RedisStorage
 from redis.asyncio import Redis
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from apps.bot import errors, start
+from apps.bot import errors, onboarding
+from apps.bot.db import DbSessionMiddleware
 from apps.bot.middlewares import DeduplicateUpdatesMiddleware, FloodControlMiddleware
 from backend.config.settings import BotSettings, load_bot_settings
 from backend.core.logging import configure_logging
 from backend.core.redis import create_redis
+from backend.database.engine import create_engine, create_session_factory
 
 logger = logging.getLogger(__name__)
 
 
 def create_dispatcher(
-    settings: BotSettings, redis: Redis, clock: Callable[[], float] = time.time
+    settings: BotSettings,
+    redis: Redis,
+    session_factory: async_sessionmaker[AsyncSession],
+    clock: Callable[[], float] = time.time,
 ) -> Dispatcher:
-    dispatcher = Dispatcher()
+    # FSM state (position within optional onboarding steps) lives in Redis so it
+    # survives restarts; durable progress is in PostgreSQL. `settings` is passed to
+    # every handler that declares a `settings` parameter.
+    # Event isolation processes one update at a time per user and chat, so a quick
+    # second message cannot be routed by the FSM state the first one is changing.
+    # The locks live in Redis: they expire on their own (no per-user memory kept in
+    # the process) and remain correct if several webhook workers are used (O-006).
+    dispatcher = Dispatcher(
+        storage=RedisStorage(redis),
+        events_isolation=RedisEventIsolation(redis),
+        settings=settings,
+    )
     # Order matters: duplicates are discarded before they count toward flood limits.
     dispatcher.update.outer_middleware(
         DeduplicateUpdatesMiddleware(
@@ -40,7 +58,9 @@ def create_dispatcher(
             clock=clock,
         )
     )
-    dispatcher.include_routers(errors.create_router(), start.create_router())
+    # Inner middleware: runs only for updates that passed deduplication and flood control.
+    dispatcher.update.middleware(DbSessionMiddleware(session_factory))
+    dispatcher.include_routers(errors.create_router(), onboarding.create_router())
     return dispatcher
 
 
@@ -54,8 +74,9 @@ async def run() -> None:
     settings = load_bot_settings()
     configure_logging(settings.log_level)
     redis = create_redis(settings.redis_url.get_secret_value())
+    engine = create_engine(settings.database_url.get_secret_value())
     bot = create_bot(settings)
-    dispatcher = create_dispatcher(settings, redis)
+    dispatcher = create_dispatcher(settings, redis, create_session_factory(engine))
     try:
         logger.info("bot starting (long polling)")
         await dispatcher.start_polling(
@@ -63,6 +84,7 @@ async def run() -> None:
         )
     finally:
         await bot.session.close()
+        await engine.dispose()
         await redis.aclose()
 
 
