@@ -455,6 +455,10 @@ async def on_skip(
     settings: BotSettings,
 ) -> None:
     ctx = await _load(session, query.from_user)
+    # New terms are shown before anything else, even for a stale Skip button.
+    if not await _gate(ctx, bot, query.from_user.id, session, state, settings):
+        await query.answer()
+        return
     current = await state.get_state()
     expected = {"city": Onboarding.city.state, "photo": Onboarding.photo.state}.get(
         callback_data.step

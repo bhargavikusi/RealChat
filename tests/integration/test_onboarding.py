@@ -6,6 +6,7 @@ from itertools import count
 
 import pytest
 from aiogram import Dispatcher
+from aiogram.fsm.storage.redis import RedisEventIsolation
 from pydantic import SecretStr
 from redis.asyncio import Redis
 from sqlalchemy import func, select
@@ -335,3 +336,27 @@ async def test_quick_successive_messages_are_processed_in_order(
     profile = await _profile(session_factory)
     assert profile.nickname == "Night Owl"
     assert profile.age_at_entry == 24
+
+
+async def test_skip_after_a_terms_update_shows_the_new_terms(
+    chat: Chat, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    await _complete_required_steps(chat)
+    skip_city = chat.session.last_buttons()["Skip"]
+    await chat.press("Skip")  # now on the photo step; the city Skip button is stale
+
+    monkeypatch.setattr(ob, "TERMS_VERSION", "draft-99")  # the terms change
+    await chat.press_data(skip_city)
+
+    assert chat.last() == TERMS
+
+
+async def test_event_isolation_locks_are_kept_in_redis_and_released(
+    chat: Chat, redis: Redis
+) -> None:
+    assert isinstance(chat.dispatcher.fsm.events_isolation, RedisEventIsolation)
+
+    await chat.send("/start")
+
+    # The per-user lock is released after the update; nothing is left behind.
+    assert await redis.keys("*:lock") == []

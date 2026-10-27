@@ -160,6 +160,16 @@ Work happens on short-lived issue branches, such as `feature/12-onboarding`, cre
 
 **Why:** Owner preference. Age is self-declared (D-010), so the check stops honest under-age users and genuine typos. It cannot stop a determined false entry.
 
+### D-018 — Per-user event isolation uses Redis locks
+
+**Date:** 2026-10-27
+**Decision:**
+
+* The bot handles each user's updates one at a time using aiogram's `RedisEventIsolation`.
+* Each lock expires after 60 seconds, so a lock left by a crashed process cannot block a user for longer than that.
+
+**Why:** The in-process alternative (`SimpleEventIsolation`) keeps one lock per user forever, so memory grows until restart. It also only works within a single process. Redis locks keep no per-user memory in the process, and they stay correct if webhooks with several workers are adopted (O-006). The cost is about two Redis calls per update. Onboarding already depends on Redis for FSM state, so this adds no new point of failure.
+
 ---
 
 ## Open
