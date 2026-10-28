@@ -106,6 +106,14 @@ class RecordingSession(BaseSession):
             if isinstance(m, SendMessage | SendPhoto)
         ]
 
+    def sent_to(self, chat_id: int) -> list[SendMessage | SendPhoto]:
+        """Messages and photos sent to one chat, oldest first."""
+        return [
+            m
+            for m in self.requests
+            if isinstance(m, SendMessage | SendPhoto) and int(m.chat_id) == chat_id
+        ]
+
     def callback_answers(self) -> list[str]:
         """Text of every callback answer (the short notice shown on a button press)."""
         return [m.text or "" for m in self.requests if isinstance(m, AnswerCallbackQuery)]

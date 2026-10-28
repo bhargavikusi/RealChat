@@ -11,7 +11,7 @@ from pathlib import Path
 
 from aiogram import Bot
 from aiogram.exceptions import TelegramBadRequest
-from aiogram.types import FSInputFile, InlineKeyboardMarkup
+from aiogram.types import FSInputFile, InlineKeyboardMarkup, ReplyKeyboardMarkup
 from redis.asyncio import Redis
 from redis.exceptions import RedisError
 
@@ -36,7 +36,7 @@ class Avatars:
         chat_id: int,
         gender: Gender,
         caption: str,
-        reply_markup: InlineKeyboardMarkup | None = None,
+        reply_markup: InlineKeyboardMarkup | ReplyKeyboardMarkup | None = None,
     ) -> None:
         key = f"avatar_file_id:{bot.id}:{gender.value}"
         cached = await self._get(key)
@@ -44,7 +44,11 @@ class Avatars:
             try:
                 await bot.send_photo(chat_id, cached, caption=caption, reply_markup=reply_markup)
                 return
-            except TelegramBadRequest:
+            except TelegramBadRequest as error:
+                # Only an unusable file identifier is fixed by uploading again; any other
+                # problem (e.g. the chat cannot be reached) is not about the cache.
+                if "file" not in error.message.casefold():
+                    raise
                 logger.warning(
                     "cached avatar rejected, uploading again", extra={"gender": gender.value}
                 )

@@ -7,7 +7,7 @@ Only describe what the product actually does: blocking and reporting are added
 here when those features ship, and the retention period once it is decided (O-002).
 """
 
-TERMS_VERSION = "draft-3"
+TERMS_VERSION = "draft-4"
 
 TERMS_TEXT = """\
 DRAFT - not for launch
@@ -15,8 +15,9 @@ DRAFT - not for launch
 Welcome to RealChat. Before you start:
 
 • You must be at least {minimum_age} years old.
-• You chat anonymously with other people. Other users see only your nickname and \
-the profile details you choose to add — never your Telegram name, username, or phone number.
+• You chat anonymously with other people. Other users never see your Telegram name, \
+username, or phone number. When you're matched, your chat partner sees your profile \
+card: nickname, age, gender, country, and any city, bio, or photo you add.
 • Messages pass through the RealChat bot. They are not end-to-end encrypted. \
 Conversations may be kept to investigate reports and abuse; how long is not decided yet.
 • Be respectful. Harassment, threats, hate, sexual content involving minors, spam, \

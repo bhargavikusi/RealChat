@@ -14,7 +14,7 @@ from aiogram.types import BotCommandScopeAllPrivateChats
 from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from apps.bot import account, admin, errors, menu, onboarding, profile
+from apps.bot import account, admin, chat, errors, menu, onboarding, profile
 from apps.bot.account import AccessGateMiddleware
 from apps.bot.avatars import Avatars
 from apps.bot.db import DbSessionMiddleware
@@ -25,6 +25,7 @@ from backend.core.logging import configure_logging
 from backend.core.redis import create_redis
 from backend.database.engine import create_engine, create_session_factory
 from backend.modules.admin.settings import RuntimeSettings
+from backend.modules.matching.queue import SearchQueue
 
 logger = logging.getLogger(__name__)
 
@@ -38,7 +39,8 @@ def create_dispatcher(
     # FSM state (position within optional onboarding steps) lives in Redis so it
     # survives restarts; durable progress is in PostgreSQL. `settings` is passed to
     # every handler that declares a `settings` parameter, and `avatars` and
-    # `runtime_settings` (admin-changeable values, D-035) likewise.
+    # `runtime_settings` (admin-changeable values, D-035) and `search_queue` (D-027)
+    # likewise.
     # Event isolation processes one update at a time per user and chat, so a quick
     # second message cannot be routed by the FSM state the first one is changing.
     # The locks live in Redis: they expire on their own (no per-user memory kept in
@@ -49,6 +51,7 @@ def create_dispatcher(
         settings=settings,
         avatars=Avatars(redis),
         runtime_settings=RuntimeSettings(),
+        search_queue=SearchQueue(redis),
     )
     # Order matters: duplicates are discarded before they count toward flood limits.
     dispatcher.update.outer_middleware(
@@ -76,6 +79,7 @@ def create_dispatcher(
         menu.create_router(),
         account.create_router(),
         admin.create_router(),
+        chat.create_router(),
         profile.create_router(),
         onboarding.create_router(),
     )

@@ -16,7 +16,10 @@ Implemented so far:
 * **API:** `apps/api/main.py` serves `/health` (the process is running) and `/ready` (PostgreSQL and Redis are reachable, each checked with a 2-second timeout). Failure details go to the server log and never into the HTTP response. Interactive docs and the OpenAPI schema are disabled.
 * **Local services:** `docker-compose.yml` runs PostgreSQL 18 and Redis 8, both ARM64-compatible, bound to `127.0.0.1` only.
 
-No keyboard menu, matching, chat, or worker exist yet.
+* **Matching and chat:** `backend/modules/matching/queue.py` keeps searches in Redis: a sorted set of searching users plus one key per user holding the current search id (D-027). Each change that touches both runs as a single Lua script. `backend/modules/matching/matcher.py` pairs searchers (D-041); `backend/modules/chat/` holds the conversation tables and the service that starts, finds, and ends conversations, checks eligibility, and finds recent partners. `apps/bot/chat.py` handles 🎭 New Anonymous Chat (start a search, with a Cancel button bound to that search), 👤 Partner profile, and ⏹ End chat, and provides `ChatNotifier`, which the worker uses to announce matches and ended searches. `apps/bot/keyboards.py` defines the main and chat keyboards; the bot shows the chat keyboard while the user is in a chat. Messages sent during a chat are not relayed yet.
+* **Worker:** `apps/worker/main.py` runs the matcher about once a second. Each tick takes a Redis lock, so only one matcher runs even with several workers. It ends searches past the time limit (an admin setting) and tells those users; re-checks waiting users in PostgreSQL (active account, onboarding complete, current terms, no open conversation) and drops anyone ineligible; pairs the rest oldest first, avoiding partners from the last few minutes while anyone else is waiting (D-033); then, for each pair, takes both out of the queue atomically, re-checks them and creates the conversation in one transaction, and only after that commit tells both users. If the database refuses the match, both go back to their old place in the queue. A failed tick is logged without exception messages and the next one runs as usual.
+
+No message relay, blocking, reporting, or Mini App exist yet.
 
 ## Overview (planned)
 

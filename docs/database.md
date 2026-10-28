@@ -91,6 +91,29 @@ An append-only record of administrative changes. Rows are never updated or delet
 
 Its retention period is not decided yet; audit records are kept separately from conversation content (requirements §20).
 
+### `conversations`
+
+One row per chat between two matched users (D-027).
+
+| Column | Type | Notes |
+|---|---|---|
+| `id` | bigint identity | |
+| `started_at` | timestamptz | |
+| `ended_at` | timestamptz, nullable | NULL while the chat is open. |
+| `end_reason` | varchar(16), nullable | `user_ended` for now; set together with `ended_at`, enforced by a constraint. More reasons come with idle timeouts, blocking, and unreachable partners. |
+| `ended_by_user_id` | bigint, nullable | References `users.id`. The user who ended it, when a user did. |
+
+### `conversation_participants`
+
+The two users in each conversation. The primary key is `(conversation_id, user_id)`; `conversation_id` references `conversations.id` with `ON DELETE CASCADE`, and `user_id` references `users.id`.
+
+| Column | Type | Notes |
+|---|---|---|
+| `conversation_id`, `user_id` | bigint | |
+| `left_at` | timestamptz, nullable | Set for both users when the conversation ends. |
+
+A partial unique index on `user_id` where `left_at IS NULL` allows each user at most one open conversation. It is the final guard against double matches: if two matches for the same user are attempted at once, one insert fails. The index on `(user_id, conversation_id)` serves "this user's conversations", used for repeat-match avoidance. Ending a conversation locks its `conversations` row and re-reads it, so when both users end a chat at the same moment it is ended once. Message content is not stored yet; what is stored and for how long comes with message relay (D-028).
+
 ## Where rules are enforced
 
 Profile rules are enforced twice:

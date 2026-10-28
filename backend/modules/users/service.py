@@ -45,6 +45,10 @@ async def get_or_create_user(session: AsyncSession, telegram_user_id: int) -> Us
     return user
 
 
+async def get_user(session: AsyncSession, user_id: int) -> User:
+    return (await session.execute(select(User).where(User.id == user_id))).scalar_one()
+
+
 async def get_profile(session: AsyncSession, user_id: int) -> Profile:
     return (await session.execute(select(Profile).where(Profile.user_id == user_id))).scalar_one()
 

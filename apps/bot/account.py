@@ -10,12 +10,14 @@ an older profile card, they are shown the terms instead. Suspended and banned us
 may delete without that, from their notice (D-026).
 """
 
+import logging
 import secrets
 from datetime import UTC, datetime
 from typing import Any
 
 from aiogram import BaseMiddleware, Bot, F, Router
 from aiogram.enums import ChatType
+from aiogram.exceptions import TelegramAPIError
 from aiogram.filters.callback_data import CallbackData
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
@@ -29,12 +31,17 @@ from aiogram.types import (
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from apps.bot.admin import admin_button
+from apps.bot.keyboards import main_keyboard
 from apps.bot.menu import HelpAction
 from apps.bot.middlewares import Handler
 from apps.bot.onboarding import load_context, prompt_next
 from backend.config.settings import BotSettings
+from backend.core.logging import exception_summary
 from backend.modules.admin import service as admin_service
+from backend.modules.chat import service as chat_service
 from backend.modules.users import service
+
+logger = logging.getLogger(__name__)
 
 
 class AccountAction(CallbackData, prefix="acct"):
@@ -62,6 +69,7 @@ DELETE_CONFIRM = (
 DELETED = "Your account has been deleted. Send /start if you ever want to come back."
 DELETED_RESTRICTED = "Your profile has been erased. Your account remains restricted."
 KEPT = "Your account was not deleted."
+PARTNER_LEFT = "Your chat partner left RealChat, so the chat has ended."
 EXPIRED = "This button has expired."
 NOTICES = {
     "suspended": "Your account is suspended, so RealChat is unavailable to you for now.",
@@ -172,11 +180,22 @@ async def on_confirm(
         return
     user = await service.get_or_create_user(session, query.from_user.id)
     restricted = service.is_restricted(user.status)
-    await service.delete_account(session, user.id, datetime.now(UTC))
+    now = datetime.now(UTC)
+    # A deleted account leaves any chat it is in, so the partner is not left waiting.
+    ended = await chat_service.end_conversation(session, user.id, now)
+    partner = None if ended is None else await service.get_user(session, ended.partner_id)
+    await service.delete_account(session, user.id, now)
     await session.commit()
     await state.clear()
     await query.answer()
     await bot.send_message(query.from_user.id, DELETED_RESTRICTED if restricted else DELETED)
+    if partner is not None:
+        try:
+            await bot.send_message(
+                partner.telegram_user_id, PARTNER_LEFT, reply_markup=main_keyboard()
+            )
+        except TelegramAPIError as exc:
+            logger.warning("could not tell a partner the chat ended", extra=exception_summary(exc))
 
 
 async def on_keep(

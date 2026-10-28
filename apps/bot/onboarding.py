@@ -26,6 +26,7 @@ from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMar
 from aiogram.types import User as TelegramUser
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from apps.bot.keyboards import NEW_CHAT, current_keyboard, main_keyboard
 from backend.config.settings import BotSettings
 from backend.modules.users import service
 from backend.modules.users.countries import match_country
@@ -83,7 +84,10 @@ COUNTRY_NOT_FOUND = "I couldn't find that country. Please type its name in Engli
 COUNTRY_PICK = "Did you mean one of these?"
 PHOTO_EXPECTED = "Please send a photo, or tap Skip."
 ALREADY_DONE = "Already saved."
-MENU_HINT = "Open the menu any time: /profile to view or edit your profile, /help for help."
+MENU_HINT = (
+    f"Tap {NEW_CHAT} to meet someone. "
+    "Open the menu any time: /profile to view or edit your profile, /help for help."
+)
 ONBOARDING_COMPLETE = f"You're all set! {MENU_HINT}"
 WELCOME_BACK = f"Welcome back! {MENU_HINT}"
 
@@ -182,8 +186,10 @@ async def prompt_next(
         return
 
     if ctx.profile.onboarding_completed_at is not None:
+        keyboard = await current_keyboard(session, ctx.user.id)
+        await session.commit()
         await state.clear()
-        await bot.send_message(chat_id, WELCOME_BACK)
+        await bot.send_message(chat_id, WELCOME_BACK, reply_markup=keyboard)
         return
 
     if after is None:
@@ -196,7 +202,7 @@ async def prompt_next(
         ctx.profile.onboarding_completed_at = _now()
         await session.commit()
         await state.clear()
-        await bot.send_message(chat_id, ONBOARDING_COMPLETE)
+        await bot.send_message(chat_id, ONBOARDING_COMPLETE, reply_markup=main_keyboard())
 
 
 async def _gate(
