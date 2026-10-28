@@ -20,6 +20,14 @@ down_revision: str | Sequence[str] | None = "5ec24bbfd30d"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
+APPEND_ONLY_FUNCTION = """
+CREATE FUNCTION admin_audit_log_append_only() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+    RAISE EXCEPTION 'admin_audit_log is append-only' USING ERRCODE = 'restrict_violation';
+END;
+$$
+"""
+
 
 def upgrade() -> None:
     op.create_table(
@@ -60,6 +68,13 @@ def upgrade() -> None:
         ),
         sa.PrimaryKeyConstraint("id", name=op.f("pk_admin_audit_log")),
     )
+    # Append-only at the database boundary: any UPDATE or DELETE of an audit row fails,
+    # whatever code path attempts it. (TRUNCATE, used only by tests, is not affected.)
+    op.execute(APPEND_ONLY_FUNCTION)
+    op.execute(
+        "CREATE TRIGGER admin_audit_log_append_only BEFORE UPDATE OR DELETE ON admin_audit_log "
+        "FOR EACH ROW EXECUTE FUNCTION admin_audit_log_append_only()"
+    )
     op.add_column(
         "users", sa.Column("role", sa.String(length=16), server_default="user", nullable=False)
     )
@@ -71,5 +86,7 @@ def upgrade() -> None:
 def downgrade() -> None:
     op.drop_constraint(op.f("ck_users_role"), "users", type_="check")
     op.drop_column("users", "role")
+    op.execute("DROP TRIGGER admin_audit_log_append_only ON admin_audit_log")
+    op.execute("DROP FUNCTION admin_audit_log_append_only()")
     op.drop_table("admin_audit_log")
     op.drop_table("app_settings")

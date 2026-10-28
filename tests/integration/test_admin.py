@@ -2,6 +2,7 @@
 
 import asyncio
 import re
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
@@ -15,8 +16,9 @@ from apps.bot import admin as ad
 from apps.bot import onboarding as ob
 from apps.bot.menu import HELP_TEXT
 from backend.modules.admin import service
+from backend.modules.admin import settings as settings_module
 from backend.modules.admin.models import AdminAuditEntry, AppSetting
-from backend.modules.admin.service import AdminError
+from backend.modules.admin.service import AdminError, NotAdminError
 from backend.modules.admin.settings import SPECS, RuntimeSettings, SettingKey, load_values
 from backend.modules.users import service as users
 from backend.modules.users.models import User
@@ -40,19 +42,26 @@ async def _set_role(sessions: Sessions, role: str, telegram_id: int = USER_ID) -
         await session.commit()
 
 
-async def _audit(sessions: Sessions) -> list[tuple[object, ...]]:
+async def _create_admin(sessions: Sessions, telegram_id: int = USER_ID) -> int:
+    user_id = await _create(sessions, telegram_id)
+    await _set_role(sessions, "admin", telegram_id)
+    return user_id
+
+
+async def _audit(sessions: Sessions, action: str | None = None) -> list[tuple[object, ...]]:
+    """Audit entries in order, optionally only those with `action`."""
     async with sessions() as session:
-        rows = await session.execute(
-            select(
-                AdminAuditEntry.actor_user_id,
-                AdminAuditEntry.action,
-                AdminAuditEntry.target_user_id,
-                AdminAuditEntry.setting_key,
-                AdminAuditEntry.old_value,
-                AdminAuditEntry.new_value,
-            ).order_by(AdminAuditEntry.id)
-        )
-        return [tuple(row) for row in rows]
+        query = select(
+            AdminAuditEntry.actor_user_id,
+            AdminAuditEntry.action,
+            AdminAuditEntry.target_user_id,
+            AdminAuditEntry.setting_key,
+            AdminAuditEntry.old_value,
+            AdminAuditEntry.new_value,
+        ).order_by(AdminAuditEntry.id)
+        if action is not None:
+            query = query.where(AdminAuditEntry.action == action)
+        return [tuple(row) for row in await session.execute(query)]
 
 
 async def _values(sessions: Sessions) -> dict[SettingKey, int]:
@@ -174,6 +183,16 @@ async def test_cli_rejects_unknown_roles(session_factory: Sessions) -> None:
         await admin_cli.run(["set-role", str(USER_ID), "owner"], session_factory)
 
 
+async def test_cli_help_needs_no_configuration(monkeypatch: pytest.MonkeyPatch) -> None:
+    def no_configuration() -> None:
+        raise AssertionError("configuration must not be loaded for --help")
+
+    monkeypatch.setattr(admin_cli, "load_settings", no_configuration)
+    with pytest.raises(SystemExit) as excinfo:
+        await admin_cli._main(["--help"])
+    assert excinfo.value.code == 0
+
+
 # --- Runtime settings ----------------------------------------------------------------
 
 
@@ -184,7 +203,7 @@ async def test_defaults_apply_until_a_setting_is_changed(session_factory: Sessio
 async def test_setting_changes_are_audited_and_unchanged_values_are_not(
     session_factory: Sessions,
 ) -> None:
-    admin_id = await _create(session_factory)
+    admin_id = await _create_admin(session_factory)
     async with session_factory() as session:
         assert await service.change_setting(session, admin_id, RETENTION, 14) == 7
         assert await service.change_setting(session, admin_id, RETENTION, 14) == 14
@@ -192,19 +211,19 @@ async def test_setting_changes_are_audited_and_unchanged_values_are_not(
         await session.commit()
 
     assert (await _values(session_factory))[RETENTION] == 30
-    assert await _audit(session_factory) == [
+    assert await _audit(session_factory, "setting_changed") == [
         (admin_id, "setting_changed", None, RETENTION.value, "7", "14"),
         (admin_id, "setting_changed", None, RETENTION.value, "14", "30"),
     ]
 
 
 async def test_out_of_range_changes_are_rejected(session_factory: Sessions) -> None:
-    admin_id = await _create(session_factory)
+    admin_id = await _create_admin(session_factory)
     async with session_factory() as session:
         with pytest.raises(AdminError):
             await service.change_setting(session, admin_id, RETENTION, 0)
     assert (await _values(session_factory))[RETENTION] == 7
-    assert await _audit(session_factory) == []
+    assert await _audit(session_factory, "setting_changed") == []
 
 
 async def test_out_of_range_stored_values_fall_back_to_the_default(
@@ -220,7 +239,7 @@ async def test_out_of_range_stored_values_fall_back_to_the_default(
 async def test_concurrent_setting_changes_are_audited_in_order(
     session_factory: Sessions,
 ) -> None:
-    admin_id = await _create(session_factory)
+    admin_id = await _create_admin(session_factory)
     async with session_factory() as first:
         await service.change_setting(first, admin_id, RETENTION, 14)
 
@@ -235,13 +254,16 @@ async def test_concurrent_setting_changes_are_audited_in_order(
         await first.commit()
         await task
 
-    assert [entry[4:] for entry in await _audit(session_factory)] == [("7", "14"), ("14", "30")]
+    assert [entry[4:] for entry in await _audit(session_factory, "setting_changed")] == [
+        ("7", "14"),
+        ("14", "30"),
+    ]
 
 
 async def test_runtime_settings_cache_expires_and_can_be_invalidated(
     session_factory: Sessions,
 ) -> None:
-    admin_id = await _create(session_factory)
+    admin_id = await _create_admin(session_factory)
     now = [0.0]
     cached = RuntimeSettings(ttl_seconds=10, clock=lambda: now[0])
 
@@ -260,6 +282,131 @@ async def test_runtime_settings_cache_expires_and_can_be_invalidated(
         await change(30)
         cached.invalidate()
         assert await cached.get(session, RETENTION) == 30  # the changing process sees it at once
+
+
+async def test_a_load_started_before_invalidation_is_not_cached(
+    session_factory: Sessions, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    admin_id = await _create_admin(session_factory)
+    cached = RuntimeSettings(ttl_seconds=60)
+    load_started, release_load = asyncio.Event(), asyncio.Event()
+    real_load = settings_module.load_values
+
+    async def slow_load(session: AsyncSession) -> dict[SettingKey, int]:
+        values = await real_load(session)
+        load_started.set()
+        await release_load.wait()
+        return values
+
+    monkeypatch.setattr(settings_module, "load_values", slow_load)
+    async with session_factory() as reader:
+        in_flight = asyncio.create_task(cached.get(reader, RETENTION))
+        await load_started.wait()  # has read 7, not yet stored it
+
+        async with session_factory() as session:
+            await service.change_setting(session, admin_id, RETENTION, 14)
+            await session.commit()
+        cached.invalidate()  # as the bot does after saving
+        release_load.set()
+        assert await in_flight == 7  # that caller still gets what it read
+
+        monkeypatch.setattr(settings_module, "load_values", real_load)
+        assert await cached.get(reader, RETENTION) == 14  # the stale load was not cached
+
+
+@pytest.mark.parametrize(
+    ("role", "status"),
+    [("user", "active"), ("moderator", "active"), ("admin", "suspended"), ("admin", "deleted")],
+)
+async def test_only_active_admins_can_change_settings(
+    session_factory: Sessions, role: str, status: str
+) -> None:
+    actor_id = await _create(session_factory)
+    await _set_role(session_factory, role)
+    async with session_factory() as session:
+        await session.execute(
+            update(User)
+            .where(User.id == actor_id)
+            .values(status=status, deleted_at=text("now()") if status == "deleted" else None)
+        )
+        await session.commit()
+    async with session_factory() as session:
+        with pytest.raises(NotAdminError):
+            await service.change_setting(session, actor_id, RETENTION, 14)
+    assert (await _values(session_factory))[RETENTION] == 7
+    assert await _audit(session_factory, "setting_changed") == []
+
+
+async def test_a_revocation_in_progress_blocks_the_change_then_refuses_it(
+    session_factory: Sessions,
+) -> None:
+    admin_id = await _create_admin(session_factory)
+    async with session_factory() as revoking:
+        await service.set_role(revoking, USER_ID, "user")  # holds the account row's lock
+
+        async def change() -> None:
+            async with session_factory() as session:
+                await service.change_setting(session, admin_id, RETENTION, 14)
+                await session.commit()
+
+        task = asyncio.create_task(change())
+        await asyncio.sleep(0.2)
+        assert not task.done()  # waits for the revocation to finish
+        await revoking.commit()
+        with pytest.raises(NotAdminError):
+            await task
+
+    assert (await _values(session_factory))[RETENTION] == 7
+
+
+# --- Audit log -----------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "statement",
+    ["UPDATE admin_audit_log SET new_value = 'owner'", "DELETE FROM admin_audit_log"],
+)
+async def test_the_audit_log_cannot_be_changed_or_deleted(
+    session_factory: Sessions, statement: str
+) -> None:
+    await _create_admin(session_factory)
+    async with session_factory() as session:
+        with pytest.raises(DBAPIError) as excinfo:
+            await session.execute(text(statement))
+        assert str(excinfo.value.orig.sqlstate) == "23001"  # type: ignore[union-attr]
+    assert len(await _audit(session_factory)) == 1
+
+
+# --- Account deletion ----------------------------------------------------------------
+
+
+@pytest.mark.parametrize("role", ["moderator", "admin"])
+async def test_deleting_an_account_resets_its_role(session_factory: Sessions, role: str) -> None:
+    user_id = await _create(session_factory)
+    await _set_role(session_factory, role)
+    async with session_factory() as session:
+        await users.delete_account(session, user_id, datetime.now(UTC))
+        await session.commit()
+    async with session_factory() as session:
+        assert await service.get_role(session, USER_ID) == "user"
+    assert (await _audit(session_factory))[-1] == (
+        user_id,
+        "role_changed",
+        user_id,
+        None,
+        role,
+        "user",
+    )
+
+
+async def test_deleting_an_ordinary_account_writes_no_audit_entry(
+    session_factory: Sessions,
+) -> None:
+    user_id = await _create(session_factory)
+    async with session_factory() as session:
+        await users.delete_account(session, user_id, datetime.now(UTC))
+        await session.commit()
+    assert await _audit(session_factory) == []
 
 
 # --- Admin settings in the bot -------------------------------------------------------

@@ -18,7 +18,7 @@ There is one row per Telegram account.
 | `created_at` | timestamptz | |
 | `last_active_at` | timestamptz | |
 | `deleted_at` | timestamptz, nullable | When the user last deleted their account (D-016). Kept if they return. |
-| `role` | varchar(16) | One of `user` (default), `moderator`, `admin` (D-034). Changed only by the admin CLI, never by the bot. Kept on account deletion. |
+| `role` | varchar(16) | One of `user` (default), `moderator`, `admin` (D-034). Changed only by the admin CLI, except that account deletion resets it to `user`. |
 
 ### `profiles`
 
@@ -77,7 +77,7 @@ Runtime settings changed by admins (D-035). A row exists only for a setting an a
 
 ### `admin_audit_log`
 
-An append-only record of administrative changes. Rows are never updated or deleted, including on account deletion.
+An append-only record of administrative changes. Rows are never updated or deleted, including on account deletion. A trigger (`admin_audit_log_append_only`) enforces this in the database: any `UPDATE` or `DELETE` of a row fails. `TRUNCATE`, used only to reset test databases, is not affected.
 
 | Column | Type | Notes |
 |---|---|---|
@@ -106,7 +106,7 @@ Rules that are hard to express in SQL, such as the link detection and the ISO co
 
 `get_or_create_user` uses `INSERT … ON CONFLICT DO NOTHING` on `telegram_user_id`, followed by a select. Simultaneous first contacts from the same Telegram user therefore create exactly one user and one profile. This is covered by a concurrency test.
 
-Role changes lock the `users` row, and setting changes take a transaction-scoped advisory lock per setting key, so concurrent changes run one after the other and each audit entry records the value it actually replaced. Both are covered by concurrency tests.
+Role changes lock the `users` row. A setting change share-locks the acting admin's `users` row and re-checks the role in the same transaction, so a revocation cannot interleave with it. Setting changes also take a transaction-scoped advisory lock per setting key, so concurrent changes run one after the other and each audit entry records the value it actually replaced. Both are covered by concurrency tests.
 
 ## Deletion and retention
 
@@ -114,6 +114,6 @@ Account deletion (`service.delete_account`, D-016, D-025) runs in one transactio
 
 * The `profiles` row is replaced by an empty one, which erases every profile field.
 * All `profile_changes` and `terms_acceptances` rows for the user are deleted.
-* The `users` row is kept with its Telegram user ID, role, and timestamps, and `deleted_at` is set. Admin audit entries are kept. An `active` account becomes `deleted`. A `suspended` or `banned` account keeps its status, so deleting cannot be used to escape a restriction.
+* The `users` row is kept with its Telegram user ID and timestamps, and `deleted_at` is set. A moderator or admin role is reset to `user`, with an audit entry. Admin audit entries are kept. An `active` account becomes `deleted`. A `suspended` or `banned` account keeps its status, so deleting cannot be used to escape a restriction.
 
 A deleted user who returns goes through onboarding again. Accepting the terms sets the status back to `active`; a restricted status is never changed this way.

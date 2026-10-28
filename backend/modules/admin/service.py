@@ -2,7 +2,8 @@
 
 Like the users service, these functions take an AsyncSession and leave committing
 to the caller. Roles are changed only by the server-side CLI (`apps/admin_cli.py`);
-no bot handler calls `set_role`.
+no bot handler calls `set_role`. The one other role change is account deletion,
+which can only lower a role to `user` (D-034).
 """
 
 from sqlalchemy import func, select
@@ -20,6 +21,13 @@ class AdminError(Exception):
     def __init__(self, message: str) -> None:
         super().__init__(message)
         self.message = message
+
+
+class NotAdminError(AdminError):
+    """The acting account is no longer an active admin."""
+
+    def __init__(self) -> None:
+        super().__init__("Admin settings are not available.")
 
 
 # --- Roles ---------------------------------------------------------------------------
@@ -100,11 +108,23 @@ async def change_setting(
 ) -> int:
     """Set a runtime setting; returns the previous value. Unchanged values are not logged.
 
-    A transaction-scoped advisory lock per key serialises concurrent changes, so each
-    audit entry records the value it actually replaced.
+    The acting account is re-checked inside this transaction, with its row share-locked:
+    a role change (which takes the row's update lock) cannot slip in between the check
+    and the write, so a revoked admin's change is refused. A transaction-scoped
+    advisory lock per key serialises concurrent changes, so each audit entry records
+    the value it actually replaced.
     """
     if not SPECS[key].allows(value):
         raise _out_of_range(key)
+    actor = (
+        await session.execute(
+            select(User.role, User.status)
+            .where(User.id == actor_user_id)
+            .with_for_update(read=True)
+        )
+    ).one_or_none()
+    if actor is None or actor.role != "admin" or actor.status != "active":
+        raise NotAdminError
     await session.execute(select(func.pg_advisory_xact_lock(func.hashtext(f"app_settings:{key}"))))
     old = (await load_values(session))[key]
     if old == value:

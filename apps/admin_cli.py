@@ -62,6 +62,9 @@ async def run(argv: Sequence[str], sessions: async_sessionmaker[AsyncSession]) -
 
 
 async def _main(argv: Sequence[str]) -> int:
+    # Parsed before the configuration is loaded, so --help and usage errors work
+    # without a database configured. run() parses the same arguments again.
+    _parser().parse_args(argv)
     try:
         settings = load_settings()
     except SettingsError as error:

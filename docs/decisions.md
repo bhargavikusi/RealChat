@@ -328,6 +328,7 @@ Work happens on short-lived issue branches, such as `feature/12-onboarding`, cre
 
 * Each account has a role: `user` (default), `moderator`, or `admin`.
 * Roles are changed only by a server-side command (`apps/admin_cli.py`), never from inside the bot. Each change is written to the admin audit log.
+* Deleting an account resets its role to `user`, recorded in the audit log with the account itself as the actor. This adds to what D-016 and D-025 erase: a returning account has no special access until a role is granted again. Deletion is the only change outside the CLI, and it can only lower a role.
 * Moderators have no tools yet; their screens come with moderation work.
 
 **Why:** Owner decision, after comparing this with a list of admin Telegram IDs in configuration. Roles allow least-privilege access for moderators who review chats (requirements §19), take effect without a restart, and are reused by the planned web admin panel.

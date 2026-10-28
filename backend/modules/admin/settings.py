@@ -120,12 +120,18 @@ class RuntimeSettings:
         self._clock = clock
         self._values: dict[SettingKey, int] | None = None
         self._loaded_at = 0.0
+        # Bumped by invalidate(); a load that started before it is not cached.
+        self._generation = 0
 
     async def get(self, session: AsyncSession, key: SettingKey) -> int:
-        if self._values is None or self._clock() - self._loaded_at >= self._ttl:
-            self._values = await load_values(session)
-            self._loaded_at = self._clock()
-        return self._values[key]
+        if self._values is not None and self._clock() - self._loaded_at < self._ttl:
+            return self._values[key]
+        generation = self._generation
+        values = await load_values(session)
+        if generation == self._generation:
+            self._values, self._loaded_at = values, self._clock()
+        return values[key]
 
     def invalidate(self) -> None:
+        self._generation += 1
         self._values = None

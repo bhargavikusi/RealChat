@@ -79,7 +79,7 @@ uv run python -m apps.admin_cli revoke <telegram_user_id>
 uv run python -m apps.admin_cli list
 ```
 
-Admins then find **🛠 Admin settings** under `/profile` → ⚙️ Advanced settings, where runtime settings such as the search time limit and chat retention can be changed without a restart (D-035).
+Admins then find **🛠 Admin settings** under `/profile` → ⚙️ Advanced settings, where runtime settings such as the search time limit and chat retention can be changed without a restart (D-035). Deleting an account resets its role to `user`.
 
 ## Checks
 

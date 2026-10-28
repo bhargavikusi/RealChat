@@ -11,6 +11,7 @@ from sqlalchemy import delete, func, select, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from backend.modules.admin.models import AdminAuditEntry
 from backend.modules.users import validation
 from backend.modules.users.models import (
     RESTRICTED_STATUSES,
@@ -91,10 +92,19 @@ async def delete_account(session: AsyncSession, user_id: int, now: datetime) -> 
     and gender change history, and terms acceptances, so a returning user starts a
     fresh onboarding. Kept: the Telegram user ID, the status, and timestamps. An
     active account becomes "deleted"; a suspended or banned one keeps its status, so
-    deleting cannot be used to escape a restriction.
+    deleting cannot be used to escape a restriction. A moderator or admin role is reset
+    to "user" and the change is audit-logged, so a returning account has no special
+    access until it is granted again (D-034).
     """
+    # populate_existing: the caller may have loaded this user earlier in the session,
+    # and the status and role must be read under the lock, not from that copy.
     user = (
-        await session.execute(select(User).where(User.id == user_id).with_for_update())
+        await session.execute(
+            select(User)
+            .where(User.id == user_id)
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        )
     ).scalar_one()
     await session.execute(delete(ProfileChange).where(ProfileChange.user_id == user_id))
     await session.execute(delete(TermsAcceptance).where(TermsAcceptance.user_id == user_id))
@@ -103,6 +113,17 @@ async def delete_account(session: AsyncSession, user_id: int, now: datetime) -> 
     if user.status not in RESTRICTED_STATUSES:
         user.status = "deleted"
     user.deleted_at = now
+    if user.role != "user":
+        session.add(
+            AdminAuditEntry(
+                actor_user_id=user_id,
+                action="role_changed",
+                target_user_id=user_id,
+                old_value=user.role,
+                new_value="user",
+            )
+        )
+        user.role = "user"
 
 
 class ChangeCooldownError(Exception):

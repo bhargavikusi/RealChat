@@ -28,7 +28,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from apps.bot.onboarding import load_context
 from backend.modules.admin import service
-from backend.modules.admin.service import AdminError
+from backend.modules.admin.service import AdminError, NotAdminError
 from backend.modules.admin.settings import SPECS, RuntimeSettings, SettingKey, load_values
 
 
@@ -44,7 +44,7 @@ class AdminSettingsEdit(StatesGroup):
 
 ADMIN_BUTTON = "🛠 Admin settings"
 ADMIN_HEADER = "🛠 Admin settings"
-ADMIN_FOOTER = "Tap a setting to change it. Changes apply within a few seconds and are logged."
+ADMIN_FOOTER = "Tap a setting to change it. Changes apply within 10 seconds and are logged."
 CANCEL_BUTTON = "Cancel"
 CANCELLED = "Cancelled. Nothing was changed."
 EXPIRED = "This button has expired."
@@ -183,6 +183,12 @@ async def on_value(
     try:
         value = service.parse_setting_value(key, message.text)
         old = await service.change_setting(session, actor, key, value)
+    except NotAdminError:
+        # Revoked between the check above and the save (D-034).
+        await session.rollback()
+        await state.clear()
+        await message.answer(NOT_AVAILABLE)
+        return
     except AdminError as error:
         await session.rollback()
         await message.answer(error.message, reply_markup=_cancel_keyboard(edit))
