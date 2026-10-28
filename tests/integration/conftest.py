@@ -79,8 +79,9 @@ def migrated_database_url(integration_settings: IntegrationSettings) -> str:
 async def db_engine(migrated_database_url: str) -> AsyncIterator[AsyncEngine]:
     engine = create_engine(migrated_database_url)
     async with engine.begin() as connection:
-        # Each test starts from empty tables. CASCADE covers dependent tables.
-        await connection.execute(text("TRUNCATE users RESTART IDENTITY CASCADE"))
+        # Each test starts from empty tables. CASCADE covers tables that reference
+        # users; app_settings references nothing, so it is listed itself.
+        await connection.execute(text("TRUNCATE users, app_settings RESTART IDENTITY CASCADE"))
     yield engine
     await engine.dispose()
 

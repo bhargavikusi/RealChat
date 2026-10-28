@@ -69,6 +69,18 @@ While Redis is available, two protections apply:
 
 If Redis is unavailable, both protections let updates through so the bot stays online. Handlers with side effects, such as charges or matches, must therefore enforce their own idempotency in the database.
 
+### Roles and admin settings
+
+Roles (`user`, `moderator`, `admin`) are changed only from the server, with the same `.env` as the bot. The person must have started the bot first. Every change is recorded in the admin audit log.
+
+```bash
+uv run python -m apps.admin_cli set-role <telegram_user_id> admin
+uv run python -m apps.admin_cli revoke <telegram_user_id>
+uv run python -m apps.admin_cli list
+```
+
+Admins then find **🛠 Admin settings** under `/profile` → ⚙️ Advanced settings, where runtime settings such as the search time limit and chat retention can be changed without a restart (D-035).
+
 ## Checks
 
 GitHub Actions runs these checks on every pull request to `develop`, `staging`, or `main`, and again after each merge (`.github/workflows/ci.yml`). The workflow also cycles the migrations on a clean database, runs `alembic check` to catch model changes that lack a migration, and scans dependencies for known vulnerabilities. Its PostgreSQL and Redis are throwaway containers with CI-only credentials; no repository secrets are used.

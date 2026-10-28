@@ -28,10 +28,12 @@ from aiogram.types import (
 )
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from apps.bot.admin import admin_button
 from apps.bot.menu import HelpAction
 from apps.bot.middlewares import Handler
 from apps.bot.onboarding import load_context, prompt_next
 from backend.config.settings import BotSettings
+from backend.modules.admin import service as admin_service
 from backend.modules.users import service
 
 
@@ -76,10 +78,11 @@ def settings_button() -> InlineKeyboardButton:
     return _button(ADVANCED_SETTINGS, AccountAction(action="settings"))
 
 
-def _delete_keyboard() -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(
-        inline_keyboard=[[_button(DELETE_BUTTON, AccountAction(action="delete"))]]
-    )
+def _delete_keyboard(*, admin: bool = False) -> InlineKeyboardMarkup:
+    rows = [[_button(DELETE_BUTTON, AccountAction(action="delete"))]]
+    if admin:
+        rows.append([admin_button()])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
 def restriction_notice(status: str) -> str:
@@ -114,9 +117,12 @@ async def show_settings(
 ) -> None:
     if not await _may_delete(query, bot, session, state, settings):
         return
+    # Admin settings are offered to admins only; the admin handlers check again (D-035).
+    is_admin = await admin_service.get_role(session, query.from_user.id) == "admin"
+    await session.commit()
     await query.answer()
     await bot.send_message(
-        query.from_user.id, ADVANCED_SETTINGS_TEXT, reply_markup=_delete_keyboard()
+        query.from_user.id, ADVANCED_SETTINGS_TEXT, reply_markup=_delete_keyboard(admin=is_admin)
     )
 
 

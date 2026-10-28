@@ -176,6 +176,16 @@ async def test_deleted_status_requires_deleted_at(
         await session.commit()
 
 
+TABLES = (
+    "users",
+    "profiles",
+    "terms_acceptances",
+    "profile_changes",
+    "app_settings",
+    "admin_audit_log",
+)
+
+
 async def test_model_check_constraints_match_the_database(
     session_factory: async_sessionmaker[AsyncSession],
 ) -> None:
@@ -183,7 +193,7 @@ async def test_model_check_constraints_match_the_database(
     # model but not to a migration (or vice versa) would otherwise go unnoticed.
     expected = {
         str(constraint.name)
-        for name in ("users", "profiles", "terms_acceptances", "profile_changes")
+        for name in TABLES
         for table in [Base.metadata.tables[name]]
         for constraint in table.constraints
         if constraint.__class__.__name__ == "CheckConstraint"
@@ -191,10 +201,10 @@ async def test_model_check_constraints_match_the_database(
     async with session_factory() as session:
         rows = await session.execute(
             text(
-                "SELECT conname FROM pg_constraint WHERE contype = 'c' AND conrelid IN "
-                "('users'::regclass, 'profiles'::regclass, 'terms_acceptances'::regclass,"
-                " 'profile_changes'::regclass)"
-            )
+                "SELECT conname FROM pg_constraint WHERE contype = 'c' "
+                "AND conrelid::regclass::text = ANY(:tables)"
+            ),
+            {"tables": list(TABLES)},
         )
         actual = {row[0] for row in rows}
     assert actual == expected

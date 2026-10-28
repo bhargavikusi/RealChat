@@ -261,6 +261,113 @@ Work happens on short-lived issue branches, such as `feature/12-onboarding`, cre
 
 **Why:** Owner decision. It respects users' ability to erase their data without weakening a ban.
 
+### D-027 — Matching queue in Redis, matches confirmed in PostgreSQL
+
+**Date:** 2026-10-27
+**Decision:** Users who are searching wait in a Redis queue with an expiry. A match is confirmed and written to PostgreSQL in one transaction, with constraints that stop anyone being in two active conversations, and it is announced only after that commit. Stale queue entries (expired, restricted, deleted, or already matched users) are skipped and removed.
+**Why:** Owner decision. Redis keeps searches fast; PostgreSQL stays the source of truth for matches (requirements §8, §23).
+**Consequence:** Queue and database can disagree after a Redis restart or a crash, so the matching code must re-check every candidate in PostgreSQL, and tests must cover lost and stale queue entries.
+
+### D-028 — Chat messages are stored for a limited time
+
+**Date:** 2026-10-27
+**Decision:**
+
+* Relayed message text, captions, message types, Telegram file identifiers, and timestamps are stored for moderation and report verification.
+* They are deleted automatically after the retention period, an admin runtime setting with a default of 7 days (D-035). Messages tied to an open report are kept until the report is closed.
+* Access is restricted to authorised code paths; ordinary logs never contain message content. The terms describe this before storage starts.
+
+**Why:** Owner decision. Reports can be checked against what was actually said, while keeping private content only briefly (requirements §20).
+**Still open:** The launch retention value (O-002).
+
+### D-029 — Matched users see each other's full profile card
+
+**Date:** 2026-10-27
+**Decision:** When a match is made, each user receives the other's profile card, the same card `/profile` shows: photo or default avatar, nickname, age, gender, country, city, and bio. The terms say so.
+**Why:** Owner decision.
+
+### D-030 — Chat keyboard during a conversation (amends D-022)
+
+**Date:** 2026-10-27
+**Decision:**
+
+* While a user is in a conversation, the keyboard under the message box is replaced by chat controls in at most two rows: 👤 Partner profile and 🔒 Private mode, then ⏹ End chat. The main keyboard (D-022) returns when the conversation ends.
+* The fourth slot is unassigned (O-010).
+* Until O-010 is decided, 🚫 Block and ⚠️ Report are inline buttons on the partner's profile card and on the "chat ended" message.
+
+**Why:** Owner preference: one-tap controls in the same place as the main menu.
+
+### D-031 — Private mode
+
+**Date:** 2026-10-27
+**Decision:**
+
+* Either user in a conversation can turn on 🔒 Private mode. Messages sent while it is on are deleted from both users' Telegram chats when it is turned off or the conversation ends.
+* Telegram lets bots delete messages only within 48 hours, so private mode turns itself off before that limit.
+* Private-mode messages are still stored for moderation with the normal retention (D-028), and the in-bot note says so.
+* It is called "Private mode". It is not described as a Telegram Secret Chat, as end-to-end encrypted, or as screenshot-proof.
+
+**Why:** Owner request. The naming and storage rules keep the description honest (requirements §10) and stop the mode from becoming a way to avoid moderation.
+
+### D-032 — Search time limit
+
+**Date:** 2026-10-27
+**Decision:** A search that finds no partner stops after 2 minutes and the user is told, with an option to try again. The limit is an admin runtime setting (D-035).
+**Why:** Owner decision. Users who have walked away are not matched later with someone who then talks to nobody.
+
+### D-033 — Avoiding immediate repeat matches
+
+**Date:** 2026-10-27
+**Decision:** Two users who chatted within the last 5 minutes are not matched again while another suitable user is waiting. If nobody else is available, they can be matched. The window is an admin runtime setting, and 0 turns the rule off (D-035).
+**Why:** Owner decision, following requirements §8 ("when suitable alternatives exist").
+
+### D-034 — Roles stored in the database
+
+**Date:** 2026-10-27
+**Decision:**
+
+* Each account has a role: `user` (default), `moderator`, or `admin`.
+* Roles are changed only by a server-side command (`apps/admin_cli.py`), never from inside the bot. Each change is written to the admin audit log.
+* Moderators have no tools yet; their screens come with moderation work.
+
+**Why:** Owner decision, after comparing this with a list of admin Telegram IDs in configuration. Roles allow least-privilege access for moderators who review chats (requirements §19), take effect without a restart, and are reused by the planned web admin panel.
+
+### D-035 — Runtime settings changed by admins
+
+**Date:** 2026-10-27
+**Decision:**
+
+* Values that operators need to tune are runtime settings stored in PostgreSQL, changed without a restart. Each has a default and an allowed range, and every change is audit-logged with the old and new value.
+* Admins change them from 🛠 Admin settings, a button inside their own ⚙️ Advanced settings. The bot re-checks the admin role for every action.
+* Initial settings: repeat-match avoidance 300 seconds (0–86,400, 0 is off), search time limit 120 seconds (30–1,800), idle notice after 300 seconds (60–86,400), idle chat ends 60 seconds after the notice (10–3,600), chat message retention 7 days (1–365).
+* A web admin panel with these settings and moderation tools (such as reviewing reported chats) is planned for the moderation work.
+
+**Why:** Owner decision: these values should be adjustable by whoever runs the bot, from the start.
+
+### D-036 — Relayed messages are protected content
+
+**Date:** 2026-10-27
+**Decision:** Every relayed message is sent with Telegram's `protect_content`, which stops forwarding and saving in Telegram apps that honour it. User-facing text does not promise screenshot protection; what each Telegram app blocks is to be checked against current Telegram documentation before that text is written.
+**Why:** Owner request for the strictest protection available. A bot cannot control screenshots or on-screen tools beyond what Telegram apps do for protected content.
+
+### D-037 — Report reasons
+
+**Date:** 2026-10-27
+**Decision:** Reports use six reasons: Spam or scam, Harassment or hate, Sexual content without consent, Appears under 18, Threats or violence, and Other. Optional context text of up to 500 characters may be added. "Appears under 18" is marked urgent.
+**Why:** Owner decision.
+
+### D-038 — Replies and edits are mirrored
+
+**Date:** 2026-10-27
+**Decision:** A reply is shown as a reply to the matching message on the partner's side, and editing a text or caption updates the partner's copy. Deletions cannot be mirrored, because Telegram does not tell bots when a user deletes a message.
+**Why:** Owner decision.
+
+### D-039 — Idle conversations end automatically
+
+**Date:** 2026-10-27
+**Decision:** After 5 minutes with no messages, both users are told that the chat will end in 60 seconds unless someone writes. If nobody does, the chat ends as if ended by a user. Both times are admin runtime settings (D-035).
+**Why:** Owner decision. Users are not left in a conversation with someone who has gone.
+
 ---
 
 ## Open
@@ -271,10 +378,11 @@ Each of these needs the owner's decision. Until then, the behavior stays configu
 |---|---|---|---|
 | O-001 | Final minimum eligible age | Public launch | Development uses 18 (D-009). Age is user-entered, with no document verification (requirements §7). Jurisdiction-specific legal review is recommended. |
 | O-007 | Final terms of service and privacy policy text | Public launch | Development uses a versioned draft (D-015). It needs legal review. |
-| O-002 | Retention period for conversation content | Public launch | Kept separate from the retention of payment, moderation, security, and audit records (requirements §20). |
+| O-002 | Retention period for conversation content | Public launch | Kept separate from the retention of payment, moderation, security, and audit records (requirements §20). Development default: 7 days, changeable by admins (D-028, D-035). |
 | O-003 | Terms of the 1-coin activity notification | Before that feature is built | What event triggers it, how long it lasts, and whether it is one alert or several (requirements §15). |
 | O-004 | Price of gender-specific matching | Before that feature is built | Must be configurable (requirements §9). |
 | O-005 | Coin package and VIP pricing in Telegram Stars | Before payments are built | Also covers what VIP includes and how many coins it grants (requirements §17). |
 | O-006 | Webhook or long polling for receiving Telegram updates in production | Before deployment | Development will use polling. Webhooks require a public HTTPS endpoint. |
 | O-008 | Which premium offer includes hiding the profile, and what happens when it ends | Before the VIP work | D-021. For example, whether the profile becomes visible again automatically. |
 | O-009 | Retention period for the age and gender change history | Public launch | D-024. Separate from conversation content (O-002), because moderators use the history to spot repeated switching. Until decided, rows are kept until account deletion. |
+| O-010 | The fourth button on the chat keyboard | Before the chat keyboard is final | D-030. Until then Block and Report are inline buttons on the partner's card and the "chat ended" message. |

@@ -35,6 +35,8 @@ USER_STATUSES = ("active", "suspended", "banned", "deleted")
 RESTRICTED_STATUSES = ("suspended", "banned")
 # Fields whose changes are limited by a cooldown and kept in the change history (D-019).
 COOLDOWN_FIELDS = ("age", "gender")
+# Access roles (D-034). Changed only by the server-side admin CLI, never by the bot.
+ROLES = ("user", "moderator", "admin")
 
 
 def _in(column: str, values: tuple[str, ...]) -> str:
@@ -48,12 +50,14 @@ class User(Base):
     __table_args__ = (
         CheckConstraint(_in("status", USER_STATUSES), name="status"),
         CheckConstraint("status <> 'deleted' OR deleted_at IS NOT NULL", name="deleted_at_set"),
+        CheckConstraint(_in("role", ROLES), name="role"),
     )
 
     id: Mapped[int] = mapped_column(BigInteger, Identity(), primary_key=True)
     # Telegram's stable numeric ID. Usernames change and are never used as keys.
     telegram_user_id: Mapped[int] = mapped_column(BigInteger, unique=True)
     status: Mapped[str] = mapped_column(String(16), server_default="active")
+    role: Mapped[str] = mapped_column(String(16), server_default="user")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     last_active_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
