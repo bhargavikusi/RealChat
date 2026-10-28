@@ -22,13 +22,14 @@ from datetime import datetime, timedelta
 from typing import Protocol
 
 from redis.asyncio import Redis
+from redis.exceptions import RedisError
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from backend.core.logging import exception_summary
 from backend.modules.admin.settings import RuntimeSettings, SettingKey
 from backend.modules.chat import service as chat
-from backend.modules.matching.queue import SearchQueue
+from backend.modules.matching.queue import Claimed, SearchQueue
 
 logger = logging.getLogger(__name__)
 
@@ -219,16 +220,24 @@ class Matcher:
                 if user.user_id in eligible:
                     await self._queue.requeue(user)
                 else:
-                    await self._queue.release(user)
+                    await self._release(user)
             return False
+        # The match is committed: releasing the searches must not stop the announcement.
         for user in claimed:
-            await self._queue.release(user)
+            await self._release(user)
         try:
             await self._notifier.matched(conversation_id, first, second)
         except Exception as exc:
             # The match stands; a user who cannot be reached is handled with chat endings.
             logger.warning("could not notify a match", extra=exception_summary(exc))
         return True
+
+    async def _release(self, claimed: Claimed) -> None:
+        """Release a claimed search. On a Redis failure the claim marker simply expires."""
+        try:
+            await self._queue.release(claimed)
+        except RedisError as exc:
+            logger.warning("could not release a claimed search", extra=exception_summary(exc))
 
     async def _create(self, first: int, second: int) -> tuple[int | None, set[int]]:
         """Re-check both users and create their conversation in one transaction.

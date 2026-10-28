@@ -30,6 +30,9 @@ QUEUE_KEY = "match:queue"
 # A safety net only: the matcher ends searches after the configured time limit. If
 # the worker is down, abandoned search keys still disappear eventually.
 SEARCH_TTL_SECONDS = 2 * 60 * 60
+# A claim normally lasts milliseconds. Its marker expires on its own, so one left
+# behind (e.g. if Redis failed while releasing it) cannot block new searches for long.
+CLAIM_TTL_SECONDS = 60
 CLAIMED = "claimed:"
 CANCELLED = "cancelled"
 
@@ -83,8 +86,8 @@ if not (first and second and first_search and second_search) then
     return {}
 end
 redis.call('ZREM', KEYS[3], ARGV[1], ARGV[2])
-redis.call('SET', KEYS[1], 'claimed:' .. first_search, 'KEEPTTL')
-redis.call('SET', KEYS[2], 'claimed:' .. second_search, 'KEEPTTL')
+redis.call('SET', KEYS[1], 'claimed:' .. first_search, 'EX', ARGV[3])
+redis.call('SET', KEYS[2], 'claimed:' .. second_search, 'EX', ARGV[3])
 return {first, first_search, second, second_search}
 """
 
@@ -112,7 +115,7 @@ return 0
 # Puts a claimed search back in its old place, unless it was cancelled meanwhile.
 _REQUEUE = """
 if redis.call('GET', KEYS[1]) == 'claimed:' .. ARGV[1] then
-    redis.call('SET', KEYS[1], ARGV[1], 'KEEPTTL')
+    redis.call('SET', KEYS[1], ARGV[1], 'EX', ARGV[4])
     redis.call('ZADD', KEYS[2], ARGV[2], ARGV[3])
     return 1
 end
@@ -203,7 +206,14 @@ class SearchQueue:
     async def claim_pair(self, first: int, second: int) -> tuple[Claimed, Claimed] | None:
         """Take both users out of the queue, or neither if either has left it."""
         result = await self._eval(
-            _CLAIM_PAIR, 3, _search_key(first), _search_key(second), QUEUE_KEY, first, second
+            _CLAIM_PAIR,
+            3,
+            _search_key(first),
+            _search_key(second),
+            QUEUE_KEY,
+            first,
+            second,
+            CLAIM_TTL_SECONDS,
         )
         if not result:
             return None
@@ -223,6 +233,7 @@ class SearchQueue:
             claimed.search_id,
             claimed.started_at,
             claimed.user_id,
+            SEARCH_TTL_SECONDS,
         )
         return bool(restored)
 

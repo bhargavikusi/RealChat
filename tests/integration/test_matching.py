@@ -5,6 +5,7 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 from redis.asyncio import Redis
+from redis.exceptions import ConnectionError as RedisConnectionError
 from sqlalchemy import func, select, text, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -15,7 +16,7 @@ from backend.modules.chat import service as chat
 from backend.modules.chat.models import Conversation, ConversationParticipant
 from backend.modules.matching import matcher as matcher_module
 from backend.modules.matching.matcher import Matcher
-from backend.modules.matching.queue import SearchQueue
+from backend.modules.matching.queue import CLAIM_TTL_SECONDS, SearchQueue
 from backend.modules.users import service as users
 from backend.modules.users.models import User
 from backend.modules.users.terms import TERMS_VERSION
@@ -565,3 +566,32 @@ async def test_a_deletion_in_progress_is_never_matched(
     assert notifier.matches == []
     assert await _open_pairs(session_factory) == set()
     assert [user for user, _ in await queue.waiting(10, started_after=0)] == [b]
+
+
+async def test_a_failed_release_still_announces_the_match(
+    matcher: Matcher,
+    queue: SearchQueue,
+    notifier: RecordingNotifier,
+    people: list[int],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    a, b = people[:2]
+    await _search(queue, a, b)
+
+    async def failing_release(self: SearchQueue, claimed: object) -> None:
+        raise RedisConnectionError("simulated Redis outage")
+
+    monkeypatch.setattr(SearchQueue, "release", failing_release)
+    assert (await matcher.tick(NOW)).matched == 1
+    assert notifier.matches == [(a, b)]
+
+
+async def test_claim_markers_expire_quickly_and_restored_searches_do_not(
+    queue: SearchQueue, redis: Redis
+) -> None:
+    await _search(queue, 1, 2)
+    claimed = await queue.claim_pair(1, 2)
+    assert claimed is not None
+    assert 0 < await redis.ttl("match:search:1") <= CLAIM_TTL_SECONDS
+    assert await queue.requeue(claimed[0])
+    assert await redis.ttl("match:search:1") > CLAIM_TTL_SECONDS
