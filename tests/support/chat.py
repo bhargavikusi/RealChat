@@ -34,8 +34,11 @@ class Chat:
 
     _ids = count(1)
 
-    def __init__(self, settings: BotSettings, redis: Redis, sessions: Sessions) -> None:
+    def __init__(
+        self, settings: BotSettings, redis: Redis, sessions: Sessions, user_id: int = USER_ID
+    ) -> None:
         self._settings, self._redis, self._sessions = settings, redis, sessions
+        self.user_id = user_id
         self.bot, self.telegram = make_bot()
         self.dispatcher: Dispatcher = create_dispatcher(settings, redis, sessions)
 
@@ -44,19 +47,27 @@ class Chat:
         self.dispatcher = create_dispatcher(self._settings, self._redis, self._sessions)
 
     async def send(self, text: str) -> str:
-        await self.dispatcher.feed_update(self.bot, message_update(next(self._ids), USER_ID, text))
+        await self.dispatcher.feed_update(
+            self.bot, message_update(next(self._ids), self.user_id, text)
+        )
         return self.last()
 
     async def press(self, button: str) -> str:
         data = self.telegram.last_buttons()[button]
-        await self.dispatcher.feed_update(self.bot, callback_update(next(self._ids), USER_ID, data))
+        await self.dispatcher.feed_update(
+            self.bot, callback_update(next(self._ids), self.user_id, data)
+        )
         return self.last()
 
     async def press_data(self, data: str) -> None:
-        await self.dispatcher.feed_update(self.bot, callback_update(next(self._ids), USER_ID, data))
+        await self.dispatcher.feed_update(
+            self.bot, callback_update(next(self._ids), self.user_id, data)
+        )
 
     async def send_photo(self, file_id: str) -> str:
-        await self.dispatcher.feed_update(self.bot, photo_update(next(self._ids), USER_ID, file_id))
+        await self.dispatcher.feed_update(
+            self.bot, photo_update(next(self._ids), self.user_id, file_id)
+        )
         return self.last()
 
     def last(self) -> str:

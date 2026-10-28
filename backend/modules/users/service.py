@@ -45,6 +45,28 @@ async def get_or_create_user(session: AsyncSession, telegram_user_id: int) -> Us
     return user
 
 
+async def get_user(session: AsyncSession, user_id: int) -> User:
+    return (await session.execute(select(User).where(User.id == user_id))).scalar_one()
+
+
+async def lock_user(session: AsyncSession, user_id: int) -> User:
+    """Load the user with their row locked for update until the transaction ends.
+
+    Matching share-locks the same row (`chat.service.eligible_for_matching`), so a
+    deletion that locks first and a match never interleave.
+    """
+    # populate_existing: the caller may have loaded this user earlier in the session,
+    # and the status and role must be read under the lock, not from that copy.
+    return (
+        await session.execute(
+            select(User)
+            .where(User.id == user_id)
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        )
+    ).scalar_one()
+
+
 async def get_profile(session: AsyncSession, user_id: int) -> Profile:
     return (await session.execute(select(Profile).where(Profile.user_id == user_id))).scalar_one()
 
@@ -96,16 +118,7 @@ async def delete_account(session: AsyncSession, user_id: int, now: datetime) -> 
     to "user" and the change is audit-logged, so a returning account has no special
     access until it is granted again (D-034).
     """
-    # populate_existing: the caller may have loaded this user earlier in the session,
-    # and the status and role must be read under the lock, not from that copy.
-    user = (
-        await session.execute(
-            select(User)
-            .where(User.id == user_id)
-            .with_for_update()
-            .execution_options(populate_existing=True)
-        )
-    ).scalar_one()
+    user = await lock_user(session, user_id)
     await session.execute(delete(ProfileChange).where(ProfileChange.user_id == user_id))
     await session.execute(delete(TermsAcceptance).where(TermsAcceptance.user_id == user_id))
     await session.execute(delete(Profile).where(Profile.user_id == user_id))

@@ -23,6 +23,7 @@ from backend.modules.admin.settings import SPECS, RuntimeSettings, SettingKey, l
 from backend.modules.users import service as users
 from backend.modules.users.models import User
 from tests.support.chat import USER_ID, Chat, complete_onboarding
+from tests.support.db import wait_until_blocked
 
 Sessions = async_sessionmaker[AsyncSession]
 OTHER_ID = 5151
@@ -124,7 +125,7 @@ async def test_concurrent_role_changes_are_audited_in_order(session_factory: Ses
                 await session.commit()
 
         task = asyncio.create_task(second())
-        await asyncio.sleep(0.2)
+        await wait_until_blocked(session_factory)
         assert not task.done()  # waits for the first transaction's row lock
         await first.commit()
         await task
@@ -249,7 +250,7 @@ async def test_concurrent_setting_changes_are_audited_in_order(
                 await session.commit()
 
         task = asyncio.create_task(second())
-        await asyncio.sleep(0.2)
+        await wait_until_blocked(session_factory)
         assert not task.done()  # waits for the first transaction's lock
         await first.commit()
         await task
@@ -350,7 +351,7 @@ async def test_a_revocation_in_progress_blocks_the_change_then_refuses_it(
                 await session.commit()
 
         task = asyncio.create_task(change())
-        await asyncio.sleep(0.2)
+        await wait_until_blocked(session_factory)
         assert not task.done()  # waits for the revocation to finish
         await revoking.commit()
         with pytest.raises(NotAdminError):

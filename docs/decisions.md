@@ -369,6 +369,19 @@ Work happens on short-lived issue branches, such as `feature/12-onboarding`, cre
 **Decision:** After 5 minutes with no messages, both users are told that the chat will end in 60 seconds unless someone writes. If nobody does, the chat ends as if ended by a user. Both times are admin runtime settings (D-035).
 **Why:** Owner decision. Users are not left in a conversation with someone who has gone.
 
+### D-040 — The chat keyboard grows with its features
+
+**Date:** 2026-10-28
+**Decision:** Following D-022's rule that a button appears only when it works, the chat keyboard (D-030) starts with 👤 Partner profile and a basic ⏹ End chat, which ends the chat for both users, tells both, and brings back the main keyboard. The full "chat ended" message (Find new, Block, Report) and the idle timeout come with the chat-ending work; 🔒 Private mode joins the first row when it is built. Deleting an account also ends any chat it is in, and the partner is told.
+**Why:** Owner decision. Every button shown works, and nobody is left stuck in a chat.
+
+### D-041 — A single matcher in the worker pairs searchers
+
+**Date:** 2026-10-28
+**Decision:** The bot starts and cancels searches in the Redis queue (D-027); it never pairs users. A matcher in the worker process runs about once a second: it ends searches past the time limit, re-checks the waiting users in PostgreSQL, pairs them oldest first while avoiding recent partners (D-033), commits each match, and only then tells both users. A Redis lock normally lets only one matcher run at a time.
+**Why:** Owner decision. With one matcher there is no race between simultaneous taps; the cost is up to about a second before a match is announced.
+**Consequence:** Matching needs the worker running alongside the bot. If Redis loses its data, searches in progress are lost without a "no one found" notice; users can simply search again.
+
 ---
 
 ## Open

@@ -4,7 +4,7 @@ RealChat is a Telegram-first anonymous chat and social discovery platform. Users
 
 ## Status
 
-Early development. The infrastructure runs locally: an API with health checks, PostgreSQL, Redis, and database migrations. The Telegram bot supports `/start`, terms acceptance, conversational profile creation, profile viewing and editing (`/profile`), account deletion, and `/help`. Suspended and banned accounts are limited to help and deletion. There's no matching or chat yet.
+Early development. The infrastructure runs locally: an API with health checks, PostgreSQL, Redis, and database migrations. The Telegram bot supports `/start`, terms acceptance, conversational profile creation, profile viewing and editing (`/profile`), account deletion, and `/help`. Suspended and banned accounts are limited to help and deletion. Users can search for a random partner, get matched by the worker, view their partner's profile, and end the chat. Messages are not relayed between partners yet.
 
 ## Prerequisites
 
@@ -60,7 +60,7 @@ uv run python -m apps.bot.main
 
 During development the bot uses long polling, so it needs no public URL. It stops on Ctrl+C. The minimum age is `MIN_AGE` (default 18 for development; see D-009). With `APP_ENV=production` the bot refuses to start unless `MIN_AGE` is set explicitly.
 
-At startup the bot registers its command menu (`/start`, `/profile`, `/help`) with Telegram for private chats. Age and gender can each be changed once per `PROFILE_CHANGE_COOLDOWN_DAYS` (default 30). `/help` shows the announcement channel link only when `ANNOUNCEMENT_CHANNEL_URL` is set, and the support link only when `SUPPORT_CONTACT` is set. Each must be an `https://` link.
+At startup the bot registers its command menu (`/start`, `/profile`, `/help`) with Telegram for private chats. After onboarding, the keyboard under the message box offers 🎭 New Anonymous Chat; during a chat it shows 👤 Partner profile and ⏹ End chat. Age and gender can each be changed once per `PROFILE_CHANGE_COOLDOWN_DAYS` (default 30). `/help` shows the announcement channel link only when `ANNOUNCEMENT_CHANNEL_URL` is set, and the support link only when `SUPPORT_CONTACT` is set. Each must be an `https://` link.
 
 While Redis is available, two protections apply:
 
@@ -68,6 +68,16 @@ While Redis is available, two protections apply:
 * Each user is subject to a flood limit of `BOT_FLOOD_LIMIT` updates per `BOT_FLOOD_WINDOW_SECONDS`.
 
 If Redis is unavailable, both protections let updates through so the bot stays online. Handlers with side effects, such as charges or matches, must therefore enforce their own idempotency in the database.
+
+### Worker
+
+Matching needs the worker running alongside the bot. It pairs users who are searching about once a second and ends searches that pass the time limit (D-041):
+
+```bash
+uv run python -m apps.worker.main
+```
+
+It uses the same `.env` as the bot, because it sends Telegram messages. It stops on Ctrl+C.
 
 ### Roles and admin settings
 

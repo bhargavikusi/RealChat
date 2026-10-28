@@ -183,6 +183,8 @@ TABLES = (
     "profile_changes",
     "app_settings",
     "admin_audit_log",
+    "conversations",
+    "conversation_participants",
 )
 
 
