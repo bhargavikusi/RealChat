@@ -77,7 +77,7 @@ Runtime settings changed by admins (D-035). A row exists only for a setting an a
 
 ### `admin_audit_log`
 
-An append-only record of administrative changes. Rows are never updated or deleted, including on account deletion. A trigger (`admin_audit_log_append_only`) enforces this in the database: any `UPDATE` or `DELETE` of a row fails. `TRUNCATE`, used only to reset test databases, is not affected.
+An append-only record of administrative changes. Rows are never updated or deleted, including on account deletion. Triggers enforce this in the database: any `UPDATE`, `DELETE`, or `TRUNCATE` fails, including a `TRUNCATE ... CASCADE` from `users`. The integration tests switch the `TRUNCATE` guard off only while emptying the isolated test database. The triggers guard against mistakes in application code, but the table owner can disable them; full protection needs a restricted application database role (O-011).
 
 | Column | Type | Notes |
 |---|---|---|

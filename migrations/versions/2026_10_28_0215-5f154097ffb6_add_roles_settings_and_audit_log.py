@@ -68,12 +68,18 @@ def upgrade() -> None:
         ),
         sa.PrimaryKeyConstraint("id", name=op.f("pk_admin_audit_log")),
     )
-    # Append-only at the database boundary: any UPDATE or DELETE of an audit row fails,
-    # whatever code path attempts it. (TRUNCATE, used only by tests, is not affected.)
+    # Append-only at the database boundary: any UPDATE, DELETE, or TRUNCATE of the
+    # audit log fails, whatever code path attempts it. This guards against mistakes in
+    # application code; it cannot stop the table owner from disabling the triggers, so
+    # full protection needs a restricted application database role (O-011).
     op.execute(APPEND_ONLY_FUNCTION)
     op.execute(
         "CREATE TRIGGER admin_audit_log_append_only BEFORE UPDATE OR DELETE ON admin_audit_log "
         "FOR EACH ROW EXECUTE FUNCTION admin_audit_log_append_only()"
+    )
+    op.execute(
+        "CREATE TRIGGER admin_audit_log_no_truncate BEFORE TRUNCATE ON admin_audit_log "
+        "FOR EACH STATEMENT EXECUTE FUNCTION admin_audit_log_append_only()"
     )
     op.add_column(
         "users", sa.Column("role", sa.String(length=16), server_default="user", nullable=False)
@@ -86,6 +92,7 @@ def upgrade() -> None:
 def downgrade() -> None:
     op.drop_constraint(op.f("ck_users_role"), "users", type_="check")
     op.drop_column("users", "role")
+    op.execute("DROP TRIGGER admin_audit_log_no_truncate ON admin_audit_log")
     op.execute("DROP TRIGGER admin_audit_log_append_only ON admin_audit_log")
     op.execute("DROP FUNCTION admin_audit_log_append_only()")
     op.drop_table("admin_audit_log")

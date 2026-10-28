@@ -364,7 +364,12 @@ async def test_a_revocation_in_progress_blocks_the_change_then_refuses_it(
 
 @pytest.mark.parametrize(
     "statement",
-    ["UPDATE admin_audit_log SET new_value = 'owner'", "DELETE FROM admin_audit_log"],
+    [
+        "UPDATE admin_audit_log SET new_value = 'owner'",
+        "DELETE FROM admin_audit_log",
+        "TRUNCATE admin_audit_log",
+        "TRUNCATE users CASCADE",  # would cascade into the audit log
+    ],
 )
 async def test_the_audit_log_cannot_be_changed_or_deleted(
     session_factory: Sessions, statement: str
