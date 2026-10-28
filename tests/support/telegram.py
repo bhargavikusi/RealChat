@@ -10,6 +10,7 @@ from typing import Any
 
 from aiogram import Bot
 from aiogram.client.session.base import BaseSession
+from aiogram.exceptions import TelegramBadRequest
 from aiogram.methods import AnswerCallbackQuery, GetMe, SendMessage, SendPhoto, TelegramMethod
 from aiogram.methods.base import TelegramType
 from aiogram.types import (
@@ -23,6 +24,8 @@ from aiogram.types import (
     User,
 )
 
+from apps.bot.telegram_session import install_request_middlewares
+
 # Obviously fake, see tests/unit/test_logging.py for why it avoids the real token prefix.
 FAKE_TOKEN = "123456789:TEST-fake-token-for-bot-tests-only"
 BOT_USER = User(id=123456789, is_bot=True, first_name="RealChat Test", username="RealChatTestBot")
@@ -32,6 +35,8 @@ class RecordingSession(BaseSession):
     def __init__(self) -> None:
         super().__init__()
         self.requests: list[TelegramMethod[Any]] = []
+        # When set, answerCallbackQuery fails with this Telegram error description.
+        self.reject_callback_answers: str | None = None
 
     async def make_request(
         self,
@@ -40,6 +45,8 @@ class RecordingSession(BaseSession):
         timeout: int | None = None,  # noqa: ASYNC109 (aiogram interface)
     ) -> TelegramType:
         self.requests.append(method)
+        if isinstance(method, AnswerCallbackQuery) and self.reject_callback_answers:
+            raise TelegramBadRequest(method=method, message=self.reject_callback_answers)
         if isinstance(method, SendMessage):
             sent = Message(
                 message_id=len(self.requests),
@@ -122,6 +129,8 @@ class RecordingSession(BaseSession):
 
 def make_bot() -> tuple[Bot, RecordingSession]:
     session = RecordingSession()
+    # The same request middlewares as the real bot (apps.bot.main.create_bot).
+    install_request_middlewares(session)
     return Bot(token=FAKE_TOKEN, session=session), session
 
 

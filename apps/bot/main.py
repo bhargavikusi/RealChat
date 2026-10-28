@@ -19,6 +19,7 @@ from apps.bot.account import AccessGateMiddleware
 from apps.bot.avatars import Avatars
 from apps.bot.db import DbSessionMiddleware
 from apps.bot.middlewares import DeduplicateUpdatesMiddleware, FloodControlMiddleware
+from apps.bot.telegram_session import install_request_middlewares
 from backend.config.settings import BotSettings, load_bot_settings
 from backend.core.logging import configure_logging
 from backend.core.redis import create_redis
@@ -84,7 +85,9 @@ def create_dispatcher(
 def create_bot(settings: BotSettings) -> Bot:
     # No default parse mode: text is sent as plain text, so user-provided content
     # can never be interpreted as HTML or Markdown.
-    return Bot(token=settings.telegram_bot_token.get_secret_value())
+    bot = Bot(token=settings.telegram_bot_token.get_secret_value())
+    install_request_middlewares(bot.session)
+    return bot
 
 
 async def run() -> None:
