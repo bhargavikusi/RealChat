@@ -57,7 +57,10 @@ async def run() -> None:
     stop = asyncio.Event()
     loop = asyncio.get_running_loop()
     for signum in (signal.SIGINT, signal.SIGTERM):
-        loop.add_signal_handler(signum, stop.set)
+        # Not available on every platform (e.g. Windows); asyncio.run still stops on
+        # Ctrl+C there, just without the clean shutdown message.
+        with suppress(NotImplementedError):
+            loop.add_signal_handler(signum, stop.set)
     try:
         logger.info("worker starting")
         await run_matcher(matcher, stop)

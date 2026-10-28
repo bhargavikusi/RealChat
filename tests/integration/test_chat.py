@@ -9,12 +9,14 @@ from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from apps.bot import account as ac
+from apps.bot import admin as ad
 from apps.bot import chat as ch
 from apps.bot import onboarding as ob
 from apps.bot.avatars import Avatars
 from apps.bot.keyboards import END_CHAT, NEW_CHAT, PARTNER_PROFILE
 from backend.config.settings import BotSettings
-from backend.modules.admin.settings import RuntimeSettings
+from backend.modules.admin import service as admin_service
+from backend.modules.admin.settings import SPECS, RuntimeSettings, SettingKey
 from backend.modules.chat import service as chat_service
 from backend.modules.matching.matcher import Matcher
 from backend.modules.matching.queue import SearchQueue
@@ -56,6 +58,10 @@ async def world(bot_settings: BotSettings, redis: Redis, session_factory: Sessio
     world = World(bot_settings, redis, session_factory)
     await complete_onboarding(world.alice)
     await complete_onboarding(world.bob)
+    # Distinct profiles, so tests can tell whose card each user received.
+    assert await world.bob.send("/profile")
+    await world.bob.press("✏️ Nickname")
+    await world.bob.send("Moon Child")
     return world
 
 
@@ -98,7 +104,8 @@ async def test_two_users_are_matched_and_see_each_other(world: World) -> None:
     to_alice = last_to(world.worker, USER_ID)
     to_bob = last_to(world.worker, BOB_ID)
     assert isinstance(to_alice, SendPhoto) and isinstance(to_bob, SendPhoto)
-    assert text_of(to_alice).startswith(f"{ch.MATCHED}\n\n👤 Night Owl")
+    # Each receives the other's card.
+    assert text_of(to_alice).startswith(f"{ch.MATCHED}\n\n👤 Moon Child")
     assert text_of(to_bob).startswith(f"{ch.MATCHED}\n\n👤 Night Owl")
     assert keys(to_alice) == keys(to_bob) == CHAT_KEYS
 
@@ -110,7 +117,9 @@ async def test_two_users_are_matched_and_see_each_other(world: World) -> None:
 
 async def test_partner_profile_shows_the_partner_card(world: World) -> None:
     await _match(world)
-    assert (await world.alice.send(PARTNER_PROFILE)).startswith(f"{ch.PARTNER_HEADER}\n\n👤 ")
+    assert (await world.alice.send(PARTNER_PROFILE)).startswith(
+        f"{ch.PARTNER_HEADER}\n\n👤 Moon Child"
+    )
     assert await world.alice.send(END_CHAT) == ch.YOU_ENDED
     assert await world.alice.send(PARTNER_PROFILE) == ch.NOT_IN_CHAT
 
@@ -130,7 +139,7 @@ async def test_repeated_taps_and_duplicate_updates_make_one_search(
     assert len(world.alice.session.requests) == sent  # the redelivery was dropped
 
     alice = await world.user_id(USER_ID)
-    assert [user for user, _ in await world.queue.waiting(10)] == [alice]
+    assert [user for user, _ in await world.queue.waiting(10, started_after=0)] == [alice]
 
 
 async def test_cancelling_a_search(world: World) -> None:
@@ -152,7 +161,7 @@ async def test_an_old_cancel_button_cannot_cancel_a_new_search(world: World) -> 
     await world.alice.send(NEW_CHAT)
     await world.alice.press_data(old_cancel)
     assert world.alice.session.callback_answers()[-1] == ch.SEARCH_ENDED
-    assert len(await world.queue.waiting(10)) == 1
+    assert len(await world.queue.waiting(10, started_after=0)) == 1
 
 
 async def test_cancel_after_a_match_changes_nothing(world: World) -> None:
@@ -217,5 +226,19 @@ async def test_deleting_the_account_ends_the_chat(world: World) -> None:
     assert text_of(last_to(world.alice.session, USER_ID)) == ac.DELETED
     to_bob = last_to(world.alice.session, BOB_ID)
     assert (text_of(to_bob), keys(to_bob)) == (ac.PARTNER_LEFT, MAIN_KEYS)
+    # The partner is told before the deleting user's own reply.
+    requests = world.alice.session.requests
+    assert requests.index(to_bob) < requests.index(last_to(world.alice.session, USER_ID))
     async with world.sessions() as session:
         assert await chat_service.active_chat(session, await world.user_id(BOB_ID)) is None
+
+
+async def test_new_chat_works_during_an_admin_edit(world: World) -> None:
+    async with world.sessions() as session:
+        await admin_service.set_role(session, USER_ID, "admin")
+        await session.commit()
+    await world.alice.send("/profile")
+    await world.alice.press(ac.ADVANCED_SETTINGS)
+    await world.alice.press(ad.ADMIN_BUTTON)
+    await world.alice.press(SPECS[SettingKey.CHAT_RETENTION_DAYS].label)
+    assert await world.alice.send(NEW_CHAT) == ch.SEARCHING  # not taken as a value

@@ -84,11 +84,9 @@ COUNTRY_NOT_FOUND = "I couldn't find that country. Please type its name in Engli
 COUNTRY_PICK = "Did you mean one of these?"
 PHOTO_EXPECTED = "Please send a photo, or tap Skip."
 ALREADY_DONE = "Already saved."
-MENU_HINT = (
-    f"Tap {NEW_CHAT} to meet someone. "
-    "Open the menu any time: /profile to view or edit your profile, /help for help."
-)
-ONBOARDING_COMPLETE = f"You're all set! {MENU_HINT}"
+MENU_HINT = "Open the menu any time: /profile to view or edit your profile, /help for help."
+ONBOARDING_COMPLETE = f"You're all set! Tap {NEW_CHAT} to meet someone. {MENU_HINT}"
+# Shown in or out of a chat, so it does not name a button only one keyboard has.
 WELCOME_BACK = f"Welcome back! {MENU_HINT}"
 
 REQUIRED_STEPS = {

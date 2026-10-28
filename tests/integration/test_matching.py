@@ -13,11 +13,13 @@ from backend.modules.admin import service as admin
 from backend.modules.admin.settings import RuntimeSettings, SettingKey
 from backend.modules.chat import service as chat
 from backend.modules.chat.models import Conversation, ConversationParticipant
+from backend.modules.matching import matcher as matcher_module
 from backend.modules.matching.matcher import Matcher
 from backend.modules.matching.queue import SearchQueue
 from backend.modules.users import service as users
 from backend.modules.users.models import User
 from backend.modules.users.terms import TERMS_VERSION
+from tests.support.db import wait_until_blocked
 
 Sessions = async_sessionmaker[AsyncSession]
 NOW = datetime(2026, 11, 3, 12, 0, tzinfo=UTC)
@@ -112,7 +114,7 @@ async def test_a_repeated_start_keeps_one_search(queue: SearchQueue) -> None:
     first_id, created = await queue.start(1, 100.0)
     second_id, again = await queue.start(1, 200.0)
     assert (created, again, second_id) == (True, False, first_id)
-    assert await queue.waiting(10) == [(1, 100.0)]
+    assert await queue.waiting(10, started_after=0) == [(1, 100.0)]
 
 
 async def test_only_the_current_search_can_be_cancelled(queue: SearchQueue) -> None:
@@ -120,27 +122,26 @@ async def test_only_the_current_search_can_be_cancelled(queue: SearchQueue) -> N
     assert not await queue.cancel(1, "older-search")
     assert await queue.cancel(1, search_id)
     assert not await queue.cancel(1, search_id)
-    assert await queue.waiting(10) == []
+    assert await queue.waiting(10, started_after=0) == []
 
 
 async def test_a_pair_is_claimed_whole_or_not_at_all(queue: SearchQueue) -> None:
     await _search(queue, 1, 2)
     await queue.cancel(2, str(await queue.current(2)))
     assert await queue.claim_pair(1, 2) is None
-    assert await queue.waiting(10) == [(1, NOW.timestamp())]
+    assert await queue.waiting(10, started_after=0) == [(1, NOW.timestamp())]
 
 
-async def test_requeue_restores_the_old_place_unless_a_new_search_started(
-    queue: SearchQueue,
-) -> None:
+async def test_requeue_restores_the_old_place(queue: SearchQueue) -> None:
     await _search(queue, 1, 2, 3)
     claimed = await queue.claim_pair(1, 2)
     assert claimed is not None
-    first, second = claimed
-    await queue.start(2, NOW.timestamp() + 50)  # 2 searches again meanwhile
-    assert await queue.requeue(first)
-    assert not await queue.requeue(second)
-    assert [user for user, _ in await queue.waiting(10)] == [1, 3, 2]
+    assert [user for user, _ in await queue.waiting(10, started_after=0)] == [3]
+    for user in claimed:
+        assert await queue.requeue(user)
+    assert [user for user, _ in await queue.waiting(10, started_after=0)] == [1, 2, 3]
+    # The restored searches can still be cancelled with their buttons.
+    assert await queue.cancel(1, claimed[0].search_id)
 
 
 # --- Matching ------------------------------------------------------------------------
@@ -159,7 +160,7 @@ async def test_two_searchers_are_matched_and_told(
     assert result.matched == 1
     assert notifier.matches == [(a, b)]
     assert await _open_pairs(session_factory) == {frozenset((a, b))}
-    assert await queue.waiting(10) == []
+    assert await queue.waiting(10, started_after=0) == []
 
 
 async def test_a_lone_searcher_waits(
@@ -167,7 +168,7 @@ async def test_a_lone_searcher_waits(
 ) -> None:
     await _search(queue, people[0])
     assert (await matcher.tick(NOW)).matched == 0
-    assert [user for user, _ in await queue.waiting(10)] == [people[0]]
+    assert [user for user, _ in await queue.waiting(10, started_after=0)] == [people[0]]
 
 
 async def test_a_cancelled_search_is_not_matched(
@@ -194,7 +195,7 @@ async def test_searches_end_after_the_time_limit(
     # a's search ran out before b's could pair with it; b keeps waiting.
     assert notifier.expired == [a]
     assert notifier.matches == []
-    assert [user for user, _ in await queue.waiting(10)] == [b]
+    assert [user for user, _ in await queue.waiting(10, started_after=0)] == [b]
 
     async with session_factory() as session:
         await session.execute(update(User).where(User.id == b).values(role="admin"))
@@ -229,7 +230,7 @@ async def test_ineligible_users_are_dropped_not_matched(
     await _search(queue, a, b)
     result = await matcher.tick(NOW)
     assert (result.matched, result.dropped) == (0, 1)
-    assert [user for user, _ in await queue.waiting(10)] == [a]
+    assert [user for user, _ in await queue.waiting(10, started_after=0)] == [a]
 
 
 async def test_an_ineligible_user_does_not_hold_up_the_others(
@@ -343,7 +344,10 @@ async def test_a_refused_match_puts_both_back_in_their_place(
     monkeypatch.setattr(chat, "start_conversation", refuse)
     await matcher.tick(NOW)
     assert notifier.matches == []
-    assert await queue.waiting(10) == [(a, NOW.timestamp()), (b, NOW.timestamp() + 1)]
+    assert await queue.waiting(10, started_after=0) == [
+        (a, NOW.timestamp()),
+        (b, NOW.timestamp() + 1),
+    ]
 
 
 async def test_lost_redis_data_creates_no_match(
@@ -435,7 +439,7 @@ async def test_simultaneous_ends_end_the_chat_once(
                 return ended is not None
 
         task = asyncio.create_task(second())
-        await asyncio.sleep(0.2)
+        await wait_until_blocked(session_factory)
         assert not task.done()  # waits for the first transaction's lock
         await first.commit()
         assert await task is False  # it sees the chat already ended
@@ -449,3 +453,115 @@ async def test_users_cannot_be_matched_with_themselves(
     async with session_factory() as session:
         with pytest.raises(ValueError, match="themselves"):
             await chat.start_conversation(session, people[0], people[0])
+
+
+# --- Review follow-ups ---------------------------------------------------------------
+
+
+async def test_searches_beyond_the_expiry_batch_are_never_matched(
+    matcher: Matcher,
+    queue: SearchQueue,
+    notifier: RecordingNotifier,
+    people: list[int],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(matcher_module, "BATCH_SIZE", 2)
+    await _search(queue, *people, at=NOW - timedelta(seconds=600))
+    await matcher.tick(NOW)
+    assert (notifier.expired, notifier.matches) == (people[:2], [])
+    await matcher.tick(NOW)
+    assert (notifier.expired, notifier.matches) == (people, [])
+
+
+async def test_waiting_with_no_room_returns_no_one(queue: SearchQueue) -> None:
+    await _search(queue, 1)
+    assert await queue.waiting(0, started_after=0) == []
+
+
+async def test_dropping_a_search_leaves_a_newer_one(queue: SearchQueue) -> None:
+    await queue.start(1, 100.0)
+    assert not await queue.remove(1, 99.0)  # not the search that was looked at
+    assert await queue.remove(1, 100.0)
+    assert await queue.waiting(10, started_after=0) == []
+
+
+async def test_a_cancel_while_claimed_keeps_the_search_out(queue: SearchQueue) -> None:
+    await _search(queue, 1, 2)
+    claimed = await queue.claim_pair(1, 2)
+    assert claimed is not None
+    first, second = claimed
+    # Tapping 🎭 meanwhile reports the same search, and Cancel cannot cancel it yet.
+    assert await queue.start(1, NOW.timestamp() + 5) == (first.search_id, False)
+    assert not await queue.cancel(1, first.search_id)
+    # The match fails: the cancelled search is not put back, the other one is.
+    assert not await queue.requeue(first)
+    assert await queue.requeue(second)
+    await queue.release(first)
+    assert [user for user, _ in await queue.waiting(10, started_after=0)] == [2]
+    # A new search starts normally afterwards.
+    assert (await queue.start(1, NOW.timestamp() + 9))[1] is True
+
+
+async def test_claimed_searches_end_once_matched(
+    matcher: Matcher, queue: SearchQueue, people: list[int]
+) -> None:
+    a, b = people[:2]
+    await _search(queue, a, b)
+    await matcher.tick(NOW)
+    assert (await queue.current(a), await queue.current(b)) == (None, None)
+
+
+async def test_orphaned_queue_entries_are_not_claimed(queue: SearchQueue, redis: Redis) -> None:
+    await _search(queue, 1, 2)
+    await redis.delete("match:search:2")  # its key expired, e.g. during a worker outage
+    assert await queue.claim_pair(1, 2) is None
+    assert [user for user, _ in await queue.waiting(10, started_after=0)] == [1]
+
+
+async def test_a_database_failure_puts_both_searches_back(
+    matcher: Matcher,
+    queue: SearchQueue,
+    notifier: RecordingNotifier,
+    people: list[int],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    a, b = people[:2]
+    await _search(queue, a, b)
+    real = chat.eligible_for_matching
+
+    async def failing(*args: object, lock: bool = False, **kwargs: object) -> set[int]:
+        if lock:
+            raise ConnectionError("simulated database outage")
+        return await real(*args, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(chat, "eligible_for_matching", failing)
+    with pytest.raises(ConnectionError):
+        await matcher.tick(NOW)
+    assert notifier.matches == []
+    assert await queue.waiting(10, started_after=0) == [
+        (a, NOW.timestamp()),
+        (b, NOW.timestamp() + 1),
+    ]
+
+
+async def test_a_deletion_in_progress_is_never_matched(
+    matcher: Matcher,
+    queue: SearchQueue,
+    notifier: RecordingNotifier,
+    people: list[int],
+    session_factory: Sessions,
+) -> None:
+    a, b = people[:2]
+    await _search(queue, a, b)
+    async with session_factory() as deleting:
+        user = await users.lock_user(deleting, a)  # as account deletion does first
+        assert await chat.end_conversation(deleting, a, NOW) is None
+        task = asyncio.create_task(matcher.tick(NOW))
+        await wait_until_blocked(session_factory)  # the match waits for the deletion
+        await users.delete_account(deleting, user.id, NOW)
+        await deleting.commit()
+        await task
+
+    assert notifier.matches == []
+    assert await _open_pairs(session_factory) == set()
+    assert [user for user, _ in await queue.waiting(10, started_after=0)] == [b]

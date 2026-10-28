@@ -97,12 +97,14 @@ async def end_conversation(
 
 
 async def eligible_for_matching(
-    session: AsyncSession, user_ids: Collection[int], terms_version: str
+    session: AsyncSession, user_ids: Collection[int], terms_version: str, *, lock: bool = False
 ) -> set[int]:
     """Those of `user_ids` who may be matched right now.
 
     Eligible means: an active account (not suspended, banned, or deleted), completed
-    onboarding, the current terms accepted, and no open conversation.
+    onboarding, the current terms accepted, and no open conversation. With `lock`, the
+    eligible users' rows are share-locked until the transaction ends, so a concurrent
+    account deletion (which takes the row's update lock) waits for the match.
     """
     if not user_ids:
         return set()
@@ -112,7 +114,7 @@ async def eligible_for_matching(
     accepted = exists().where(
         TermsAcceptance.user_id == User.id, TermsAcceptance.terms_version == terms_version
     )
-    rows = await session.execute(
+    query = (
         select(User.id)
         .join(Profile, Profile.user_id == User.id)
         .where(
@@ -123,7 +125,9 @@ async def eligible_for_matching(
             ~open_conversation,
         )
     )
-    return set(rows.scalars())
+    if lock:
+        query = query.with_for_update(read=True, of=User)
+    return set((await session.execute(query)).scalars())
 
 
 async def recent_pairs(

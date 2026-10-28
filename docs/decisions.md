@@ -378,7 +378,7 @@ Work happens on short-lived issue branches, such as `feature/12-onboarding`, cre
 ### D-041 — A single matcher in the worker pairs searchers
 
 **Date:** 2026-10-28
-**Decision:** The bot only adds users to the Redis queue (D-027). A matcher in the worker process runs about once a second: it ends searches past the time limit, re-checks the waiting users in PostgreSQL, pairs them oldest first while avoiding recent partners (D-033), commits each match, and only then tells both users. A Redis lock lets only one matcher run at a time.
+**Decision:** The bot starts and cancels searches in the Redis queue (D-027); it never pairs users. A matcher in the worker process runs about once a second: it ends searches past the time limit, re-checks the waiting users in PostgreSQL, pairs them oldest first while avoiding recent partners (D-033), commits each match, and only then tells both users. A Redis lock normally lets only one matcher run at a time.
 **Why:** Owner decision. With one matcher there is no race between simultaneous taps; the cost is up to about a second before a match is announced.
 **Consequence:** Matching needs the worker running alongside the bot. If Redis loses its data, searches in progress are lost without a "no one found" notice; users can simply search again.
 

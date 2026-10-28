@@ -78,8 +78,10 @@ def create_dispatcher(
         errors.create_router(),
         menu.create_router(),
         account.create_router(),
-        admin.create_router(),
+        # Chat before admin: the chat keyboard's buttons must never be taken as an
+        # answer to a pending admin edit.
         chat.create_router(),
+        admin.create_router(),
         profile.create_router(),
         onboarding.create_router(),
     )

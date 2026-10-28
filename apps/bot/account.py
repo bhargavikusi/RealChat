@@ -178,7 +178,11 @@ async def on_confirm(
         return
     if not await _may_delete(query, bot, session, state, settings):
         return
-    user = await service.get_or_create_user(session, query.from_user.id)
+    found = await service.get_or_create_user(session, query.from_user.id)
+    # The row is locked before anything else, so a match being created for this user
+    # either finishes first (and is ended below) or waits and then finds the account
+    # deleted.
+    user = await service.lock_user(session, found.id)
     restricted = service.is_restricted(user.status)
     now = datetime.now(UTC)
     # A deleted account leaves any chat it is in, so the partner is not left waiting.
@@ -187,8 +191,7 @@ async def on_confirm(
     await service.delete_account(session, user.id, now)
     await session.commit()
     await state.clear()
-    await query.answer()
-    await bot.send_message(query.from_user.id, DELETED_RESTRICTED if restricted else DELETED)
+    # The partner is told first, so a failure replying to this user cannot skip it.
     if partner is not None:
         try:
             await bot.send_message(
@@ -196,6 +199,8 @@ async def on_confirm(
             )
         except TelegramAPIError as exc:
             logger.warning("could not tell a partner the chat ended", extra=exception_summary(exc))
+    await query.answer()
+    await bot.send_message(query.from_user.id, DELETED_RESTRICTED if restricted else DELETED)
 
 
 async def on_keep(

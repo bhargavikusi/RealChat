@@ -78,6 +78,49 @@ def pair_users(waiting: Sequence[int], recent: set[frozenset[int]]) -> list[tupl
             pairs.append((first, partner))
             unmatched.remove(first)
             unmatched.remove(partner)
+    # Back in waiting order (older user first in each pair), so matches are announced
+    # to the longest-waiting users first.
+    position = {user_id: index for index, user_id in enumerate(waiting)}
+    ordered = [
+        tuple(sorted(pair, key=position.__getitem__)) for pair in _swap_out_repeats(pairs, recent)
+    ]
+    return sorted(((a, b) for a, b in ordered), key=lambda pair: position[pair[0]])
+
+
+def _swap_out_repeats(
+    pairs: list[tuple[int, int]], recent: set[frozenset[int]]
+) -> list[tuple[int, int]]:
+    """Exchange partners between two pairs when that turns a repeat into fresh pairs.
+
+    Greedy pairing can be forced into a repeat that a different arrangement avoids,
+    e.g. 1-2 then 3-4 (recent) where 1-3 and 2-4 are both fresh. The same users are
+    matched either way; only who meets whom changes. Each swap removes at least one
+    repeat and adds none, so this ends.
+    """
+
+    def fresh(first: int, second: int) -> bool:
+        return frozenset((first, second)) not in recent
+
+    pairs = list(pairs)
+    improved = True
+    while improved:
+        improved = False
+        for i, (a, b) in enumerate(pairs):
+            if fresh(a, b):
+                continue
+            for j, (c, d) in enumerate(pairs):
+                if i == j:
+                    continue
+                for new in (((a, c), (b, d)), ((a, d), (b, c))):
+                    before = fresh(a, b) + fresh(c, d)
+                    if sum(fresh(*pair) for pair in new) > before:
+                        pairs[i], pairs[j] = new
+                        improved = True
+                        break
+                if improved:
+                    break
+            if improved:
+                break
     return pairs
 
 
@@ -120,9 +163,12 @@ class Matcher:
             window = await self._runtime.get(session, SettingKey.MATCH_REPEAT_WINDOW_SECONDS)
             await session.commit()
 
-        expired = await self._expire(now.timestamp() - timeout)
+        cutoff = now.timestamp() - timeout
+        expired = await self._expire(cutoff)
 
-        waiting = [user_id for user_id, _ in await self._queue.waiting(BATCH_SIZE)]
+        # Only searches still within the time limit, even if more were left to expire.
+        searches = await self._queue.waiting(BATCH_SIZE, started_after=cutoff)
+        waiting = [user_id for user_id, _ in searches]
         async with self._sessions() as session:
             eligible = await chat.eligible_for_matching(session, waiting, self._terms_version)
             ordered = [user_id for user_id in waiting if user_id in eligible]
@@ -133,9 +179,9 @@ class Matcher:
             )
             await session.commit()
 
-        dropped = [user_id for user_id in waiting if user_id not in eligible]
-        for user_id in dropped:
-            await self._queue.remove(user_id)
+        dropped = [(user_id, started) for user_id, started in searches if user_id not in eligible]
+        for user_id, started in dropped:
+            await self._queue.remove(user_id, started)
 
         matched = 0
         for first, second in pair_users(ordered, recent):
@@ -159,30 +205,50 @@ class Matcher:
     async def _match(self, first: int, second: int) -> bool:
         claimed = await self._queue.claim_pair(first, second)
         if claimed is None:
-            return False  # one of them cancelled in the meantime
-        async with self._sessions() as session:
-            # Re-checked in the transaction that creates the match, so a user restricted
-            # or matched since the batch check is not matched now.
-            eligible = await chat.eligible_for_matching(
-                session, (first, second), self._terms_version
-            )
-            conversation_id: int | None = None
-            if eligible == {first, second}:
-                try:
-                    conversation_id = await chat.start_conversation(session, first, second)
-                    await session.commit()
-                except IntegrityError:
-                    await session.rollback()
-                    conversation_id = None
+            return False  # one of them cancelled or their search ended meanwhile
+        try:
+            conversation_id, eligible = await self._create(first, second)
+        except BaseException:
+            # A database failure must not lose the searches: put both back, then fail.
+            for user in claimed:
+                await self._queue.requeue(user)
+            raise
         if conversation_id is None:
-            # Not matched: the users who can still be matched go back in their old place.
+            # Not matched: whoever can still be matched goes back in their old place.
             for user in claimed:
                 if user.user_id in eligible:
                     await self._queue.requeue(user)
+                else:
+                    await self._queue.release(user)
             return False
+        for user in claimed:
+            await self._queue.release(user)
         try:
             await self._notifier.matched(conversation_id, first, second)
         except Exception as exc:
             # The match stands; a user who cannot be reached is handled with chat endings.
             logger.warning("could not notify a match", extra=exception_summary(exc))
         return True
+
+    async def _create(self, first: int, second: int) -> tuple[int | None, set[int]]:
+        """Re-check both users and create their conversation in one transaction.
+
+        Returns the conversation id (None if not created) and who was eligible. Both
+        users' rows are share-locked by the check, so account deletion, which locks the
+        user row first, either finishes before (and the user is not eligible) or waits
+        until this match is committed (and then ends the new chat).
+        """
+        async with self._sessions() as session:
+            eligible = await chat.eligible_for_matching(
+                session, (first, second), self._terms_version, lock=True
+            )
+            if eligible != {first, second}:
+                await session.rollback()
+                return None, eligible
+            try:
+                conversation_id = await chat.start_conversation(session, first, second)
+                await session.commit()
+            except IntegrityError:
+                await session.rollback()
+                return None, eligible
+            return conversation_id, eligible

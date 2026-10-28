@@ -4,7 +4,7 @@ RealChat is a Telegram-first anonymous chat and social discovery platform. Users
 
 ## Status
 
-Early development. The infrastructure runs locally: an API with health checks, PostgreSQL, Redis, and database migrations. The Telegram bot supports `/start`, terms acceptance, conversational profile creation, profile viewing and editing (`/profile`), account deletion, and `/help`. Suspended and banned accounts are limited to help and deletion. There's no matching or chat yet.
+Early development. The infrastructure runs locally: an API with health checks, PostgreSQL, Redis, and database migrations. The Telegram bot supports `/start`, terms acceptance, conversational profile creation, profile viewing and editing (`/profile`), account deletion, and `/help`. Suspended and banned accounts are limited to help and deletion. Users can search for a random partner, get matched by the worker, view their partner's profile, and end the chat. Messages are not relayed between partners yet.
 
 ## Prerequisites
 
