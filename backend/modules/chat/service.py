@@ -8,11 +8,12 @@ from collections.abc import Collection
 from dataclasses import dataclass
 from datetime import datetime
 
-from sqlalchemy import and_, exists, or_, select, update
+from sqlalchemy import and_, delete, exists, or_, select, update
+from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 
-from backend.modules.chat.models import Conversation, ConversationParticipant
+from backend.modules.chat.models import ChatMessage, Conversation, ConversationParticipant
 from backend.modules.users.models import Profile, TermsAcceptance, User
 
 Participant = ConversationParticipant
@@ -151,3 +152,136 @@ async def recent_pairs(
         )
     )
     return {frozenset((first_id, second_id)) for first_id, second_id in rows}
+
+
+# --- Relayed messages (D-028, D-038) -------------------------------------------------
+
+
+async def relayed_message(
+    session: AsyncSession, sender_id: int, sender_message_id: int
+) -> ChatMessage | None:
+    """The stored record of a message the sender sent, if it was relayed."""
+    return (
+        await session.execute(
+            select(ChatMessage).where(
+                ChatMessage.sender_user_id == sender_id,
+                ChatMessage.sender_message_id == sender_message_id,
+            )
+        )
+    ).scalar_one_or_none()
+
+
+async def reply_target(
+    session: AsyncSession, chat: ActiveChat, user_id: int, replied_message_id: int
+) -> int | None:
+    """Where a reply should point in the partner's chat, or None if it can't be mapped.
+
+    In the user's own chat, the replied-to message is either one they sent (the partner
+    has a copy of it) or a copy of one the partner sent (the partner has the original).
+    """
+    row = (
+        await session.execute(
+            select(
+                ChatMessage.sender_user_id,
+                ChatMessage.sender_message_id,
+                ChatMessage.recipient_message_id,
+            ).where(
+                ChatMessage.conversation_id == chat.conversation_id,
+                ChatMessage.recipient_message_id.is_not(None),
+                or_(
+                    and_(
+                        ChatMessage.sender_user_id == user_id,
+                        ChatMessage.sender_message_id == replied_message_id,
+                    ),
+                    and_(
+                        ChatMessage.sender_user_id == chat.partner_id,
+                        ChatMessage.recipient_message_id == replied_message_id,
+                    ),
+                ),
+            )
+        )
+    ).first()
+    if row is None:
+        return None
+    sender, sender_message_id, recipient_message_id = row
+    target = recipient_message_id if sender == user_id else sender_message_id
+    return None if target is None else int(target)
+
+
+async def _conversation_open(session: AsyncSession, conversation_id: int) -> bool:
+    """Whether the conversation is open, share-locking its row until the transaction ends.
+
+    `end_conversation` takes the row's update lock, so an end in progress is waited for
+    and then seen.
+    """
+    ended = (
+        await session.execute(
+            select(Conversation.ended_at)
+            .where(Conversation.id == conversation_id)
+            .with_for_update(read=True)
+        )
+    ).scalar_one()
+    return ended is None
+
+
+async def claim_message(
+    session: AsyncSession,
+    chat: ActiveChat,
+    sender_id: int,
+    sender_message_id: int,
+    kind: str,
+    text: str | None,
+    file_id: str | None,
+) -> int | None:
+    """Record a message before it is copied; returns its row id.
+
+    Returns None if it was already recorded (a redelivered update) or the conversation
+    has ended. Recording first means a message is relayed at most once, even if the bot
+    stops between sending the copy and saving it.
+    """
+    if not await _conversation_open(session, chat.conversation_id):
+        return None
+    row_id = await session.scalar(
+        insert(ChatMessage)
+        .values(
+            conversation_id=chat.conversation_id,
+            sender_user_id=sender_id,
+            sender_message_id=sender_message_id,
+            kind=kind,
+            text=text,
+            file_id=file_id,
+        )
+        .on_conflict_do_nothing(index_elements=["sender_user_id", "sender_message_id"])
+        .returning(ChatMessage.id)
+    )
+    return None if row_id is None else int(row_id)
+
+
+async def complete_message(
+    session: AsyncSession, row_id: int, conversation_id: int, recipient_message_id: int
+) -> bool:
+    """Link a recorded message to its delivered copy.
+
+    Returns False, and removes the record, if the conversation ended while the copy was
+    on its way; the caller then withdraws the copy.
+    """
+    if not await _conversation_open(session, conversation_id):
+        await discard_message(session, row_id)
+        return False
+    await session.execute(
+        update(ChatMessage)
+        .where(ChatMessage.id == row_id)
+        .values(recipient_message_id=recipient_message_id)
+    )
+    return True
+
+
+async def discard_message(session: AsyncSession, row_id: int) -> None:
+    """Remove a recorded message that was not delivered."""
+    await session.execute(delete(ChatMessage).where(ChatMessage.id == row_id))
+
+
+def record_edit(message: ChatMessage, text: str, now: datetime) -> None:
+    """Keep the original text and store the latest edit beside it (D-043)."""
+    message.edited_text = text
+    message.edited_at = now

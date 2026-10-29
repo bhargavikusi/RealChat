@@ -100,7 +100,7 @@ One row per chat between two matched users (D-027).
 | `id` | bigint identity | |
 | `started_at` | timestamptz | |
 | `ended_at` | timestamptz, nullable | NULL while the chat is open. |
-| `end_reason` | varchar(16), nullable | `user_ended` for now; set together with `ended_at`, enforced by a constraint. More reasons come with idle timeouts, blocking, and unreachable partners. |
+| `end_reason` | varchar(16), nullable | `user_ended` or `unreachable`; set together with `ended_at`, enforced by a constraint. More reasons come with idle timeouts and blocking. |
 | `ended_by_user_id` | bigint, nullable | References `users.id`. The user who ended it, when a user did. |
 
 ### `conversation_participants`
@@ -112,7 +112,25 @@ The two users in each conversation. The primary key is `(conversation_id, user_i
 | `conversation_id`, `user_id` | bigint | |
 | `left_at` | timestamptz, nullable | Set for both users when the conversation ends. |
 
-A partial unique index on `user_id` where `left_at IS NULL` allows each user at most one open conversation. It is the final guard against double matches: if two matches for the same user are attempted at once, one insert fails. The index on `(user_id, conversation_id)` serves "this user's conversations", used for repeat-match avoidance. Ending a conversation locks its `conversations` row and re-reads it, so when both users end a chat at the same moment it is ended once. Message content is not stored yet; what is stored and for how long comes with message relay (D-028).
+A partial unique index on `user_id` where `left_at IS NULL` allows each user at most one open conversation. It is the final guard against double matches: if two matches for the same user are attempted at once, one insert fails. The index on `(user_id, conversation_id)` serves "this user's conversations", used for repeat-match avoidance. Ending a conversation locks its `conversations` row and re-reads it, so when both users end a chat at the same moment it is ended once. Conversations that end because a message could not be delivered to the partner have the end reason `unreachable`, with no `ended_by_user_id`.
+
+### `chat_messages`
+
+Each message relayed between chat partners (D-028). It maps the sender's message to the partner's copy, so replies and edits can be mirrored, and keeps the content for moderation.
+
+| Column | Type | Notes |
+|---|---|---|
+| `id` | bigint identity | |
+| `conversation_id` | bigint | References `conversations.id`, with `ON DELETE CASCADE`. |
+| `sender_user_id` | bigint | References `users.id`. |
+| `sender_message_id`, `recipient_message_id` | bigint (`recipient_message_id` nullable) | Telegram message ids: the original in the sender's chat, and the copy in the partner's chat. The row is written before the copy is sent, and `recipient_message_id` is filled in once the copy exists. It stays NULL if the bot stopped in between, in which case the message may not have been delivered. |
+| `kind` | varchar(16) | `text`, `photo`, `video`, `animation`, `audio`, `voice`, `video_note`, `sticker`, `document`, `poll`, `dice`, or `other`. |
+| `text` | text, nullable | The original text or caption. Never overwritten. |
+| `edited_text`, `edited_at` | text, timestamptz, nullable | The latest edit and when it was made (D-043). A constraint requires `edited_at` whenever `edited_text` is set. |
+| `file_id` | text, nullable | A Telegram file identifier for media; files are never downloaded. |
+| `created_at` | timestamptz | |
+
+`(sender_user_id, sender_message_id)` is unique and is claimed before sending, so a message delivered to the bot twice is relayed at most once, even if the bot stopped right after sending it. A record is removed if its copy could not be delivered, or was taken back because the chat ended. If linking the record to its copy fails, the copy is taken back but the record stays, with `recipient_message_id` NULL and its content, so a redelivery is still recognized; it is subject to the same retention as other content. The index on `(conversation_id, recipient_message_id)` serves reply lookups. Contact cards, locations, and refused text are never stored (D-042). The content columns (`text`, `edited_text`, `file_id`) are for moderation only, are never written to ordinary logs, and are to be deleted after the retention period (D-028, default 7 days). Messages tied to an open report are to be kept until the report is closed, once reports exist. The automatic cleanup is a separate piece of work and is not running yet, so content is currently kept.
 
 ## Where rules are enforced
 

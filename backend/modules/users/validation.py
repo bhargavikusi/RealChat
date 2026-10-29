@@ -50,7 +50,9 @@ _GENERIC_TLDS = (
 _COUNTRY_TLDS = sorted({c.alpha_2.lower() for c in pycountry.countries} | {"uk", "eu"})
 _LINK = re.compile(
     r"(?i)(?:\b[a-z][a-z0-9+.-]*://|\bwww\.|\bt(?:elegram)?\.me/"
-    r"|\b[a-z0-9-]+\.(?:" + "|".join(_GENERIC_TLDS + _COUNTRY_TLDS) + r")\b)"
+    # Domain labels may use any letters (internationalized domains); the checks fold
+    # common look-alike letters to Latin first, so the ending is still recognized.
+    r"|\b[\w-]+\.(?:" + "|".join(_GENERIC_TLDS + _COUNTRY_TLDS) + r")\b)"
 )
 _HANDLE = re.compile(r"@[A-Za-z0-9_]{5,}")
 _WHITESPACE = re.compile(r"\s+")
@@ -63,10 +65,44 @@ def _clean(text: str) -> str:
     return _WHITESPACE.sub(" ", text).strip()
 
 
+def contains_link(text: str) -> bool:
+    return _LINK.search(text) is not None
+
+
+def contains_handle(text: str) -> bool:
+    """An @username of the length Telegram allows (5 or more characters)."""
+    return _HANDLE.search(text) is not None
+
+
+# Cyrillic and Greek letters that look like Latin ones, so "example.com" written with
+# a Cyrillic small a (U+0430) is still checked as "example.com". Only applied to the
+# copy of the text the checks see, never to what is stored or shown.
+_LOOK_ALIKES = str.maketrans(
+    "аАвВеЕёЁіІјЈкКмМнНоОрРсСтТуУхХѕЅԁԛԝҮαΑβΒεΕζΖηΗιΙκΚμΜνΝοΟρΡτΤυΥχΧ",
+    "aAbBeEeEiIjJkKmMhHoOpPcCtTyYxXsSdqwYaAbBeEzZnHiIkKuMvNoOpPtTuYxX",
+)
+# Marks that change nothing visible (combining marks such as U+034F, and format
+# characters such as zero-width spaces), removed before checking.
+_INVISIBLE = {"Mn", "Me", "Cf"}
+
+
+def normalize_for_checks(text: str) -> str:
+    """Text as the link, @username, and phone checks see it.
+
+    Compatibility normalization folds full-width and other variant forms; combining
+    and format marks are dropped; common Cyrillic and Greek look-alikes become Latin.
+    So none of these can be used to slip a link, @username, or number past the checks.
+    """
+    decomposed = unicodedata.normalize("NFKD", text)
+    visible = "".join(ch for ch in decomposed if unicodedata.category(ch) not in _INVISIBLE)
+    return _clean(unicodedata.normalize("NFKC", visible).translate(_LOOK_ALIKES))
+
+
 def _reject_contacts(field: str, label: str, text: str) -> None:
-    if _LINK.search(text):
+    text = normalize_for_checks(text)
+    if contains_link(text):
         raise ProfileValidationError(field, f"{label} can't contain links.")
-    if _HANDLE.search(text):
+    if contains_handle(text):
         raise ProfileValidationError(field, f"{label} can't contain @usernames.")
 
 

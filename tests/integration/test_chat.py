@@ -3,8 +3,7 @@
 from datetime import UTC, datetime
 
 import pytest
-from aiogram.methods import SendMessage, SendPhoto
-from aiogram.types import ReplyKeyboardMarkup
+from aiogram.methods import SendPhoto
 from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
@@ -12,78 +11,31 @@ from apps.bot import account as ac
 from apps.bot import admin as ad
 from apps.bot import chat as ch
 from apps.bot import onboarding as ob
-from apps.bot.avatars import Avatars
 from apps.bot.keyboards import END_CHAT, NEW_CHAT, PARTNER_PROFILE
 from backend.config.settings import BotSettings
 from backend.modules.admin import service as admin_service
-from backend.modules.admin.settings import SPECS, RuntimeSettings, SettingKey
+from backend.modules.admin.settings import SPECS, SettingKey
 from backend.modules.chat import service as chat_service
-from backend.modules.matching.matcher import Matcher
-from backend.modules.matching.queue import SearchQueue
-from backend.modules.users import service as users
-from backend.modules.users.terms import TERMS_VERSION
-from tests.support.chat import TERMS, USER_ID, Chat, complete_onboarding
-from tests.support.telegram import RecordingSession, make_bot, message_update
+from tests.support.chat import TERMS, USER_ID, Chat
+from tests.support.telegram import message_update
+from tests.support.world import (
+    BOB_ID,
+    CHAT_KEYS,
+    MAIN_KEYS,
+    World,
+    keys,
+    last_to,
+    match,
+    onboarded_world,
+    text_of,
+)
 
 Sessions = async_sessionmaker[AsyncSession]
-BOB_ID = 5353
-MAIN_KEYS = [[NEW_CHAT]]
-CHAT_KEYS = [[PARTNER_PROFILE], [END_CHAT]]
-
-
-class World:
-    """Alice and Bob on the bot, plus the worker's matcher with its own Telegram session."""
-
-    def __init__(self, settings: BotSettings, redis: Redis, sessions: Sessions) -> None:
-        self.alice = Chat(settings, redis, sessions)
-        self.bob = Chat(settings, redis, sessions, user_id=BOB_ID)
-        self.sessions = sessions
-        self.queue = SearchQueue(redis)
-        worker_bot, self.worker = make_bot()
-        notifier = ch.ChatNotifier(worker_bot, sessions, Avatars(redis))
-        self.matcher = Matcher(
-            redis, sessions, RuntimeSettings(ttl_seconds=0), notifier, TERMS_VERSION
-        )
-
-    async def tick(self) -> None:
-        await self.matcher.tick(datetime.now(UTC))
-
-    async def user_id(self, telegram_id: int) -> int:
-        async with self.sessions() as session:
-            return (await users.get_or_create_user(session, telegram_id)).id
 
 
 @pytest.fixture
 async def world(bot_settings: BotSettings, redis: Redis, session_factory: Sessions) -> World:
-    world = World(bot_settings, redis, session_factory)
-    await complete_onboarding(world.alice)
-    await complete_onboarding(world.bob)
-    # Distinct profiles, so tests can tell whose card each user received.
-    assert await world.bob.send("/profile")
-    await world.bob.press("✏️ Nickname")
-    await world.bob.send("Moon Child")
-    return world
-
-
-def keys(method: SendMessage | SendPhoto) -> list[list[str]] | None:
-    markup = method.reply_markup
-    if not isinstance(markup, ReplyKeyboardMarkup):
-        return None
-    return [[button.text for button in row] for row in markup.keyboard]
-
-
-def last_to(session: RecordingSession, chat_id: int) -> SendMessage | SendPhoto:
-    return session.sent_to(chat_id)[-1]
-
-
-def text_of(method: SendMessage | SendPhoto) -> str:
-    return method.text if isinstance(method, SendMessage) else method.caption or ""
-
-
-async def _match(world: World) -> None:
-    assert await world.alice.send(NEW_CHAT) == ch.SEARCHING
-    assert await world.bob.send(NEW_CHAT) == ch.SEARCHING
-    await world.tick()
+    return await onboarded_world(bot_settings, redis, session_factory)
 
 
 # --- Keyboards -----------------------------------------------------------------------
@@ -100,7 +52,7 @@ async def test_onboarding_ends_with_the_main_keyboard(world: World) -> None:
 
 
 async def test_two_users_are_matched_and_see_each_other(world: World) -> None:
-    await _match(world)
+    await match(world)
     to_alice = last_to(world.worker, USER_ID)
     to_bob = last_to(world.worker, BOB_ID)
     assert isinstance(to_alice, SendPhoto) and isinstance(to_bob, SendPhoto)
@@ -116,7 +68,7 @@ async def test_two_users_are_matched_and_see_each_other(world: World) -> None:
 
 
 async def test_partner_profile_shows_the_partner_card(world: World) -> None:
-    await _match(world)
+    await match(world)
     assert (await world.alice.send(PARTNER_PROFILE)).startswith(
         f"{ch.PARTNER_HEADER}\n\n👤 Moon Child"
     )
@@ -198,7 +150,7 @@ async def test_users_who_have_not_onboarded_are_shown_the_terms(
 
 
 async def test_ending_a_chat_tells_both_and_restores_the_main_keyboard(world: World) -> None:
-    await _match(world)
+    await match(world)
     assert await world.alice.send(END_CHAT) == ch.YOU_ENDED
     assert keys(last_to(world.alice.session, USER_ID)) == MAIN_KEYS
     to_bob = last_to(world.alice.session, BOB_ID)
@@ -210,15 +162,15 @@ async def test_ending_a_chat_tells_both_and_restores_the_main_keyboard(world: Wo
 
 
 async def test_both_can_search_again_after_a_chat(world: World) -> None:
-    await _match(world)
+    await match(world)
     await world.alice.send(END_CHAT)
-    await _match(world)  # nobody else is waiting, so they may meet again (D-033)
+    await match(world)  # nobody else is waiting, so they may meet again (D-033)
     async with world.sessions() as session:
         assert await chat_service.active_chat(session, await world.user_id(USER_ID))
 
 
 async def test_deleting_the_account_ends_the_chat(world: World) -> None:
-    await _match(world)
+    await match(world)
     await world.alice.send("/profile")
     await world.alice.press(ac.ADVANCED_SETTINGS)
     await world.alice.press(ac.DELETE_BUTTON)
