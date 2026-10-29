@@ -28,7 +28,8 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from apps.bot import onboarding as ob
 from apps.bot import profile as pr
 from apps.bot import relay as rl
-from apps.bot.keyboards import END_CHAT, NEW_CHAT
+from apps.bot.endings import MEET_PROMPT, PARTNER_UNREACHABLE
+from apps.bot.keyboards import END_CHAT
 from backend.config.settings import BotSettings
 from backend.modules.chat import service as chat_service
 from backend.modules.chat.content import Blocked
@@ -41,9 +42,9 @@ from tests.support.world import (
     MAIN_KEYS,
     World,
     keys,
-    last_to,
     match,
     onboarded_world,
+    search,
     text_of,
 )
 
@@ -376,8 +377,9 @@ async def test_an_unreachable_partner_ends_the_chat(
 ) -> None:
     world.alice.session.fail_copies("Forbidden: bot was blocked by the user", forbidden=True)
     await send(world.alice, text="Hello?")
-    notice = last_to(world.alice.session, USER_ID)
-    assert (text_of(notice), keys(notice)) == (rl.PARTNER_UNREACHABLE, MAIN_KEYS)
+    ended, menu = world.alice.session.sent_to(USER_ID)[-2:]
+    assert (text_of(ended), keys(ended)) == (PARTNER_UNREACHABLE, MAIN_KEYS)
+    assert text_of(menu) == MEET_PROMPT
     async with session_factory() as session:
         conversation = (await session.execute(select(Conversation))).scalar_one()
         assert (conversation.end_reason, conversation.ended_by_user_id) == ("unreachable", None)
@@ -447,8 +449,8 @@ async def test_an_old_chat_edit_never_reaches_a_new_partner(
     await world.alice.send(END_CHAT)
     carol = Chat(bot_settings, redis, session_factory, user_id=8181)
     await complete_onboarding(carol)
-    await world.alice.send(NEW_CHAT)
-    await carol.send(NEW_CHAT)
+    await search(world.alice)
+    await search(carol)
     await world.tick()
     async with session_factory() as session:
         assert await chat_service.active_chat(session, await world.user_id(USER_ID))

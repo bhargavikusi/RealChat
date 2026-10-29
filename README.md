@@ -60,7 +60,7 @@ uv run python -m apps.bot.main
 
 During development the bot uses long polling, so it needs no public URL. It stops on Ctrl+C. The minimum age is `MIN_AGE` (default 18 for development; see D-009). With `APP_ENV=production` the bot refuses to start unless `MIN_AGE` is set explicitly.
 
-At startup the bot registers its command menu (`/start`, `/profile`, `/help`) with Telegram for private chats. After onboarding, the keyboard under the message box offers 🎭 New Anonymous Chat; during a chat it shows 👤 Partner profile and ⏹ End chat, and other messages the user sends are relayed to their partner (except commands, messages refused under the chat rules, and answers to a pending step such as a profile edit). Age and gender can each be changed once per `PROFILE_CHANGE_COOLDOWN_DAYS` (default 30). `/help` shows the announcement channel link only when `ANNOUNCEMENT_CHANNEL_URL` is set, and the support link only when `SUPPORT_CONTACT` is set. Each must be an `https://` link.
+At startup the bot registers its command menu (`/start`, `/profile`, `/help`) with Telegram for private chats. After onboarding, the keyboard under the message box offers 🎭 New Anonymous Chat, which opens a menu of chats to choose from (for now, a free random chat); during a chat it shows 👤 Partner profile and ⏹ End chat, and other messages the user sends are relayed to their partner (except commands, messages refused under the chat rules, and answers to a pending step such as a profile edit). Age and gender can each be changed once per `PROFILE_CHANGE_COOLDOWN_DAYS` (default 30). `/help` shows the announcement channel link only when `ANNOUNCEMENT_CHANNEL_URL` is set, and the support link only when `SUPPORT_CONTACT` is set. Each must be an `https://` link.
 
 While Redis is available, two protections apply:
 
@@ -71,7 +71,7 @@ If Redis is unavailable, both protections let updates through so the bot stays o
 
 ### Worker
 
-Matching needs the worker running alongside the bot. It pairs users who are searching about once a second and ends searches that pass the time limit (D-041):
+Matching needs the worker running alongside the bot. About once a second it pairs users who are searching, ends searches that pass the time limit (D-041), and warns and then ends quiet chats (D-039):
 
 ```bash
 uv run python -m apps.worker.main

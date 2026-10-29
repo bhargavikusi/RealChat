@@ -59,6 +59,11 @@ class Chat:
         )
         return self.last()
 
+    async def press_data_reply(self, data: str) -> str:
+        """Press a button by its callback data and return the bot's last message."""
+        await self.press_data(data)
+        return self.last()
+
     async def press_data(self, data: str) -> None:
         await self.dispatcher.feed_update(
             self.bot, callback_update(next(self._ids), self.user_id, data)

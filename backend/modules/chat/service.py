@@ -6,9 +6,9 @@ caller. User ids here are internal `users.id` values, never Telegram IDs.
 
 from collections.abc import Collection
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 
-from sqlalchemy import and_, delete, exists, or_, select, update
+from sqlalchemy import and_, delete, exists, func, or_, select, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
@@ -86,15 +86,26 @@ async def end_conversation(
     ).scalar_one()
     if conversation.ended_at is not None:
         return None
+    await _close(session, conversation, now, reason, user_id if reason == "user_ended" else None)
+    return chat
+
+
+async def _close(
+    session: AsyncSession,
+    conversation: Conversation,
+    now: datetime,
+    reason: str,
+    ended_by: int | None,
+) -> None:
+    """End a conversation whose row the caller has locked."""
     conversation.ended_at = now
     conversation.end_reason = reason
-    conversation.ended_by_user_id = user_id if reason == "user_ended" else None
+    conversation.ended_by_user_id = ended_by
     await session.execute(
         update(Participant)
-        .where(Participant.conversation_id == chat.conversation_id)
+        .where(Participant.conversation_id == conversation.id)
         .values(left_at=now)
     )
-    return chat
 
 
 async def eligible_for_matching(
@@ -239,7 +250,15 @@ async def claim_message(
     has ended. Recording first means a message is relayed at most once, even if the bot
     stops between sending the copy and saving it.
     """
-    if not await _conversation_open(session, chat.conversation_id):
+    # Locked for update (not shared): the chat's activity is recorded below, and the
+    # idle ending locks the same row, so a message and an idle ending never interleave.
+    still_open = await session.scalar(
+        update(Conversation)
+        .where(Conversation.id == chat.conversation_id, Conversation.ended_at.is_(None))
+        .values(last_activity_at=func.now(), idle_warned_at=None)
+        .returning(Conversation.id)
+    )
+    if still_open is None:
         return None
     row_id = await session.scalar(
         insert(ChatMessage)
@@ -285,3 +304,89 @@ def record_edit(message: ChatMessage, text: str, now: datetime) -> None:
     """Keep the original text and store the latest edit beside it (D-043)."""
     message.edited_text = text
     message.edited_at = now
+
+
+# --- Idle chats (D-039) --------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class IdleChat:
+    conversation_id: int
+    user_ids: tuple[int, int]
+
+
+async def _participants(session: AsyncSession, conversation_ids: list[int]) -> list[IdleChat]:
+    if not conversation_ids:
+        return []
+    rows = await session.execute(
+        select(Participant.conversation_id, Participant.user_id)
+        .where(Participant.conversation_id.in_(conversation_ids))
+        .order_by(Participant.conversation_id, Participant.user_id)
+    )
+    members: dict[int, list[int]] = {}
+    for conversation_id, user_id in rows:
+        members.setdefault(conversation_id, []).append(user_id)
+    return [
+        IdleChat(conversation_id, (users[0], users[1]))
+        for conversation_id, users in members.items()
+        if len(users) == 2
+    ]
+
+
+async def warn_idle_chats(
+    session: AsyncSession, now: datetime, quiet_for: timedelta, limit: int
+) -> list[IdleChat]:
+    """Mark open chats quiet for `quiet_for` as warned; returns them, to tell both users.
+
+    Each chat is warned once: the update only matches chats not yet warned, and rows
+    another worker is handling are skipped.
+    """
+    candidates = (
+        select(Conversation.id)
+        .where(
+            Conversation.ended_at.is_(None),
+            Conversation.idle_warned_at.is_(None),
+            Conversation.last_activity_at <= now - quiet_for,
+        )
+        .order_by(Conversation.last_activity_at)
+        .limit(limit)
+        .with_for_update(skip_locked=True)
+    )
+    warned = await session.execute(
+        update(Conversation)
+        .where(Conversation.id.in_(candidates.scalar_subquery()))
+        .values(idle_warned_at=now)
+        .returning(Conversation.id)
+    )
+    return await _participants(session, list(warned.scalars()))
+
+
+async def end_idle_chats(
+    session: AsyncSession, now: datetime, grace: timedelta, limit: int
+) -> list[IdleChat]:
+    """End chats warned at least `grace` ago with no message since; returns them.
+
+    A relayed message clears the warning under the same row lock, so a chat with a
+    message after its warning is never ended here.
+    """
+    conversations = (
+        (
+            await session.execute(
+                select(Conversation)
+                .where(
+                    Conversation.ended_at.is_(None),
+                    Conversation.idle_warned_at.is_not(None),
+                    Conversation.idle_warned_at <= now - grace,
+                )
+                .order_by(Conversation.idle_warned_at)
+                .limit(limit)
+                .with_for_update(skip_locked=True)
+                .execution_options(populate_existing=True)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    for conversation in conversations:
+        await _close(session, conversation, now, "idle", None)
+    return await _participants(session, [c.id for c in conversations])

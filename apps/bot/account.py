@@ -17,7 +17,6 @@ from typing import Any
 
 from aiogram import BaseMiddleware, Bot, F, Router
 from aiogram.enums import ChatType
-from aiogram.exceptions import TelegramAPIError
 from aiogram.filters.callback_data import CallbackData
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
@@ -31,12 +30,11 @@ from aiogram.types import (
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from apps.bot.admin import admin_button
-from apps.bot.keyboards import main_keyboard
+from apps.bot.endings import PARTNER_LEFT, tell_chat_ended
 from apps.bot.menu import HelpAction
 from apps.bot.middlewares import Handler
 from apps.bot.onboarding import load_context, prompt_next
 from backend.config.settings import BotSettings
-from backend.core.logging import exception_summary
 from backend.modules.admin import service as admin_service
 from backend.modules.chat import service as chat_service
 from backend.modules.users import service
@@ -69,7 +67,6 @@ DELETE_CONFIRM = (
 DELETED = "Your account has been deleted. Send /start if you ever want to come back."
 DELETED_RESTRICTED = "Your profile has been erased. Your account remains restricted."
 KEPT = "Your account was not deleted."
-PARTNER_LEFT = "Your chat partner left RealChat, so the chat has ended."
 EXPIRED = "This button has expired."
 NOTICES = {
     "suspended": "Your account is suspended, so RealChat is unavailable to you for now.",
@@ -193,12 +190,7 @@ async def on_confirm(
     await state.clear()
     # The partner is told first, so a failure replying to this user cannot skip it.
     if partner is not None:
-        try:
-            await bot.send_message(
-                partner.telegram_user_id, PARTNER_LEFT, reply_markup=main_keyboard()
-            )
-        except TelegramAPIError as exc:
-            logger.warning("could not tell a partner the chat ended", extra=exception_summary(exc))
+        await tell_chat_ended(bot, partner.telegram_user_id, PARTNER_LEFT)
     await query.answer()
     await bot.send_message(query.from_user.id, DELETED_RESTRICTED if restricted else DELETED)
 

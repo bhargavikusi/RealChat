@@ -100,8 +100,10 @@ One row per chat between two matched users (D-027).
 | `id` | bigint identity | |
 | `started_at` | timestamptz | |
 | `ended_at` | timestamptz, nullable | NULL while the chat is open. |
-| `end_reason` | varchar(16), nullable | `user_ended` or `unreachable`; set together with `ended_at`, enforced by a constraint. More reasons come with idle timeouts and blocking. |
+| `end_reason` | varchar(16), nullable | `user_ended`, `unreachable`, or `idle`; set together with `ended_at`, enforced by a constraint. More reasons come with blocking. |
 | `ended_by_user_id` | bigint, nullable | References `users.id`. The user who ended it, when a user did. |
+| `last_activity_at` | timestamptz | When a message was last relayed, or the chat started. Updated with the row locked, in the same transaction that records the message. |
+| `idle_warned_at` | timestamptz, nullable | When both users were warned that the quiet chat will end (D-039). Cleared by any relayed message. |
 
 ### `conversation_participants`
 
@@ -112,7 +114,7 @@ The two users in each conversation. The primary key is `(conversation_id, user_i
 | `conversation_id`, `user_id` | bigint | |
 | `left_at` | timestamptz, nullable | Set for both users when the conversation ends. |
 
-A partial unique index on `user_id` where `left_at IS NULL` allows each user at most one open conversation. It is the final guard against double matches: if two matches for the same user are attempted at once, one insert fails. The index on `(user_id, conversation_id)` serves "this user's conversations", used for repeat-match avoidance. Ending a conversation locks its `conversations` row and re-reads it, so when both users end a chat at the same moment it is ended once. Conversations that end because a message could not be delivered to the partner have the end reason `unreachable`, with no `ended_by_user_id`.
+A partial unique index on `user_id` where `left_at IS NULL` allows each user at most one open conversation. It is the final guard against double matches: if two matches for the same user are attempted at once, one insert fails. The index on `(user_id, conversation_id)` serves "this user's conversations", used for repeat-match avoidance. Ending a conversation locks its `conversations` row and re-reads it, so when both users end a chat at the same moment it is ended once. Conversations that end because a message could not be delivered to the partner have the end reason `unreachable`, and quiet ones `idle`, both with no `ended_by_user_id`. A partial index on `last_activity_at` for open conversations serves the worker's search for quiet chats. Recording a message locks the conversation row for update, as do the idle warning and ending (which skip rows that are locked), so a message and an idle ending never interleave, and with several workers each chat is warned and ended once.
 
 ### `chat_messages`
 
