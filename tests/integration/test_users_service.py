@@ -185,6 +185,7 @@ TABLES = (
     "admin_audit_log",
     "conversations",
     "conversation_participants",
+    "chat_messages",
 )
 
 

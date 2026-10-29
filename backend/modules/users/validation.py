@@ -63,10 +63,29 @@ def _clean(text: str) -> str:
     return _WHITESPACE.sub(" ", text).strip()
 
 
+def contains_link(text: str) -> bool:
+    return _LINK.search(text) is not None
+
+
+def contains_handle(text: str) -> bool:
+    """An @username of the length Telegram allows (5 or more characters)."""
+    return _HANDLE.search(text) is not None
+
+
+def normalize_for_checks(text: str) -> str:
+    """Text as the link, @username, and phone checks see it.
+
+    NFKC folds look-alike characters (e.g. full-width letters and digits), and
+    invisible format characters are removed, so they cannot be used to slip a link or
+    number past the checks.
+    """
+    return _clean(unicodedata.normalize("NFKC", text))
+
+
 def _reject_contacts(field: str, label: str, text: str) -> None:
-    if _LINK.search(text):
+    if contains_link(text):
         raise ProfileValidationError(field, f"{label} can't contain links.")
-    if _HANDLE.search(text):
+    if contains_handle(text):
         raise ProfileValidationError(field, f"{label} can't contain @usernames.")
 
 

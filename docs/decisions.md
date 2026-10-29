@@ -382,6 +382,19 @@ Work happens on short-lived issue branches, such as `feature/12-onboarding`, cre
 **Why:** Owner decision. With one matcher there is no race between simultaneous taps; the cost is up to about a second before a match is announced.
 **Consequence:** Matching needs the worker running alongside the bot. If Redis loses its data, searches in progress are lost without a "no one found" notice; users can simply search again.
 
+### D-042 — What can't be sent in a chat
+
+**Date:** 2026-10-28
+**Decision:** Contact cards and locations (including venues) are never relayed, and text or captions containing a link, a phone number, or an @username are refused. The sender is told why; nothing is relayed or stored. An edit that adds one of these is not mirrored. The checks use the profile's link and @username rules and a phone-number heuristic (seven or more digits in a number-like run) on a normalized copy of the text, so look-alike and invisible characters do not get around them. The draft terms say so.
+**Why:** Owner decision: chats stay anonymous, so neither partner reveals how to reach them, by mistake or under pressure. Profile location for discovery is separate and will show only country and city.
+**Consequence:** The phone heuristic can also refuse long runs of numbers that are not phone numbers.
+
+### D-043 — Edited messages keep their original text
+
+**Date:** 2026-10-28
+**Decision:** When a relayed message is edited, the original text is kept and the latest edit is stored beside it with the time of the edit. Both are deleted with the rest of the message content after the retention period (D-028).
+**Why:** Owner decision. Someone cannot edit away an abusive message before a report about it is reviewed.
+
 ---
 
 ## Open
