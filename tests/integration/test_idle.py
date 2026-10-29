@@ -205,3 +205,35 @@ async def test_the_times_are_admin_settings(
 )
 def test_durations_in_words(seconds: int, words: str) -> None:
     assert ch.duration(seconds) == words
+
+
+async def test_an_undelivered_message_does_not_keep_the_chat_alive(
+    world: World, session_factory: Sessions
+) -> None:
+    warned_at = datetime.now(UTC) - GRACE / 2
+    await _set(session_factory, last_activity_at=warned_at - QUIET, idle_warned_at=warned_at)
+    world.alice.session.fail_copies("Bad Request: message can't be copied")
+    await world.alice.send("this kind can't be copied")
+    conversation = await _conversation(session_factory)
+    assert conversation.idle_warned_at == warned_at
+    assert conversation.last_activity_at == warned_at - QUIET
+
+
+async def test_undoing_activity_keeps_a_later_message(
+    world: World, session_factory: Sessions
+) -> None:
+    alice = await world.user_id(USER_ID)
+    async with session_factory() as session:
+        active = await chat.active_chat(session, alice)
+        assert active is not None
+        first = await chat.claim_message(session, active, alice, 11, "text", "a", None)
+        await session.commit()
+    async with session_factory() as session:
+        assert await chat.claim_message(session, active, alice, 12, "text", "b", None)
+        await session.commit()
+        later = (await _conversation(session_factory)).last_activity_at
+    assert first is not None
+    async with session_factory() as session:
+        await chat.discard_message(session, first)  # the first failed after the second
+        await session.commit()
+    assert (await _conversation(session_factory)).last_activity_at == later

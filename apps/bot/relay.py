@@ -169,7 +169,7 @@ async def on_message(
         )
     # Recorded before the copy is sent: a redelivered update finds this row and stops,
     # so a message is relayed at most once even if the bot stops right after sending.
-    row_id = await chat.claim_message(
+    claim = await chat.claim_message(
         session,
         active,
         ctx.user.id,
@@ -180,7 +180,7 @@ async def on_message(
     )
     partner = await users.get_user(session, active.partner_id)
     await session.commit()
-    if row_id is None:
+    if claim is None:
         return  # already relayed, or the chat ended meanwhile
 
     try:
@@ -196,7 +196,7 @@ async def on_message(
             ),
         )
     except TelegramAPIError as error:
-        await chat.discard_message(session, row_id)
+        await chat.discard_message(session, claim)
         if _unreachable(error):
             await _end_unreachable(message, bot, session, ctx.user.id)
             return
@@ -207,9 +207,7 @@ async def on_message(
         raise
 
     try:
-        delivered = await chat.complete_message(
-            session, row_id, active.conversation_id, copied.message_id
-        )
+        delivered = await chat.complete_message(session, claim, copied.message_id)
         await session.commit()
     except BaseException:
         # The copy exists but could not be linked: take it back rather than leave a

@@ -25,6 +25,7 @@ from backend.config.settings import BotSettings
 from backend.modules.admin import service as admin_service
 from backend.modules.admin.settings import SPECS, SettingKey
 from backend.modules.chat import service as chat_service
+from backend.modules.users import service as users_service
 from tests.support.chat import TERMS, USER_ID, Chat
 from tests.support.telegram import RecordingSession, message_update
 from tests.support.world import (
@@ -220,3 +221,13 @@ async def test_new_chat_works_during_an_admin_edit(world: World) -> None:
     await world.alice.press(ad.ADMIN_BUTTON)
     await world.alice.press(SPECS[SettingKey.CHAT_RETENTION_DAYS].label)
     assert await world.alice.send(NEW_CHAT) == MEET_PROMPT  # not taken as a value
+
+
+async def test_new_chat_abandons_a_pending_edit(world: World, session_factory: Sessions) -> None:
+    await world.alice.send("/profile")
+    await world.alice.press("✏️ Nickname")
+    assert await world.alice.send(NEW_CHAT) == MEET_PROMPT
+    await world.alice.send("Star Gazer")  # no longer the nickname answer
+    async with session_factory() as session:
+        profile = await users_service.get_profile(session, await world.user_id(USER_ID))
+    assert profile.nickname == "Night Owl"

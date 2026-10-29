@@ -102,7 +102,7 @@ One row per chat between two matched users (D-027).
 | `ended_at` | timestamptz, nullable | NULL while the chat is open. |
 | `end_reason` | varchar(16), nullable | `user_ended`, `unreachable`, or `idle`; set together with `ended_at`, enforced by a constraint. More reasons come with blocking. |
 | `ended_by_user_id` | bigint, nullable | References `users.id`. The user who ended it, when a user did. |
-| `last_activity_at` | timestamptz | When a message was last relayed, or the chat started. Updated with the row locked, in the same transaction that records the message. |
+| `last_activity_at` | timestamptz | When a message was last relayed, or the chat started. Updated with the row locked, in the same transaction that records the message; if that message then cannot be delivered, the previous value (and warning) is restored, unless another message was recorded since. |
 | `idle_warned_at` | timestamptz, nullable | When both users were warned that the quiet chat will end (D-039). Cleared by any relayed message. |
 
 ### `conversation_participants`

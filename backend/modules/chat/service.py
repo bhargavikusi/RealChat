@@ -235,6 +235,17 @@ async def _conversation_open(session: AsyncSession, conversation_id: int) -> boo
     return ended is None
 
 
+@dataclass(frozen=True)
+class Claim:
+    """A recorded message, with the chat's idle state from before it was recorded."""
+
+    row_id: int
+    conversation_id: int
+    activity_set_to: datetime
+    previous_activity: datetime
+    previous_warning: datetime | None
+
+
 async def claim_message(
     session: AsyncSession,
     chat: ActiveChat,
@@ -243,23 +254,25 @@ async def claim_message(
     kind: str,
     text: str | None,
     file_id: str | None,
-) -> int | None:
-    """Record a message before it is copied; returns its row id.
+) -> Claim | None:
+    """Record a message before it is copied, and count it as chat activity.
 
     Returns None if it was already recorded (a redelivered update) or the conversation
     has ended. Recording first means a message is relayed at most once, even if the bot
-    stops between sending the copy and saving it.
+    stops between sending the copy and saving it. The conversation row is locked for
+    update, as the idle ending does, so a message and an idle ending never interleave;
+    the activity counts from now, so the chat is not ended while the copy is on its way.
     """
-    # Locked for update (not shared): the chat's activity is recorded below, and the
-    # idle ending locks the same row, so a message and an idle ending never interleave.
-    still_open = await session.scalar(
-        update(Conversation)
-        .where(Conversation.id == chat.conversation_id, Conversation.ended_at.is_(None))
-        .values(last_activity_at=func.now(), idle_warned_at=None)
-        .returning(Conversation.id)
-    )
-    if still_open is None:
+    state = (
+        await session.execute(
+            select(Conversation.last_activity_at, Conversation.idle_warned_at, func.now())
+            .where(Conversation.id == chat.conversation_id, Conversation.ended_at.is_(None))
+            .with_for_update()
+        )
+    ).one_or_none()
+    if state is None:
         return None
+    previous_activity, previous_warning, now = state
     row_id = await session.scalar(
         insert(ChatMessage)
         .values(
@@ -273,31 +286,49 @@ async def claim_message(
         .on_conflict_do_nothing(index_elements=["sender_user_id", "sender_message_id"])
         .returning(ChatMessage.id)
     )
-    return None if row_id is None else int(row_id)
+    if row_id is None:
+        return None  # a redelivery: neither relayed again nor counted again
+    await session.execute(
+        update(Conversation)
+        .where(Conversation.id == chat.conversation_id)
+        .values(last_activity_at=now, idle_warned_at=None)
+    )
+    return Claim(int(row_id), chat.conversation_id, now, previous_activity, previous_warning)
 
 
-async def complete_message(
-    session: AsyncSession, row_id: int, conversation_id: int, recipient_message_id: int
-) -> bool:
+async def complete_message(session: AsyncSession, claim: Claim, recipient_message_id: int) -> bool:
     """Link a recorded message to its delivered copy.
 
     Returns False, and removes the record, if the conversation ended while the copy was
     on its way; the caller then withdraws the copy.
     """
-    if not await _conversation_open(session, conversation_id):
-        await discard_message(session, row_id)
+    if not await _conversation_open(session, claim.conversation_id):
+        await session.execute(delete(ChatMessage).where(ChatMessage.id == claim.row_id))
         return False
     await session.execute(
         update(ChatMessage)
-        .where(ChatMessage.id == row_id)
+        .where(ChatMessage.id == claim.row_id)
         .values(recipient_message_id=recipient_message_id)
     )
     return True
 
 
-async def discard_message(session: AsyncSession, row_id: int) -> None:
-    """Remove a recorded message that was not delivered."""
-    await session.execute(delete(ChatMessage).where(ChatMessage.id == row_id))
+async def discard_message(session: AsyncSession, claim: Claim) -> None:
+    """Remove a recorded message that was not delivered, and undo its activity.
+
+    The chat's idle state goes back to what it was, unless another message has been
+    recorded since (its own activity then stands).
+    """
+    await session.execute(delete(ChatMessage).where(ChatMessage.id == claim.row_id))
+    await session.execute(
+        update(Conversation)
+        .where(
+            Conversation.id == claim.conversation_id,
+            Conversation.ended_at.is_(None),
+            Conversation.last_activity_at == claim.activity_set_to,
+        )
+        .values(last_activity_at=claim.previous_activity, idle_warned_at=claim.previous_warning)
+    )
 
 
 def record_edit(message: ChatMessage, text: str, now: datetime) -> None:

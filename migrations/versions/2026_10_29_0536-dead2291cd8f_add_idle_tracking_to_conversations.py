@@ -40,6 +40,12 @@ def upgrade() -> None:
     op.add_column(
         "conversations", sa.Column("idle_warned_at", sa.DateTime(timezone=True), nullable=True)
     )
+    # Chats already open count from their last message (or their start), not from now.
+    op.execute(
+        "UPDATE conversations SET last_activity_at = COALESCE("
+        "(SELECT max(m.created_at) FROM chat_messages m"
+        " WHERE m.conversation_id = conversations.id), started_at)"
+    )
     op.create_index(
         "ix_conversations_open_last_activity_at",
         "conversations",

@@ -153,6 +153,9 @@ async def on_new_chat(
         return
     active = await chat.active_chat(session, ctx.user.id)
     await session.commit()
+    # Any half-finished profile or admin edit is abandoned, so the next message is not
+    # taken as its answer.
+    await state.clear()
     if active is not None:
         await message.answer(ALREADY_IN_CHAT, reply_markup=chat_keyboard())
         return
