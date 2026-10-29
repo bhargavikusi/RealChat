@@ -56,6 +56,7 @@ def test_single_migration_head(database_url: str) -> None:
 
 def test_idle_tracking_counts_open_chats_from_their_last_message(database_url: str) -> None:
     config = _alembic_config(database_url)
+    command.upgrade(config, "head")  # a known starting point, even on a fresh database
     command.downgrade(config, "fc4bb28d2eba")  # before idle tracking
 
     async def seed() -> None:
