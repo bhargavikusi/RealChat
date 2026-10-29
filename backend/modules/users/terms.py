@@ -7,7 +7,7 @@ Only describe what the product actually does: blocking and reporting are added
 here when those features ship, and the retention period once it is decided (O-002).
 """
 
-TERMS_VERSION = "draft-5"
+TERMS_VERSION = "draft-6"
 
 TERMS_TEXT = """\
 DRAFT - not for launch
@@ -19,12 +19,11 @@ Welcome to RealChat. Before you start:
 username, or phone number. When you're matched, your chat partner sees your profile \
 card: nickname, age, gender, country, and any city, bio, or photo you add.
 • Messages pass through the RealChat bot. They are not end-to-end encrypted. \
-Chat messages are stored for a limited time so that reports of abuse can be \
-checked, then deleted automatically.
+Chat messages are stored so that reports of abuse can be checked.
 • Your chat partner can't forward or save what you send. Some Telegram apps also \
 block screenshots of it, but not all of them do.
-• To keep chats anonymous, contact cards, locations, links, phone numbers, and \
-@usernames can't be sent.
+• To keep chats anonymous, contact cards and locations can't be sent, and messages \
+or captions containing links, phone numbers, or @usernames are not delivered.
 • Be respectful. Harassment, threats, hate, sexual content involving minors, spam, \
 scams, and sharing other people's private information are not allowed.
 • Accounts that break these rules may be restricted or banned.

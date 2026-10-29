@@ -110,8 +110,11 @@ class ChatMessage(Base):
     )
     sender_user_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("users.id"))
     # Message ids are per chat: the sender's original, and the copy in the partner's chat.
+    # The row is written before the copy is sent, so a redelivered update is never
+    # relayed twice; `recipient_message_id` is filled in once the copy exists, and stays
+    # NULL if the bot stopped in between (the message was then possibly not delivered).
     sender_message_id: Mapped[int] = mapped_column(BigInteger)
-    recipient_message_id: Mapped[int] = mapped_column(BigInteger)
+    recipient_message_id: Mapped[int | None] = mapped_column(BigInteger)
     kind: Mapped[str] = mapped_column(String(16))
     text: Mapped[str | None] = mapped_column(Text)
     edited_text: Mapped[str | None] = mapped_column(Text)

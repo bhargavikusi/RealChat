@@ -385,7 +385,12 @@ Work happens on short-lived issue branches, such as `feature/12-onboarding`, cre
 ### D-042 — What can't be sent in a chat
 
 **Date:** 2026-10-28
-**Decision:** Contact cards and locations (including venues) are never relayed, and text or captions containing a link, a phone number, or an @username are refused. The sender is told why; nothing is relayed or stored. An edit that adds one of these is not mirrored. The checks use the profile's link and @username rules and a phone-number heuristic (seven or more digits in a number-like run) on a normalized copy of the text, so look-alike and invisible characters do not get around them. The draft terms say so.
+**Decision:**
+
+* **Refused:** contact cards and locations (including venues), and text or captions containing a link, a phone number, or an @username. That includes links and user mentions hidden in formatting, and messages carrying link buttons.
+* **When refused:** the sender is told why, and nothing is relayed or stored. An edit that adds one of these is not mirrored.
+* **How it is checked:** the profile's link and @username rules plus a phone-number heuristic (seven or more digits in a number-like run). They run on a normalized copy of the text: full-width forms folded, combining and invisible marks removed, and common Cyrillic and Greek look-alikes folded to Latin.
+* **Scope:** text inside images and files is not checked. The draft terms describe exactly this scope.
 **Why:** Owner decision: chats stay anonymous, so neither partner reveals how to reach them, by mistake or under pressure. Profile location for discovery is separate and will show only country and city.
 **Consequence:** The phone heuristic can also refuse long runs of numbers that are not phone numbers.
 

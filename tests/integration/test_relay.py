@@ -10,10 +10,14 @@ from aiogram.types import Chat as TelegramChat
 from aiogram.types import (
     Contact,
     Document,
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
     Location,
     Message,
+    MessageEntity,
     PhotoSize,
     Sticker,
+    User,
     Venue,
     Voice,
 )
@@ -185,6 +189,43 @@ async def test_media_is_relayed_and_stored_by_file_identifier(
         ({"text": f"see {full_width('example.com')}"}, Blocked.LINK),
         ({"text": f"I'm {full_width('@night_owl_99')}"}, Blocked.USERNAME),
         ({"text": "exa\u200bmple.com"}, Blocked.LINK),  # an invisible zero-width space
+        ({"text": "555 - 123 - 4567"}, Blocked.PHONE),
+        ({"text": "see ex\u0430mple.com"}, Blocked.LINK),  # a Cyrillic small a
+        ({"text": "see example.\u0441\u043em"}, Blocked.LINK),  # ".com" in Cyrillic letters
+        ({"text": "example.\u034fcom"}, Blocked.LINK),  # a combining grapheme joiner
+        ({"text": "I'm @\u034fnight_owl_99"}, Blocked.USERNAME),
+        (
+            {
+                "text": "click here",
+                "entities": [
+                    MessageEntity(type="text_link", offset=0, length=5, url="https://x.test")
+                ],
+            },
+            Blocked.LINK,
+        ),
+        (
+            {
+                "text": "ask him",
+                "entities": [
+                    MessageEntity(
+                        type="text_mention",
+                        offset=4,
+                        length=3,
+                        user=User(id=99, is_bot=False, first_name="Him"),
+                    )
+                ],
+            },
+            Blocked.USERNAME,
+        ),
+        (
+            {
+                "text": "a nice game",
+                "reply_markup": InlineKeyboardMarkup(
+                    inline_keyboard=[[InlineKeyboardButton(text="Play", url="https://x.test")]]
+                ),
+            },
+            Blocked.LINK,
+        ),
         ({"text": "I'm @night_owl_99"}, Blocked.USERNAME),
         (
             {
@@ -414,3 +455,65 @@ async def test_an_old_chat_edit_never_reaches_a_new_partner(
 
     await edit(world.alice, old, text="Hi Bob!!")
     assert not any(isinstance(r, EditMessageText) for r in world.alice.session.requests)
+
+
+# --- Review follow-ups ---------------------------------------------------------------
+
+
+async def test_an_edit_adding_a_hidden_link_is_not_mirrored(world: World) -> None:
+    message_id = await send(world.alice, text="click here")
+    entity = MessageEntity(type="text_link", offset=0, length=5, url="https://x.test")
+    await edit(world.alice, message_id, text="click here", entities=[entity])
+    assert not any(isinstance(r, EditMessageText) for r in world.alice.session.requests)
+    assert world.alice.last() == rl.EDIT_BLOCKED.format(reason=rl.BLOCKED[Blocked.LINK])
+
+
+async def test_edits_wait_for_a_pending_answer(world: World) -> None:
+    message_id = await send(world.alice, text="Hello")
+    await world.alice.send("/profile")
+    await world.alice.press(pr.BUTTON_LABELS[pr.ProfileField.BIO])
+    await edit(world.alice, message_id, text="Hello again")
+    assert not any(isinstance(r, EditMessageText) for r in world.alice.session.requests)
+
+
+async def test_edits_need_the_current_terms(world: World, session_factory: Sessions) -> None:
+    message_id = await send(world.alice, text="Hello")
+    async with session_factory() as session:
+        await session.execute(delete(TermsAcceptance))
+        await session.commit()
+    await edit(world.alice, message_id, text="Hello again")
+    assert not any(isinstance(r, EditMessageText) for r in world.alice.session.requests)
+    assert world.alice.last() == TERMS
+
+
+async def test_failed_deliveries_leave_no_record(world: World, session_factory: Sessions) -> None:
+    world.alice.session.fail_copies("Bad Request: message can't be copied")
+    await send(world.alice, text="odd")
+    assert await stored(session_factory) == []
+
+
+async def test_a_message_is_never_relayed_twice_even_after_a_crash(
+    world: World, session_factory: Sessions, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    async def crash(*args: object, **kwargs: object) -> bool:
+        raise ConnectionError("simulated crash after sending")
+
+    monkeypatch.setattr(chat_service, "complete_message", crash)
+    message_id = next(_message_ids)
+    update = content_update(next(Chat._ids), USER_ID, message_id, text="Once only")
+    await world.alice.dispatcher.feed_update(world.alice.bot, update)
+    [copy] = copies(world.alice)
+    copy_id = 10_000 + world.alice.session.requests.index(copy) + 1
+    # The copy that could not be linked was taken back.
+    deletions = [r for r in world.alice.session.requests if isinstance(r, DeleteMessage)]
+    assert [(d.chat_id, d.message_id) for d in deletions] == [(BOB_ID, copy_id)]
+
+    # Telegram delivers the same message again (a new update id): it is not resent.
+    monkeypatch.undo()
+    replies = len(world.alice.session.sent_texts())
+    again = content_update(next(Chat._ids), USER_ID, message_id, text="Once only")
+    await world.alice.dispatcher.feed_update(world.alice.bot, again)
+    assert len(copies(world.alice)) == 1
+    assert world.alice.session.sent_texts()[replies:] == []  # handled quietly, no error
+    [row] = await stored(session_factory)
+    assert row.recipient_message_id is None  # recorded, but never linked to a copy

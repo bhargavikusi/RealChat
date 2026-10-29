@@ -6,8 +6,12 @@ reach them by accident. The checks run on a normalized copy of the text; the mes
 itself is relayed unchanged.
 
 The phone-number check is a heuristic: seven or more digits in a number-like run,
-optionally with "+", spaces, dots, dashes, or brackets between them. It can also
-catch long lists of numbers, which is accepted.
+optionally with "+", and with spaces, dots, dashes, or brackets between them (spaces
+may surround the punctuation, as in "555 - 123 - 4567"). It can also catch long lists
+of numbers, which is accepted.
+
+Hidden links in formatting (a word that links to a URL, a mention of a user) and link
+buttons are checked by the bot layer, which sees Telegram's message structure.
 """
 
 import re
@@ -15,7 +19,7 @@ from enum import StrEnum
 
 from backend.modules.users.validation import contains_handle, contains_link, normalize_for_checks
 
-_PHONE = re.compile(r"\+?\d(?:[\s().-]{0,2}\d){6,}")
+_PHONE = re.compile(r"\+?\d(?:\s*[().-]{0,2}\s*\d){6,}")
 
 
 class Blocked(StrEnum):

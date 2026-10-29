@@ -120,3 +120,21 @@ def test_bare_domains_with_country_endings_are_rejected(text: str) -> None:
 )
 def test_ordinary_text_with_dots_is_allowed(text: str) -> None:
     assert v.validate_bio(text) == text
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "visit ex\u0430mple.com",  # a Cyrillic small a
+        "example.\u034fcom",  # a combining grapheme joiner
+        "\uff45\uff58\uff41\uff4d\uff50\uff4c\uff45.com",  # full-width letters
+    ],
+)
+def test_disguised_links_are_rejected_in_profiles(text: str) -> None:
+    with pytest.raises(ProfileValidationError, match="links"):
+        v.validate_bio(text)
+
+
+def test_disguised_handles_are_rejected_in_profiles() -> None:
+    with pytest.raises(ProfileValidationError, match="@usernames"):
+        v.validate_bio("find me at @\u034fnight_owl_99")

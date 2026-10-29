@@ -60,7 +60,7 @@ uv run python -m apps.bot.main
 
 During development the bot uses long polling, so it needs no public URL. It stops on Ctrl+C. The minimum age is `MIN_AGE` (default 18 for development; see D-009). With `APP_ENV=production` the bot refuses to start unless `MIN_AGE` is set explicitly.
 
-At startup the bot registers its command menu (`/start`, `/profile`, `/help`) with Telegram for private chats. After onboarding, the keyboard under the message box offers 🎭 New Anonymous Chat; during a chat it shows 👤 Partner profile and ⏹ End chat, and anything else the user sends goes to their partner. Age and gender can each be changed once per `PROFILE_CHANGE_COOLDOWN_DAYS` (default 30). `/help` shows the announcement channel link only when `ANNOUNCEMENT_CHANNEL_URL` is set, and the support link only when `SUPPORT_CONTACT` is set. Each must be an `https://` link.
+At startup the bot registers its command menu (`/start`, `/profile`, `/help`) with Telegram for private chats. After onboarding, the keyboard under the message box offers 🎭 New Anonymous Chat; during a chat it shows 👤 Partner profile and ⏹ End chat, and other messages the user sends are relayed to their partner (except commands, messages refused under the chat rules, and answers to a pending step such as a profile edit). Age and gender can each be changed once per `PROFILE_CHANGE_COOLDOWN_DAYS` (default 30). `/help` shows the announcement channel link only when `ANNOUNCEMENT_CHANNEL_URL` is set, and the support link only when `SUPPORT_CONTACT` is set. Each must be an `https://` link.
 
 While Redis is available, two protections apply:
 

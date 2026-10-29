@@ -34,7 +34,7 @@ def upgrade() -> None:
         sa.Column("conversation_id", sa.BigInteger(), nullable=False),
         sa.Column("sender_user_id", sa.BigInteger(), nullable=False),
         sa.Column("sender_message_id", sa.BigInteger(), nullable=False),
-        sa.Column("recipient_message_id", sa.BigInteger(), nullable=False),
+        sa.Column("recipient_message_id", sa.BigInteger(), nullable=True),
         sa.Column("kind", sa.String(length=16), nullable=False),
         sa.Column("text", sa.Text(), nullable=True),
         sa.Column("edited_text", sa.Text(), nullable=True),
