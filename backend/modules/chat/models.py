@@ -24,10 +24,10 @@ from sqlalchemy.orm import Mapped, mapped_column
 
 from backend.database.engine import Base
 
-# Why a conversation ended. More reasons are added with idle timeouts and blocking.
+# Why a conversation ended. More reasons are added with blocking.
 # "unreachable": a message could not be delivered because the partner blocked the bot
-# or their account is gone.
-END_REASONS = ("user_ended", "unreachable")
+# or their account is gone. "idle": nobody wrote for the configured time (D-039).
+END_REASONS = ("user_ended", "unreachable", "idle")
 # What a relayed message was. Text and captions are stored in `text`.
 MESSAGE_KINDS = (
     "text",
@@ -52,10 +52,22 @@ class Conversation(Base):
             f"end_reason IN ({', '.join(repr(r) for r in END_REASONS)})", name="end_reason"
         ),
         CheckConstraint("(ended_at IS NULL) = (end_reason IS NULL)", name="ended_pair"),
+        # Serves the worker's search for quiet open chats.
+        Index(
+            "ix_conversations_open_last_activity_at",
+            "last_activity_at",
+            postgresql_where=text("ended_at IS NULL"),
+        ),
     )
 
     id: Mapped[int] = mapped_column(BigInteger, Identity(), primary_key=True)
     started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    # When a message was last relayed (or the chat started), for the idle timeout.
+    last_activity_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    # When both users were warned that the quiet chat will end; cleared by any message.
+    idle_warned_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     ended_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     end_reason: Mapped[str | None] = mapped_column(String(16))
     # Who ended it, when a user did. NULL for automatic endings.

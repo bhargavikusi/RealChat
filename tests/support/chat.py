@@ -59,6 +59,16 @@ class Chat:
         )
         return self.last()
 
+    async def press_data_reply(self, data: str) -> str:
+        """Press a button by its callback data; returns the last message sent in reply.
+
+        Returns "" if the press sent no message, so a test cannot pass on an older one.
+        """
+        before = len(self.telegram.sent_texts())
+        await self.press_data(data)
+        replies = self.telegram.sent_texts()[before:]
+        return replies[-1] if replies else ""
+
     async def press_data(self, data: str) -> None:
         await self.dispatcher.feed_update(
             self.bot, callback_update(next(self._ids), self.user_id, data)

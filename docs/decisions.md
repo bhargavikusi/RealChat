@@ -400,6 +400,19 @@ Work happens on short-lived issue branches, such as `feature/12-onboarding`, cre
 **Decision:** When a relayed message is edited, the original text is kept and the latest edit is stored beside it with the time of the edit. Both are deleted with the rest of the message content after the retention period (D-028).
 **Why:** Owner decision. Someone cannot edit away an abusive message before a report about it is reviewed.
 
+### D-044 — The new-chat menu, and what happens when a chat ends
+
+**Date:** 2026-10-29
+**Decision:**
+
+* 🎭 New Anonymous Chat opens a "Who do you want to meet?" message with a button for each kind of chat. For now there is one, 🎲 Random chat · Free. The paid choices (chat with men, women, or other genders, with their prices) join it with the coin work.
+* However a chat ends (a user ends it, the partner leaves RealChat, the partner can't be reached, or it is idle), each user is told how it ended, the main keyboard comes back, and the same menu is shown again. The next chat is one tap away, and the bot never starts a search on its own.
+* A search that finds no one also shows the menu again.
+* This supersedes the "Find new" button planned in D-040. Block and Report are offered after a chat once blocking and reporting exist.
+* Wording and layout are provisional until the design pass.
+
+**Why:** Owner decision. One entry point for every kind of chat, including the paid ones to come.
+
 ---
 
 ## Open

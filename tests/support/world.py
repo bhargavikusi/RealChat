@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from apps.bot import chat as ch
 from apps.bot.avatars import Avatars
+from apps.bot.endings import MEET_PROMPT, RANDOM_BUTTON
 from apps.bot.keyboards import END_CHAT, NEW_CHAT, PARTNER_PROFILE
 from backend.config.settings import BotSettings
 from backend.modules.admin.settings import RuntimeSettings
@@ -33,10 +34,10 @@ class World:
         self.bob = Chat(settings, redis, sessions, user_id=BOB_ID)
         self.sessions = sessions
         self.queue = SearchQueue(redis)
-        worker_bot, self.worker = make_bot()
-        notifier = ch.ChatNotifier(worker_bot, sessions, Avatars(redis))
+        self.worker_bot, self.worker = make_bot()
+        self.notifier = ch.ChatNotifier(self.worker_bot, sessions, Avatars(redis))
         self.matcher = Matcher(
-            redis, sessions, RuntimeSettings(ttl_seconds=0), notifier, TERMS_VERSION
+            redis, sessions, RuntimeSettings(ttl_seconds=0), self.notifier, TERMS_VERSION
         )
 
     async def tick(self) -> None:
@@ -62,9 +63,15 @@ def text_of(method: SendMessage | SendPhoto) -> str:
     return method.text if isinstance(method, SendMessage) else method.caption or ""
 
 
+async def search(chat: Chat) -> str:
+    """Tap 🎭 New Anonymous Chat, then the free random chat; returns the reply."""
+    assert await chat.send(NEW_CHAT) == MEET_PROMPT
+    return await chat.press(RANDOM_BUTTON)
+
+
 async def match(world: World) -> None:
-    assert await world.alice.send(NEW_CHAT) == ch.SEARCHING
-    assert await world.bob.send(NEW_CHAT) == ch.SEARCHING
+    assert await search(world.alice) == ch.SEARCHING
+    assert await search(world.bob) == ch.SEARCHING
     await world.tick()
 
 

@@ -34,7 +34,7 @@ from aiogram.fsm.context import FSMContext
 from aiogram.types import InlineKeyboardMarkup, Message, MessageEntity, ReplyParameters
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from apps.bot.keyboards import main_keyboard
+from apps.bot.endings import PARTNER_UNREACHABLE, send_chat_ended
 from apps.bot.onboarding import load_context, prompt_next
 from backend.config.settings import BotSettings
 from backend.core.logging import exception_summary
@@ -53,10 +53,6 @@ BLOCKED = {
 }
 EDIT_BLOCKED = "Your edit wasn't sent to your partner: {reason}"
 UNSUPPORTED = "This kind of message can't be sent in RealChat."
-PARTNER_UNREACHABLE = (
-    "Your chat partner can't be reached any more, so the chat has ended. "
-    "Your last message wasn't delivered."
-)
 
 # Telegram descriptions meaning the partner's chat is gone, not that the message is bad.
 _GONE = ("chat not found", "user is deactivated", "bot was blocked")
@@ -141,10 +137,10 @@ def _unreachable(error: TelegramAPIError) -> bool:
     return any(marker in error.message.casefold() for marker in _GONE)
 
 
-async def _end_unreachable(message: Message, session: AsyncSession, user_id: int) -> None:
+async def _end_unreachable(message: Message, bot: Bot, session: AsyncSession, user_id: int) -> None:
     await chat.end_conversation(session, user_id, datetime.now(UTC), reason="unreachable")
     await session.commit()
-    await message.answer(PARTNER_UNREACHABLE, reply_markup=main_keyboard())
+    await send_chat_ended(bot, message.chat.id, PARTNER_UNREACHABLE)
 
 
 async def on_message(
@@ -173,7 +169,7 @@ async def on_message(
         )
     # Recorded before the copy is sent: a redelivered update finds this row and stops,
     # so a message is relayed at most once even if the bot stops right after sending.
-    row_id = await chat.claim_message(
+    claim = await chat.claim_message(
         session,
         active,
         ctx.user.id,
@@ -184,7 +180,7 @@ async def on_message(
     )
     partner = await users.get_user(session, active.partner_id)
     await session.commit()
-    if row_id is None:
+    if claim is None:
         return  # already relayed, or the chat ended meanwhile
 
     try:
@@ -200,9 +196,9 @@ async def on_message(
             ),
         )
     except TelegramAPIError as error:
-        await chat.discard_message(session, row_id)
+        await chat.discard_message(session, claim)
         if _unreachable(error):
-            await _end_unreachable(message, session, ctx.user.id)
+            await _end_unreachable(message, bot, session, ctx.user.id)
             return
         await session.commit()
         if isinstance(error, TelegramBadRequest):
@@ -211,9 +207,7 @@ async def on_message(
         raise
 
     try:
-        delivered = await chat.complete_message(
-            session, row_id, active.conversation_id, copied.message_id
-        )
+        delivered = await chat.complete_message(session, claim, copied.message_id)
         await session.commit()
     except BaseException:
         # The copy exists but could not be linked: take it back rather than leave a
