@@ -19,6 +19,7 @@ caller. User ids are internal `users.id` values.
 import logging
 from dataclasses import dataclass
 from datetime import datetime, timedelta
+from enum import StrEnum
 from typing import Protocol
 
 from sqlalchemy import ColumnElement, and_, case, delete, exists, func, literal, or_, select, update
@@ -155,7 +156,8 @@ async def end_session(
 
 async def queue_deletions(session: AsyncSession, now: datetime, which: ColumnElement[bool]) -> None:
     """Queue the sender's original and the partner's copy of the messages matching
-    `which` (a condition on ChatMessage) for deletion from Telegram.
+    `which` (a condition on ChatMessage) for deletion from Telegram. For view-once
+    media the partner's copy is the placeholder, and an opened copy is queued too.
 
     A message already queued is not queued twice, and one already past the 48-hour
     limit is not queued at all.
@@ -190,8 +192,21 @@ async def queue_deletions(session: AsyncSession, now: datetime, which: ColumnEle
         .join(recipient, recipient.id == partner.user_id)
         .where(which, ChatMessage.recipient_message_id.is_not(None), expires > now)
     )
+    # A view-once message's opened copy, if it was opened (D-048).
+    opened = (
+        select(recipient.telegram_user_id, ChatMessage.viewed_message_id, not_before, expires)
+        .join(
+            partner,
+            and_(
+                partner.conversation_id == ChatMessage.conversation_id,
+                partner.user_id != ChatMessage.sender_user_id,
+            ),
+        )
+        .join(recipient, recipient.id == partner.user_id)
+        .where(which, ChatMessage.viewed_message_id.is_not(None), expires > now)
+    )
     columns = ["chat_id", "message_id", "not_before", "expires_at"]
-    for rows in (originals, copies):
+    for rows in (originals, copies, opened):
         await session.execute(
             insert(TelegramDeletion)
             .from_select(columns, rows)
@@ -263,6 +278,130 @@ async def end_if_due(
     else:
         return None
     return await end_session(session, private_id, now, reason)
+
+
+# --- View-once media (D-048) ----------------------------------------------------------
+
+
+class ViewRefused(StrEnum):
+    NOT_YOURS = "not_yours"  # not the recipient of this message
+    ALREADY_VIEWED = "already_viewed"
+    UNAVAILABLE = "unavailable"  # Private mode or the chat has ended
+
+
+@dataclass(frozen=True)
+class Opening:
+    """A view-once message the viewer may open now."""
+
+    row_id: int
+    sender_chat_id: int
+    sender_message_id: int
+    viewer_chat_id: int
+    placeholder_id: int
+    media_seconds: int
+    sent_at: datetime
+
+
+async def open_view_once(
+    session: AsyncSession, row_id: int, viewer_id: int, now: datetime
+) -> Opening | ViewRefused:
+    """Mark a view-once message as opened by its recipient, once.
+
+    The conversation row is locked first, as ending Private mode does, so an opening and
+    the end of the session never interleave: after the end, nothing can be opened.
+    """
+    row = (
+        await session.execute(
+            select(ChatMessage.conversation_id).where(
+                ChatMessage.id == row_id, ChatMessage.view_once
+            )
+        )
+    ).scalar_one_or_none()
+    if row is None:
+        return ViewRefused.NOT_YOURS
+    chat_open = await _lock_open_conversation(session, row)
+    message = (
+        await session.execute(
+            select(ChatMessage)
+            .where(ChatMessage.id == row_id)
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        )
+    ).scalar_one()
+    is_recipient = await session.scalar(
+        select(
+            exists().where(
+                ConversationParticipant.conversation_id == message.conversation_id,
+                ConversationParticipant.user_id == viewer_id,
+            )
+        )
+    )
+    if not is_recipient or message.sender_user_id == viewer_id:
+        return ViewRefused.NOT_YOURS
+    if message.viewed_at is not None:
+        return ViewRefused.ALREADY_VIEWED
+    if (
+        not chat_open
+        or message.recipient_message_id is None
+        or message.private_session_id is None
+        or await session_ended(session, message.private_session_id)
+    ):
+        return ViewRefused.UNAVAILABLE
+    message.viewed_at = now
+    return Opening(
+        row_id=message.id,
+        sender_chat_id=await _telegram_id(session, message.sender_user_id),
+        sender_message_id=message.sender_message_id,
+        viewer_chat_id=await _telegram_id(session, viewer_id),
+        placeholder_id=int(message.recipient_message_id),
+        media_seconds=message.media_seconds or 0,
+        sent_at=message.created_at,
+    )
+
+
+async def _telegram_id(session: AsyncSession, user_id: int) -> int:
+    return int(
+        (
+            await session.execute(select(User.telegram_user_id).where(User.id == user_id))
+        ).scalar_one()
+    )
+
+
+async def opened(
+    session: AsyncSession,
+    opening: Opening,
+    copy_id: int | None,
+    now: datetime,
+    view_for: timedelta,
+) -> None:
+    """Record the copy sent to the viewer, and queue it, the placeholder, and the
+    sender's original for deletion once the viewing time has passed."""
+    if copy_id is not None:
+        await session.execute(
+            update(ChatMessage)
+            .where(ChatMessage.id == opening.row_id)
+            .values(viewed_message_id=copy_id)
+        )
+    delete_at = now + view_for + timedelta(seconds=opening.media_seconds)
+    places = [
+        (opening.viewer_chat_id, opening.placeholder_id, now + DELETE_WITHIN),
+        (opening.sender_chat_id, opening.sender_message_id, opening.sent_at + DELETE_WITHIN),
+    ]
+    if copy_id is not None:
+        places.append((opening.viewer_chat_id, copy_id, now + DELETE_WITHIN))
+    for chat_id, message_id, expires in places:
+        if delete_at >= expires:
+            continue  # Telegram would refuse by then
+        await session.execute(
+            insert(TelegramDeletion)
+            .values(
+                chat_id=chat_id, message_id=message_id, not_before=delete_at, expires_at=expires
+            )
+            .on_conflict_do_update(
+                index_elements=["chat_id", "message_id"],
+                set_={"not_before": func.least(TelegramDeletion.not_before, delete_at)},
+            )
+        )
 
 
 # --- The deletion queue ----------------------------------------------------------------

@@ -9,11 +9,13 @@ from datetime import datetime
 
 from sqlalchemy import (
     BigInteger,
+    Boolean,
     CheckConstraint,
     DateTime,
     ForeignKey,
     Identity,
     Index,
+    Integer,
     String,
     Text,
     UniqueConstraint,
@@ -31,6 +33,8 @@ from backend.database.engine import Base
 END_REASONS = ("user_ended", "unreachable", "idle", "blocked", "reported")
 # Endings caused by one of the users, who is recorded in `ended_by_user_id`.
 USER_END_REASONS = ("user_ended", "blocked", "reported")
+# Kinds sent as view-once (tap to view) in Private mode (D-048).
+VIEW_ONCE_KINDS = ("photo", "video", "voice", "video_note")
 # Why Private mode ended (D-047): a user turned it off, the chat ended, or it reached
 # its time limit.
 PRIVATE_END_REASONS = ("turned_off", "chat_ended", "time_limit")
@@ -116,6 +120,10 @@ class ChatMessage(Base):
     __table_args__ = (
         CheckConstraint(f"kind IN ({', '.join(repr(k) for k in MESSAGE_KINDS)})", name="kind"),
         CheckConstraint("(edited_text IS NULL) OR (edited_at IS NOT NULL)", name="edited_pair"),
+        CheckConstraint("viewed_at IS NULL OR view_once", name="viewed_once"),
+        CheckConstraint(
+            "viewed_message_id IS NULL OR viewed_at IS NOT NULL", name="viewed_message_pair"
+        ),
         # One row per message the sender sent: a redelivered update is relayed once.
         UniqueConstraint("sender_user_id", "sender_message_id"),
         # Serves "the message this reply points to" and "the copy of this message".
@@ -151,6 +159,14 @@ class ChatMessage(Base):
     private_session_id: Mapped[int | None] = mapped_column(
         BigInteger, ForeignKey("private_sessions.id")
     )
+    # View-once media (D-048): the partner got a tap-to-view placeholder, whose id is
+    # `recipient_message_id`. `viewed_at` is when it was opened (once), and
+    # `viewed_message_id` the copy then sent to the partner. `media_seconds` is the
+    # length of a video or voice message, added to the view timer.
+    view_once: Mapped[bool] = mapped_column(Boolean, server_default="false")
+    media_seconds: Mapped[int | None] = mapped_column(Integer)
+    viewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    viewed_message_id: Mapped[int | None] = mapped_column(BigInteger)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 

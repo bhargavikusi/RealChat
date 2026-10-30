@@ -28,6 +28,7 @@ class SettingKey(StrEnum):
     CHAT_RETENTION_DAYS = "chat_retention_days"
     REPORTS_PER_DAY = "reports_per_day"
     PRIVATE_MODE_HOURS = "private_mode_hours"
+    VIEW_ONCE_SECONDS = "view_once_seconds"
 
 
 @dataclass(frozen=True)
@@ -104,6 +105,15 @@ SPECS: dict[SettingKey, SettingSpec] = {
             minimum=1,
             # Telegram lets bots delete messages for 48 hours; this leaves time to retry.
             maximum=46,
+        ),
+        SettingSpec(
+            SettingKey.VIEW_ONCE_SECONDS,
+            "View-once timer",
+            "seconds",
+            default=20,
+            minimum=10,
+            maximum=300,
+            note="added to the length of videos and voice messages",
         ),
     )
 }
