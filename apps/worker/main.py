@@ -6,7 +6,7 @@ It uses the bot's configuration, because it sends Telegram messages (match
 announcements, ended searches, and idle-chat warnings and endings). Only one matcher
 runs at a time, even with several workers, thanks to a Redis lock; idle chats are
 locked row by row in PostgreSQL, so each is warned and ended once. Expired chat
-messages are deleted once a day (checked every tick, run when due).
+messages are deleted about once a day, in a loop of their own.
 """
 
 import asyncio
@@ -32,17 +32,15 @@ from backend.modules.users.terms import TERMS_VERSION
 logger = logging.getLogger(__name__)
 
 TICK_SECONDS = 1.0
+# The retention job does its work once a day; this is only how often it checks.
+RETENTION_CHECK_SECONDS = 60.0
+
+Job = Callable[[datetime], Awaitable[object]]
 
 
-async def run_jobs(
-    matcher: Matcher, idle_chats: IdleChats, retention: ChatRetention, stop: asyncio.Event
-) -> None:
-    """Tick until `stop` is set. A failed job is logged and the next tick runs as usual."""
-    jobs: tuple[tuple[str, Callable[[datetime], Awaitable[object]]], ...] = (
-        ("matcher", matcher.tick),
-        ("idle chats", idle_chats.tick),
-        ("chat retention", retention.tick),
-    )
+async def _repeat(jobs: tuple[tuple[str, Job], ...], every: float, stop: asyncio.Event) -> None:
+    """Run `jobs` in turn every `every` seconds until `stop` is set. A failed job is
+    logged and the next round runs as usual."""
     while not stop.is_set():
         for name, job in jobs:
             try:
@@ -50,7 +48,26 @@ async def run_jobs(
             except Exception as exc:
                 logger.error(f"{name} tick failed", extra=exception_summary(exc))
         with suppress(TimeoutError):
-            await asyncio.wait_for(stop.wait(), timeout=TICK_SECONDS)
+            await asyncio.wait_for(stop.wait(), timeout=every)
+
+
+async def run_jobs(
+    matcher: Matcher, idle_chats: IdleChats, retention: ChatRetention, stop: asyncio.Event
+) -> None:
+    """Run the jobs until `stop` is set. Retention runs in its own loop, so a long
+    cleanup never delays matching or idle chats."""
+    cleanup = asyncio.create_task(
+        _repeat((("chat retention", retention.tick),), RETENTION_CHECK_SECONDS, stop)
+    )
+    try:
+        await _repeat(
+            (("matcher", matcher.tick), ("idle chats", idle_chats.tick)), TICK_SECONDS, stop
+        )
+    finally:
+        # Each batch commits on its own, so stopping mid-cleanup loses nothing.
+        cleanup.cancel()
+        with suppress(asyncio.CancelledError):
+            await cleanup
 
 
 async def run() -> None:

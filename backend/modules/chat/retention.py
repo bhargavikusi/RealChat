@@ -6,11 +6,12 @@ of who sent it. Messages in a conversation with an open report are kept until th
 report is closed. Conversations, participants, blocks, reports, and audit records are
 never touched.
 
-The job runs at most once a day across all workers (a Redis key marks the last run;
-after a failure it is tried again an hour later). It deletes in bounded batches, each
-in its own short transaction, and logs only counts. Running it again deletes nothing
-more than what has expired since. Deleting a stored message does not remove it from
-either user's Telegram chat.
+The job normally runs once a day across all workers. A Redis key marks a run: it is
+set for an hour when a run starts and extended to a day once the run succeeds, so a
+run that fails, or a worker that crashes mid-run, is retried within the hour. It
+deletes in bounded batches, each in its own short transaction, and logs only counts.
+Running it again deletes nothing more than what has expired since. Deleting a stored
+message does not remove it from either user's Telegram chat.
 """
 
 import logging
@@ -28,7 +29,7 @@ logger = logging.getLogger(__name__)
 
 RUN_KEY = "retention:chat_messages:last_run"
 RUN_INTERVAL = timedelta(days=1)
-# After a failed run, the next attempt waits this long instead of a full day.
+# How long a started run holds the key: the retry delay after a failure or crash.
 RETRY_INTERVAL = timedelta(hours=1)
 BATCH_SIZE = 1_000
 
@@ -67,18 +68,15 @@ class ChatRetention:
         self._runtime = runtime_settings
 
     async def tick(self, now: datetime) -> int | None:
-        """Run the cleanup if it hasn't run in the last day; returns the number deleted,
-        or None if it was not due."""
+        """Run the cleanup if it is due; returns the number deleted, or None if not due."""
         due = await self._redis.set(
-            RUN_KEY, now.isoformat(), nx=True, ex=int(RUN_INTERVAL.total_seconds())
+            RUN_KEY, now.isoformat(), nx=True, ex=int(RETRY_INTERVAL.total_seconds())
         )
         if not due:
             return None
-        try:
-            return await self.run(now)
-        except BaseException:
-            await self._redis.set(RUN_KEY, now.isoformat(), ex=int(RETRY_INTERVAL.total_seconds()))
-            raise
+        deleted = await self.run(now)
+        await self._redis.set(RUN_KEY, now.isoformat(), ex=int(RUN_INTERVAL.total_seconds()))
+        return deleted
 
     async def run(self, now: datetime) -> int:
         """Delete every expired message, batch by batch; returns how many were deleted."""

@@ -3,8 +3,9 @@
 DRAFT for development only. It must be replaced with legally reviewed text before
 launch (O-007). Changing the text requires a new TERMS_VERSION so users re-accept.
 
-Only describe what the product actually does. The retention period named here must
-match the admin setting (D-046); changing either means updating the other.
+Only describe what the product actually does. Periods that admins can change, such as
+message retention, are not given as numbers, so the text stays true when they change
+(D-046).
 """
 
 TERMS_VERSION = "draft-8"
@@ -20,7 +21,7 @@ username, or phone number. When you're matched, your chat partner sees your prof
 card: nickname, age, gender, country, and any city, bio, or photo you add.
 • Messages pass through the RealChat bot. They are not end-to-end encrypted. \
 Chat messages are stored so that reports of abuse can be checked. They are deleted \
-automatically after 7 days, unless they are part of a report that is still open. \
+automatically after a set period, unless they are part of a report that is still open. \
 Deleting them from RealChat doesn't remove them from your Telegram chat.
 • Your chat partner can't forward or save what you send. Some Telegram apps also \
 block screenshots of it, but not all of them do.

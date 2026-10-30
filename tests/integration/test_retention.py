@@ -221,3 +221,21 @@ async def test_only_counts_are_logged(
     (record,) = [r for r in caplog.records if r.name == rt.__name__]
     assert record.count == 1  # type: ignore[attr-defined]
     assert "private words" not in caplog.text
+
+
+async def test_a_run_interrupted_midway_is_retried_within_the_hour(
+    redis: Redis, session_factory: Sessions
+) -> None:
+    # While a run is in progress the key lasts only an hour, so if the worker dies
+    # mid-run the next attempt comes within the hour, not a day later.
+    seen: list[int] = []
+
+    class Watched(ChatRetention):
+        async def run(self, now: datetime) -> int:
+            seen.append(await redis.ttl(RUN_KEY))
+            return await super().run(now)
+
+    retention = Watched(redis, session_factory, RuntimeSettings(ttl_seconds=0))
+    assert await retention.tick(NOW) == 0
+    assert 0 < seen[0] <= 3_600
+    assert await redis.ttl(RUN_KEY) > 86_000  # a full day once it succeeded
