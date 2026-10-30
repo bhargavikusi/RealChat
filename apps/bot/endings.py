@@ -3,7 +3,8 @@
 🎭 New Anonymous Chat opens a "Who do you want to meet?" message with one button per
 kind of chat. Only the free random chat exists so far; paid choices join it with the
 coin work. Whenever a chat ends, however it ends, each user is told how, the main
-keyboard comes back, and the same menu is shown, so the next chat is one tap away.
+keyboard comes back, Block and Report are offered for that chat (D-045), and the same
+menu is shown, so the next chat is one tap away.
 
 This module depends only on the keyboards, so the chat, relay, account, and worker
 code can all use it.
@@ -27,6 +28,15 @@ class SearchAction(CallbackData, prefix="search"):
     search: str = ""  # the search a "cancel" button belongs to
 
 
+class SafetyAction(CallbackData, prefix="safety"):
+    # "block", "confirm" or "cancel" (a block that ends the chat), "unblock", "report",
+    # "reason" (a report reason was chosen), or "skip" (no report details)
+    action: str
+    conversation: int  # the chat whose partner is blocked or reported
+    reason: str = ""
+    report: int = 0  # the report a "skip" button belongs to
+
+
 MEET_PROMPT = "Who do you want to meet?"
 RANDOM_BUTTON = "🎲 Random chat · Free"
 
@@ -38,6 +48,29 @@ PARTNER_UNREACHABLE = (
     "Your last message wasn't delivered."
 )
 IDLE_ENDED = "The chat ended because nobody wrote for a while."
+
+SAFETY_PROMPT = "Anything wrong with this chat?"
+BLOCK_BUTTON = "🚫 Block"
+UNBLOCK_BUTTON = "✅ Unblock"
+REPORT_BUTTON = "⚠️ Report"
+
+
+def safety_keyboard(conversation_id: int, blocked: bool) -> InlineKeyboardMarkup:
+    """Block (or Unblock, once blocked) and Report for the partner in a chat (D-045)."""
+    toggle = (
+        (UNBLOCK_BUTTON, SafetyAction(action="unblock", conversation=conversation_id))
+        if blocked
+        else (BLOCK_BUTTON, SafetyAction(action="block", conversation=conversation_id))
+    )
+    report = (REPORT_BUTTON, SafetyAction(action="report", conversation=conversation_id))
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(text=text, callback_data=data.pack())
+                for text, data in (toggle, report)
+            ]
+        ]
+    )
 
 
 def new_chat_menu() -> InlineKeyboardMarkup:
@@ -58,19 +91,27 @@ async def send_menu(bot: Bot, chat_id: int, intro: str | None = None) -> None:
     await bot.send_message(chat_id, text, reply_markup=new_chat_menu())
 
 
-async def send_chat_ended(bot: Bot, chat_id: int, how: str) -> None:
-    """Say how the chat ended, bring back the main keyboard, then offer a new chat.
+async def send_chat_ended(
+    bot: Bot, chat_id: int, how: str, conversation_id: int, *, blocked: bool
+) -> None:
+    """Say how the chat ended and bring back the main keyboard, then offer Block and
+    Report for the partner (`blocked`: whether this user has blocked them) and a new chat.
 
-    Two messages, because a Telegram message carries either the keyboard under the
-    message box or buttons of its own, not both.
+    Separate messages, because a Telegram message carries either the keyboard under the
+    message box or buttons of its own, not both. The layout is provisional (D-045).
     """
     await bot.send_message(chat_id, how, reply_markup=main_keyboard())
+    await bot.send_message(
+        chat_id, SAFETY_PROMPT, reply_markup=safety_keyboard(conversation_id, blocked)
+    )
     await send_menu(bot, chat_id)
 
 
-async def tell_chat_ended(bot: Bot, chat_id: int, how: str) -> None:
+async def tell_chat_ended(
+    bot: Bot, chat_id: int, how: str, conversation_id: int, *, blocked: bool
+) -> None:
     """`send_chat_ended` for the other user, who may have blocked the bot: never raises."""
     try:
-        await send_chat_ended(bot, chat_id, how)
+        await send_chat_ended(bot, chat_id, how, conversation_id, blocked=blocked)
     except TelegramAPIError as exc:
         logger.warning("could not tell a user the chat ended", extra=exception_summary(exc))

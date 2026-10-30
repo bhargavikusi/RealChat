@@ -20,6 +20,7 @@ def test_approved_defaults() -> None:
         SettingKey.CHAT_IDLE_NOTICE_SECONDS: 300,
         SettingKey.CHAT_IDLE_GRACE_SECONDS: 60,
         SettingKey.CHAT_RETENTION_DAYS: 7,
+        SettingKey.REPORTS_PER_DAY: 10,
     }
 
 

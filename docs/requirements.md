@@ -206,7 +206,7 @@ Implement safe concurrency controls so a user cannot accidentally be matched wit
 Matching must exclude:
 
 * The same user.
-* Blocked users and users who have blocked the requester.
+* ~~Blocked users and users who have blocked the requester.~~ Amended by owner decision D-045: blocks do not affect random matching, because excluding blocked pairs would let users steer free random matches by blocking people they don't want. Blocks apply to direct messages and chat requests.
 * Ineligible, banned, or suspended accounts.
 * Users already engaged in incompatible active conversations.
 * Users who do not satisfy the applicable privacy and matching preferences.

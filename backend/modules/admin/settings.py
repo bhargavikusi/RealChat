@@ -26,6 +26,7 @@ class SettingKey(StrEnum):
     CHAT_IDLE_NOTICE_SECONDS = "chat_idle_notice_seconds"
     CHAT_IDLE_GRACE_SECONDS = "chat_idle_grace_seconds"
     CHAT_RETENTION_DAYS = "chat_retention_days"
+    REPORTS_PER_DAY = "reports_per_day"
 
 
 @dataclass(frozen=True)
@@ -85,6 +86,14 @@ SPECS: dict[SettingKey, SettingSpec] = {
             default=7,
             minimum=1,
             maximum=365,
+        ),
+        SettingSpec(
+            SettingKey.REPORTS_PER_DAY,
+            "Reports per user per 24 hours",
+            "reports",
+            default=10,
+            minimum=1,
+            maximum=100,
         ),
     )
 }

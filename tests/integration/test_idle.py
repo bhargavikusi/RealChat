@@ -10,7 +10,7 @@ from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from apps.bot import chat as ch
-from apps.bot.endings import IDLE_ENDED, MEET_PROMPT
+from apps.bot.endings import IDLE_ENDED
 from backend.config.settings import BotSettings
 from backend.modules.admin import service as admin_service
 from backend.modules.admin.settings import RuntimeSettings, SettingKey
@@ -20,9 +20,8 @@ from backend.modules.chat.models import Conversation
 from tests.support.chat import USER_ID
 from tests.support.world import (
     BOB_ID,
-    MAIN_KEYS,
     World,
-    keys,
+    assert_chat_ended,
     match,
     onboarded_world,
     text_of,
@@ -156,9 +155,7 @@ async def test_both_users_are_warned_then_the_chat_ends(
 
     assert await idle.tick(now + GRACE) == (0, 1)
     for chat_id in (USER_ID, BOB_ID):
-        ended, menu = world.worker.sent_to(chat_id)[-2:]
-        assert (text_of(ended), keys(ended)) == (IDLE_ENDED, MAIN_KEYS)
-        assert text_of(menu) == MEET_PROMPT
+        assert_chat_ended(world.worker, chat_id, IDLE_ENDED)
 
 
 async def test_a_message_after_the_warning_keeps_the_chat(

@@ -28,7 +28,7 @@ class IdleNotifier(Protocol):
 
     async def idle_warning(self, user_ids: tuple[int, int], quiet: int, grace: int) -> None: ...
 
-    async def idle_ended(self, user_ids: tuple[int, int]) -> None: ...
+    async def idle_ended(self, conversation_id: int, user_ids: tuple[int, int]) -> None: ...
 
 
 class IdleChats:
@@ -52,7 +52,7 @@ class IdleChats:
             warned = await chat.warn_idle_chats(session, now, timedelta(seconds=quiet), BATCH_SIZE)
             await session.commit()
         for idle in ended:
-            await self._notify(self._notifier.idle_ended(idle.user_ids))
+            await self._notify(self._notifier.idle_ended(idle.conversation_id, idle.user_ids))
         for idle in warned:
             await self._notify(self._notifier.idle_warning(idle.user_ids, quiet, grace))
         return len(warned), len(ended)

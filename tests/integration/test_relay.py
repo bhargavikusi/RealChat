@@ -28,7 +28,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from apps.bot import onboarding as ob
 from apps.bot import profile as pr
 from apps.bot import relay as rl
-from apps.bot.endings import MEET_PROMPT, PARTNER_UNREACHABLE
+from apps.bot.endings import PARTNER_UNREACHABLE
 from apps.bot.keyboards import END_CHAT
 from backend.config.settings import BotSettings
 from backend.modules.chat import service as chat_service
@@ -39,13 +39,11 @@ from tests.support.chat import TERMS, USER_ID, Chat, complete_onboarding
 from tests.support.telegram import content_update, edited_update
 from tests.support.world import (
     BOB_ID,
-    MAIN_KEYS,
     World,
-    keys,
+    assert_chat_ended,
     match,
     onboarded_world,
     search,
-    text_of,
 )
 
 Sessions = async_sessionmaker[AsyncSession]
@@ -377,9 +375,7 @@ async def test_an_unreachable_partner_ends_the_chat(
 ) -> None:
     world.alice.session.fail_copies("Forbidden: bot was blocked by the user", forbidden=True)
     await send(world.alice, text="Hello?")
-    ended, menu = world.alice.session.sent_to(USER_ID)[-2:]
-    assert (text_of(ended), keys(ended)) == (PARTNER_UNREACHABLE, MAIN_KEYS)
-    assert text_of(menu) == MEET_PROMPT
+    assert_chat_ended(world.alice.session, USER_ID, PARTNER_UNREACHABLE)
     async with session_factory() as session:
         conversation = (await session.execute(select(Conversation))).scalar_one()
         assert (conversation.end_reason, conversation.ended_by_user_id) == ("unreachable", None)

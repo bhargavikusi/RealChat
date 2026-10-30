@@ -3,13 +3,20 @@
 from datetime import UTC, datetime
 
 from aiogram.methods import SendMessage, SendPhoto
-from aiogram.types import ReplyKeyboardMarkup
+from aiogram.types import InlineKeyboardMarkup, ReplyKeyboardMarkup
 from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from apps.bot import chat as ch
 from apps.bot.avatars import Avatars
-from apps.bot.endings import MEET_PROMPT, RANDOM_BUTTON
+from apps.bot.endings import (
+    BLOCK_BUTTON,
+    MEET_PROMPT,
+    RANDOM_BUTTON,
+    REPORT_BUTTON,
+    SAFETY_PROMPT,
+    UNBLOCK_BUTTON,
+)
 from apps.bot.keyboards import END_CHAT, NEW_CHAT, PARTNER_PROFILE
 from backend.config.settings import BotSettings
 from backend.modules.admin.settings import RuntimeSettings
@@ -53,6 +60,26 @@ def keys(method: SendMessage | SendPhoto) -> list[list[str]] | None:
     if not isinstance(markup, ReplyKeyboardMarkup):
         return None
     return [[button.text for button in row] for row in markup.keyboard]
+
+
+def buttons(method: SendMessage | SendPhoto) -> list[str]:
+    """The text of a message's inline buttons, in order."""
+    markup = method.reply_markup
+    if not isinstance(markup, InlineKeyboardMarkup):
+        return []
+    return [button.text for row in markup.inline_keyboard for button in row]
+
+
+def assert_chat_ended(
+    session: RecordingSession, chat_id: int, how: str, *, blocked: bool = False
+) -> None:
+    """The last three messages to `chat_id`: how the chat ended (with the main keyboard),
+    Block or Unblock and Report, then the new-chat menu."""
+    ended, safety, menu = session.sent_to(chat_id)[-3:]
+    assert (text_of(ended), keys(ended)) == (how, MAIN_KEYS)
+    toggle = UNBLOCK_BUTTON if blocked else BLOCK_BUTTON
+    assert (text_of(safety), buttons(safety)) == (SAFETY_PROMPT, [toggle, REPORT_BUTTON])
+    assert (text_of(menu), buttons(menu)) == (MEET_PROMPT, [RANDOM_BUTTON])
 
 
 def last_to(session: RecordingSession, chat_id: int) -> SendMessage | SendPhoto:

@@ -100,8 +100,8 @@ One row per chat between two matched users (D-027).
 | `id` | bigint identity | |
 | `started_at` | timestamptz | |
 | `ended_at` | timestamptz, nullable | NULL while the chat is open. |
-| `end_reason` | varchar(16), nullable | `user_ended`, `unreachable`, or `idle`; set together with `ended_at`, enforced by a constraint. More reasons come with blocking. |
-| `ended_by_user_id` | bigint, nullable | References `users.id`. The user who ended it, when a user did. |
+| `end_reason` | varchar(16), nullable | `user_ended`, `unreachable`, `idle`, `blocked`, or `reported` (D-045); set together with `ended_at`, enforced by a constraint. |
+| `ended_by_user_id` | bigint, nullable | References `users.id`. The user who ended it, blocked, or reported their partner; NULL for automatic endings. |
 | `last_activity_at` | timestamptz | When a message was last relayed, or the chat started. Updated with the row locked, in the same transaction that records the message; if that message then cannot be delivered, the previous value (and warning) is restored, unless another message was recorded since. |
 | `idle_warned_at` | timestamptz, nullable | When both users were warned that the quiet chat will end (D-039). Cleared by any relayed message. |
 
@@ -132,7 +132,39 @@ Each message relayed between chat partners (D-028). It maps the sender's message
 | `file_id` | text, nullable | A Telegram file identifier for media; files are never downloaded. |
 | `created_at` | timestamptz | |
 
-`(sender_user_id, sender_message_id)` is unique and is claimed before sending, so a message delivered to the bot twice is relayed at most once, even if the bot stopped right after sending it. A record is removed if its copy could not be delivered, or was taken back because the chat ended. If linking the record to its copy fails, the copy is taken back but the record stays, with `recipient_message_id` NULL and its content, so a redelivery is still recognized; it is subject to the same retention as other content. The index on `(conversation_id, recipient_message_id)` serves reply lookups. Contact cards, locations, and refused text are never stored (D-042). The content columns (`text`, `edited_text`, `file_id`) are for moderation only, are never written to ordinary logs, and are to be deleted after the retention period (D-028, default 7 days). Messages tied to an open report are to be kept until the report is closed, once reports exist. The automatic cleanup is a separate piece of work and is not running yet, so content is currently kept.
+`(sender_user_id, sender_message_id)` is unique and is claimed before sending, so a message delivered to the bot twice is relayed at most once, even if the bot stopped right after sending it. A record is removed if its copy could not be delivered, or was taken back because the chat ended. If linking the record to its copy fails, the copy is taken back but the record stays, with `recipient_message_id` NULL and its content, so a redelivery is still recognized; it is subject to the same retention as other content. The index on `(conversation_id, recipient_message_id)` serves reply lookups. Contact cards, locations, and refused text are never stored (D-042). The content columns (`text`, `edited_text`, `file_id`) are for moderation only, are never written to ordinary logs, and are to be deleted after the retention period (D-028, default 7 days). Messages in a conversation with an open report (see `reports`) are to be kept until the report is closed. The automatic cleanup is a separate piece of work and is not running yet, so content is currently kept.
+
+### `user_blocks`
+
+Blocks between users (D-045). Blocks do not affect random matching; they will stop direct messages and chat requests once those exist.
+
+| Column | Type | Notes |
+|---|---|---|
+| `id` | bigint identity | |
+| `blocker_user_id`, `blocked_user_id` | bigint | Reference `users.id`. A constraint stops a user blocking themselves. |
+| `conversation_id` | bigint | References `conversations.id`. The chat the block was made from: only a past or current partner can be blocked. |
+| `blocked_at` | timestamptz | |
+| `unblocked_at` | timestamptz, nullable | Set when the block is lifted. The row is kept as history, and blocking again adds a new row. |
+
+A partial unique index on `(blocker_user_id, blocked_user_id)` where `unblocked_at IS NULL` allows one block in force per pair, so repeated or simultaneous presses store one. Rows are kept when either account is deleted.
+
+### `reports`
+
+Reports about chat partners (D-037, D-045).
+
+| Column | Type | Notes |
+|---|---|---|
+| `id` | bigint identity | |
+| `reporter_user_id`, `reported_user_id` | bigint | Reference `users.id`. A constraint stops a user reporting themselves. |
+| `conversation_id` | bigint | References `conversations.id`. Only the other participant of a conversation the reporter was in can be reported. |
+| `reason` | varchar(16) | `spam`, `harassment`, `sexual`, `under_18`, `threats`, or `other`. |
+| `details` | varchar(500), nullable | Optional context from the reporter, 1–500 characters, added once. For moderators only; never written to ordinary logs. |
+| `urgent` | boolean | True for `under_18`. |
+| `status` | varchar(16) | `open` (default) or `closed`. Nothing closes reports yet; review comes with the moderation work. |
+| `created_at` | timestamptz | |
+| `closed_at` | timestamptz, nullable | Set exactly when the status is `closed`, enforced by a constraint. |
+
+`(reporter_user_id, conversation_id)` is unique: one report per user per conversation. The index on `(reporter_user_id, created_at)` serves the per-user limit on reports in 24 hours (an admin setting); the reporter's `users` row is locked while counting, so simultaneous reports cannot pass the limit together. A partial index on `conversation_id` for open reports serves the retention cleanup, which keeps those conversations' messages. Rows are kept when either account is deleted.
 
 ## Where rules are enforced
 

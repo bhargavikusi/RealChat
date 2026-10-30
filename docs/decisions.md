@@ -340,7 +340,7 @@ Work happens on short-lived issue branches, such as `feature/12-onboarding`, cre
 
 * Values that operators need to tune are runtime settings stored in PostgreSQL, changed without a restart. Each has a default and an allowed range, and every change is audit-logged with the old and new value.
 * Admins change them from 🛠 Admin settings, a button inside their own ⚙️ Advanced settings. The bot re-checks the admin role for every action.
-* Initial settings: repeat-match avoidance 300 seconds (0–86,400, 0 is off), search time limit 120 seconds (30–1,800), idle notice after 300 seconds (60–86,400), idle chat ends 60 seconds after the notice (10–3,600), chat message retention 7 days (1–365).
+* Initial settings: repeat-match avoidance 300 seconds (0–86,400, 0 is off), search time limit 120 seconds (30–1,800), idle notice after 300 seconds (60–86,400), idle chat ends 60 seconds after the notice (10–3,600), chat message retention 7 days (1–365). Added later: reports per user per 24 hours, 10 (1–100) (D-045).
 * A web admin panel with these settings and moderation tools (such as reviewing reported chats) is planned for the moderation work.
 
 **Why:** Owner decision: these values should be adjustable by whoever runs the bot, from the start.
@@ -413,6 +413,24 @@ Work happens on short-lived issue branches, such as `feature/12-onboarding`, cre
 
 **Why:** Owner decision. One entry point for every kind of chat, including the paid ones to come.
 
+### D-045 — Blocking and reporting chat partners
+
+**Date:** 2026-10-29
+**Decision:**
+
+* 🚫 Block and ⚠️ Report are inline buttons on the partner's profile card and on an "Anything wrong with this chat?" message sent after every chat ending, between the "how it ended" message and the new-chat menu. The layout is provisional until the design pass.
+* **Block** is one button that toggles with ✅ Unblock. Blocking someone you are still chatting with asks for confirmation ("Blocking will end this chat"), then ends the chat. Outside that chat, blocking and unblocking each take one tap.
+* **Blocks do not affect random matching.** Blocked pairs can be matched again by search. A blocked user cannot send direct messages or chat requests to the person who blocked them, once those features exist. This amends requirements §8.
+* **Report** asks for a reason (D-037) and files the report at once. Filing also blocks the reported user and ends the chat if it is still open. Optional details (up to 500 characters) can then be added, or skipped. Details are not asked for if the reporter is already in a chat with someone else, so their next message still goes to that chat.
+* Each user can report a conversation once. Reports are limited per user per 24 hours by an admin runtime setting (default 10, range 1–100). Blocking is never limited.
+* The other user is only ever told that the chat ended, never that they were blocked or reported.
+* Only the other participant of a conversation the user was in can be blocked or reported.
+* Blocks (with their history of blocking and unblocking) and reports are kept when either account is deleted.
+* The draft terms describe this (terms version `draft-7`).
+
+**Why:** Owner decisions. Excluding blocked pairs from matching would let a user rig free matches, for example by blocking everyone of one gender. Not revealing blocks and reports avoids retaliation. Keeping them after deletion stops deletion being used to undo a block or erase a report.
+**Consequence:** Until direct messages and chat requests exist, a block made outside a chat is stored and shown (as ✅ Unblock) but has no other effect. Someone who blocked a partner can be matched with them again, and then leaves with ⏹ End chat.
+
 ---
 
 ## Open
@@ -430,5 +448,5 @@ Each of these needs the owner's decision. Until then, the behavior stays configu
 | O-006 | Webhook or long polling for receiving Telegram updates in production | Before deployment | Development will use polling. Webhooks require a public HTTPS endpoint. |
 | O-008 | Which premium offer includes hiding the profile, and what happens when it ends | Before the VIP work | D-021. For example, whether the profile becomes visible again automatically. |
 | O-009 | Retention period for the age and gender change history | Public launch | D-024. Separate from conversation content (O-002), because moderators use the history to spot repeated switching. Until decided, rows are kept until account deletion. |
-| O-010 | The fourth button on the chat keyboard | Before the chat keyboard is final | D-030. Until then Block and Report are inline buttons on the partner's card and the "chat ended" message. |
+| O-010 | The fourth button on the chat keyboard | Before the chat keyboard is final | D-030. Until then Block and Report are inline buttons on the partner's card and after each chat (D-045). |
 | O-011 | Separate database roles for migrations and the running application | Before deployment | The application currently connects as the table owner, which can disable the audit log's append-only triggers. A restricted application role without UPDATE, DELETE, or TRUNCATE on `admin_audit_log` (and without DDL rights) would make the log tamper-resistant. Part of deployment hardening. |

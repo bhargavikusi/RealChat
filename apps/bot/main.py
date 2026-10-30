@@ -14,7 +14,7 @@ from aiogram.types import BotCommandScopeAllPrivateChats
 from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from apps.bot import account, admin, chat, errors, menu, onboarding, profile, relay
+from apps.bot import account, admin, chat, errors, menu, onboarding, profile, relay, safety
 from apps.bot.account import AccessGateMiddleware
 from apps.bot.avatars import Avatars
 from apps.bot.db import DbSessionMiddleware
@@ -81,6 +81,8 @@ def create_dispatcher(
         # Chat before admin: the chat keyboard's buttons must never be taken as an
         # answer to a pending admin edit.
         chat.create_router(),
+        # Block and report buttons, and the report-details answer (D-045).
+        safety.create_router(),
         # Relay right after the chat buttons: it only takes messages from users in a
         # chat with no other step waiting for an answer, and passes the rest on.
         relay.create_router(),
