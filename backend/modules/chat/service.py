@@ -13,7 +13,12 @@ from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 
-from backend.modules.chat.models import ChatMessage, Conversation, ConversationParticipant
+from backend.modules.chat.models import (
+    USER_END_REASONS,
+    ChatMessage,
+    Conversation,
+    ConversationParticipant,
+)
 from backend.modules.users.models import Profile, TermsAcceptance, User
 
 Participant = ConversationParticipant
@@ -66,15 +71,22 @@ async def start_conversation(session: AsyncSession, first: int, second: int) -> 
 
 
 async def end_conversation(
-    session: AsyncSession, user_id: int, now: datetime, reason: str = "user_ended"
+    session: AsyncSession,
+    user_id: int,
+    now: datetime,
+    reason: str = "user_ended",
+    *,
+    conversation_id: int | None = None,
 ) -> ActiveChat | None:
     """End the user's open conversation; returns it, or None if there was none.
 
-    The conversation row is locked and re-read, so when both users end the chat at
-    the same moment, exactly one call ends it and the other returns None.
+    With `conversation_id`, only that conversation is ended: a button from an older
+    chat never ends a newer one. The conversation row is locked and re-read, so when
+    both users end the chat at the same moment, exactly one call ends it and the other
+    returns None.
     """
     chat = await active_chat(session, user_id)
-    if chat is None:
+    if chat is None or conversation_id not in (None, chat.conversation_id):
         return None
     conversation = (
         await session.execute(
@@ -86,7 +98,9 @@ async def end_conversation(
     ).scalar_one()
     if conversation.ended_at is not None:
         return None
-    await _close(session, conversation, now, reason, user_id if reason == "user_ended" else None)
+    await _close(
+        session, conversation, now, reason, user_id if reason in USER_END_REASONS else None
+    )
     return chat
 
 

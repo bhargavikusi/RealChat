@@ -3,11 +3,11 @@
 DRAFT for development only. It must be replaced with legally reviewed text before
 launch (O-007). Changing the text requires a new TERMS_VERSION so users re-accept.
 
-Only describe what the product actually does: blocking and reporting are added
-here when those features ship, and the retention period once it is decided (O-002).
+Only describe what the product actually does: the retention period is added once it
+is decided (O-002).
 """
 
-TERMS_VERSION = "draft-6"
+TERMS_VERSION = "draft-7"
 
 TERMS_TEXT = """\
 DRAFT - not for launch
@@ -26,10 +26,15 @@ block screenshots of it, but not all of them do.
 or captions containing links, phone numbers, or @usernames are not delivered.
 • Be respectful. Harassment, threats, hate, sexual content involving minors, spam, \
 scams, and sharing other people's private information are not allowed.
+• You can block or report a chat partner from their profile card or after a chat. \
+Blocking or reporting someone you're chatting with ends the chat, and they are only \
+told that the chat ended. Reporting also blocks them. Blocking doesn't stop you being \
+matched again in a random chat.
 • Accounts that break these rules may be restricted or banned.
 • You can delete your account at any time from your profile (Advanced settings). \
 Your profile is erased immediately. A minimal record (your Telegram user ID, account \
-status, and dates) is kept so that restrictions can't be avoided by signing up again."""
+status, and dates) is kept so that restrictions can't be avoided by signing up again. \
+Blocks and reports you made or received are kept too."""
 
 TERMS_QUESTION = "Do you agree to these terms and the privacy notice?"
 

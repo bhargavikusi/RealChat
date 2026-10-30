@@ -47,7 +47,7 @@ class RecordingSession(BaseSession):
         self.reject_callback_answers: str | None = None
         # When set, copyMessage fails with this error (see `fail_copies`).
         self.copy_error: TelegramAPIError | None = None
-        # When set, awaited while copyMessage is "in flight", before it returns.
+        # When set, awaited while copyMessage is "in flight", before it returns or fails.
         self.during_copy: Callable[[], Awaitable[None]] | None = None
 
     async def make_request(
@@ -60,10 +60,10 @@ class RecordingSession(BaseSession):
         if isinstance(method, AnswerCallbackQuery) and self.reject_callback_answers:
             raise TelegramBadRequest(method=method, message=self.reject_callback_answers)
         if isinstance(method, CopyMessage):
-            if self.copy_error is not None:
-                raise self.copy_error
             if self.during_copy is not None:
                 await self.during_copy()
+            if self.copy_error is not None:
+                raise self.copy_error
             return MessageId(message_id=10_000 + len(self.requests))  # type: ignore[return-value]
         if isinstance(method, SendMessage):
             sent = Message(

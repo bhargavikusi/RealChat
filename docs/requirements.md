@@ -206,7 +206,7 @@ Implement safe concurrency controls so a user cannot accidentally be matched wit
 Matching must exclude:
 
 * The same user.
-* Blocked users and users who have blocked the requester.
+* ~~Blocked users and users who have blocked the requester.~~ Amended by owner decision D-045: blocks do not affect random matching, because excluding blocked pairs would let users steer free random matches by blocking people they don't want. Blocks apply to direct messages and chat requests.
 * Ineligible, banned, or suspended accounts.
 * Users already engaged in incompatible active conversations.
 * Users who do not satisfy the applicable privacy and matching preferences.
@@ -485,7 +485,7 @@ Users should be able to:
 * Report profiles and conversations.
 * Select a report reason.
 * Provide optional supporting context.
-* Stop receiving messages from blocked users.
+* Stop receiving direct messages and chat requests from blocked users. Blocked users can still be matched again in random chat (D-045).
 * Leave a conversation immediately.
 * Control discoverability and relevant privacy settings.
 

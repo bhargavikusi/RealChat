@@ -2,8 +2,9 @@
 
 🎭 New Anonymous Chat starts a search in the Redis queue (D-027); the worker's
 matcher pairs searchers and calls `ChatNotifier` once a match is committed. While in
-a chat, the keyboard offers 👤 Partner profile and ⏹ End chat (D-030). Relaying
-messages, the full "chat ended" options, and private mode come with later work.
+a chat, the keyboard offers 👤 Partner profile and ⏹ End chat (D-030); the partner's
+card carries Block and Report (D-045, handled in `apps.bot.safety`). Private mode
+comes with later work.
 
 As elsewhere: private chats only, and every database transaction is ended before
 any Telegram call. A search's Cancel button carries that search's id, so a button
@@ -36,6 +37,7 @@ from apps.bot.endings import (
     PARTNER_ENDED,
     YOU_ENDED,
     SearchAction,
+    safety_keyboard,
     send_chat_ended,
     send_menu,
     tell_chat_ended,
@@ -47,6 +49,7 @@ from backend.config.settings import BotSettings
 from backend.core.logging import exception_summary
 from backend.modules.chat import service as chat
 from backend.modules.matching.queue import SearchQueue
+from backend.modules.moderation import service as moderation
 from backend.modules.users import service as users
 from backend.modules.users.models import Profile, User
 from backend.modules.users.validation import Gender
@@ -86,7 +89,7 @@ async def send_card(
     chat_id: int,
     profile: Profile,
     header: str,
-    reply_markup: ReplyKeyboardMarkup | None = None,
+    reply_markup: ReplyKeyboardMarkup | InlineKeyboardMarkup | None = None,
 ) -> None:
     """Send `profile` as others see it (D-029), with the photo or the default avatar."""
     caption = f"{header}\n\n{profile_caption(profile, datetime.now(UTC).date())}"
@@ -202,37 +205,51 @@ async def on_partner_profile(
         return
     user = await users.get_or_create_user(session, message.from_user.id)
     active = await chat.active_chat(session, user.id)
-    partner = None if active is None else await users.get_profile(session, active.partner_id)
-    await session.commit()
-    if partner is None:
+    if active is None:
+        await session.commit()
         await message.answer(NOT_IN_CHAT, reply_markup=main_keyboard())
         return
-    await send_card(bot, avatars, message.chat.id, partner, PARTNER_HEADER)
+    partner = await users.get_profile(session, active.partner_id)
+    blocked = await moderation.is_blocked(session, user.id, active.partner_id)
+    await session.commit()
+    await send_card(
+        bot,
+        avatars,
+        message.chat.id,
+        partner,
+        PARTNER_HEADER,
+        safety_keyboard(active.conversation_id, blocked),
+    )
 
 
-async def end_chat_for(session: AsyncSession, bot: Bot, telegram_user_id: int) -> bool:
-    """End the user's chat, if any, and tell their partner. Returns whether one ended.
+async def tell_partner_ended(
+    session: AsyncSession, bot: Bot, user_id: int, ended: chat.ActiveChat
+) -> None:
+    """Tell the partner in a chat `user_id` just ended, with Block or Unblock as fits them.
 
     Commits before notifying. The partner is told on a best-effort basis: if they have
     blocked the bot, the chat still ends.
     """
-    user = await users.get_or_create_user(session, telegram_user_id)
-    ended = await chat.end_conversation(session, user.id, datetime.now(UTC))
-    partner_telegram_id = None if ended is None else await _telegram_id(session, ended.partner_id)
+    partner_telegram_id = await _telegram_id(session, ended.partner_id)
+    blocked = await moderation.is_blocked(session, ended.partner_id, user_id)
     await session.commit()
-    if partner_telegram_id is None:
-        return False
-    await tell_chat_ended(bot, partner_telegram_id, PARTNER_ENDED)
-    return True
+    await tell_chat_ended(
+        bot, partner_telegram_id, PARTNER_ENDED, ended.conversation_id, blocked=blocked
+    )
 
 
 async def on_end_chat(message: Message, bot: Bot, session: AsyncSession) -> None:
     if message.from_user is None:
         return
-    if await end_chat_for(session, bot, message.from_user.id):
-        await send_chat_ended(bot, message.chat.id, YOU_ENDED)
-    else:
+    user = await users.get_or_create_user(session, message.from_user.id)
+    ended = await chat.end_conversation(session, user.id, datetime.now(UTC))
+    if ended is None:
+        await session.commit()
         await message.answer(NOT_IN_CHAT, reply_markup=main_keyboard())
+        return
+    blocked = await moderation.is_blocked(session, user.id, ended.partner_id)
+    await tell_partner_ended(session, bot, user.id, ended)
+    await send_chat_ended(bot, message.chat.id, YOU_ENDED, ended.conversation_id, blocked=blocked)
 
 
 # --- Notifications from the matcher --------------------------------------------------
@@ -285,9 +302,21 @@ class ChatNotifier:
             except TelegramAPIError as exc:
                 logger.warning("could not send an idle warning", extra=exception_summary(exc))
 
-    async def idle_ended(self, user_ids: tuple[int, int]) -> None:
-        for telegram_id in await self._telegram_ids(user_ids):
-            await tell_chat_ended(self._bot, telegram_id, IDLE_ENDED)
+    async def idle_ended(self, conversation_id: int, user_ids: tuple[int, int]) -> None:
+        first, second = user_ids
+        async with self._sessions() as session:
+            people = [
+                (
+                    await _telegram_id(session, user_id),
+                    await moderation.is_blocked(session, user_id, partner_id),
+                )
+                for user_id, partner_id in ((first, second), (second, first))
+            ]
+            await session.commit()
+        for telegram_id, blocked in people:
+            await tell_chat_ended(
+                self._bot, telegram_id, IDLE_ENDED, conversation_id, blocked=blocked
+            )
 
     async def _telegram_ids(self, user_ids: tuple[int, int]) -> list[int]:
         async with self._sessions() as session:

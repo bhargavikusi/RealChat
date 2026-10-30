@@ -40,6 +40,7 @@ from backend.config.settings import BotSettings
 from backend.core.logging import exception_summary
 from backend.modules.chat import service as chat
 from backend.modules.chat.content import Blocked, blocked_text
+from backend.modules.moderation import service as moderation
 from backend.modules.users import service as users
 
 logger = logging.getLogger(__name__)
@@ -137,10 +138,25 @@ def _unreachable(error: TelegramAPIError) -> bool:
     return any(marker in error.message.casefold() for marker in _GONE)
 
 
-async def _end_unreachable(message: Message, bot: Bot, session: AsyncSession, user_id: int) -> None:
-    await chat.end_conversation(session, user_id, datetime.now(UTC), reason="unreachable")
+async def _end_unreachable(
+    message: Message, bot: Bot, session: AsyncSession, user_id: int, active: chat.ActiveChat
+) -> None:
+    ended = await chat.end_conversation(
+        session,
+        user_id,
+        datetime.now(UTC),
+        reason="unreachable",
+        conversation_id=active.conversation_id,
+    )
+    if ended is None:
+        # The chat already ended another way, and the user was told then.
+        await session.commit()
+        return
+    blocked = await moderation.is_blocked(session, user_id, active.partner_id)
     await session.commit()
-    await send_chat_ended(bot, message.chat.id, PARTNER_UNREACHABLE)
+    await send_chat_ended(
+        bot, message.chat.id, PARTNER_UNREACHABLE, active.conversation_id, blocked=blocked
+    )
 
 
 async def on_message(
@@ -198,7 +214,7 @@ async def on_message(
     except TelegramAPIError as error:
         await chat.discard_message(session, claim)
         if _unreachable(error):
-            await _end_unreachable(message, bot, session, ctx.user.id)
+            await _end_unreachable(message, bot, session, ctx.user.id, active)
             return
         await session.commit()
         if isinstance(error, TelegramBadRequest):

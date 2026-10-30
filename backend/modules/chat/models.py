@@ -24,10 +24,13 @@ from sqlalchemy.orm import Mapped, mapped_column
 
 from backend.database.engine import Base
 
-# Why a conversation ended. More reasons are added with blocking.
-# "unreachable": a message could not be delivered because the partner blocked the bot
-# or their account is gone. "idle": nobody wrote for the configured time (D-039).
-END_REASONS = ("user_ended", "unreachable", "idle")
+# Why a conversation ended. "unreachable": a message could not be delivered because the
+# partner blocked the bot or their account is gone. "idle": nobody wrote for the
+# configured time (D-039). "blocked" and "reported": a user blocked or reported their
+# partner (D-045).
+END_REASONS = ("user_ended", "unreachable", "idle", "blocked", "reported")
+# Endings caused by one of the users, who is recorded in `ended_by_user_id`.
+USER_END_REASONS = ("user_ended", "blocked", "reported")
 # What a relayed message was. Text and captions are stored in `text`.
 MESSAGE_KINDS = (
     "text",

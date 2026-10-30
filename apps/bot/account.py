@@ -37,6 +37,7 @@ from apps.bot.onboarding import load_context, prompt_next
 from backend.config.settings import BotSettings
 from backend.modules.admin import service as admin_service
 from backend.modules.chat import service as chat_service
+from backend.modules.moderation import service as moderation
 from backend.modules.users import service
 
 logger = logging.getLogger(__name__)
@@ -185,12 +186,21 @@ async def on_confirm(
     # A deleted account leaves any chat it is in, so the partner is not left waiting.
     ended = await chat_service.end_conversation(session, user.id, now)
     partner = None if ended is None else await service.get_user(session, ended.partner_id)
+    partner_blocked = partner is not None and await moderation.is_blocked(
+        session, partner.id, user.id
+    )
     await service.delete_account(session, user.id, now)
     await session.commit()
     await state.clear()
     # The partner is told first, so a failure replying to this user cannot skip it.
-    if partner is not None:
-        await tell_chat_ended(bot, partner.telegram_user_id, PARTNER_LEFT)
+    if ended is not None and partner is not None:
+        await tell_chat_ended(
+            bot,
+            partner.telegram_user_id,
+            PARTNER_LEFT,
+            ended.conversation_id,
+            blocked=partner_blocked,
+        )
     await query.answer()
     await bot.send_message(query.from_user.id, DELETED_RESTRICTED if restricted else DELETED)
 

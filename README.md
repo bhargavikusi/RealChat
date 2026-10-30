@@ -4,7 +4,7 @@ RealChat is a Telegram-first anonymous chat and social discovery platform. Users
 
 ## Status
 
-Early development. The infrastructure runs locally: an API with health checks, PostgreSQL, Redis, and database migrations. The Telegram bot supports `/start`, terms acceptance, conversational profile creation, profile viewing and editing (`/profile`), account deletion, and `/help`. Suspended and banned accounts are limited to help and deletion. Users can search for a random partner, get matched by the worker, exchange messages and media (relayed anonymously, protected from forwarding and saving), view their partner's profile, and end the chat. Contact cards, locations, links, phone numbers, and @usernames can't be sent in chats. Stored chat messages are not yet deleted automatically.
+Early development. The infrastructure runs locally: an API with health checks, PostgreSQL, Redis, and database migrations. The Telegram bot supports `/start`, terms acceptance, conversational profile creation, profile viewing and editing (`/profile`), account deletion, and `/help`. Suspended and banned accounts are limited to help and deletion. Users can search for a random partner, get matched by the worker, exchange messages and media (relayed anonymously, protected from forwarding and saving in Telegram apps that honour that setting), view their partner's profile, end the chat, and block or report their partner. Contact cards, locations, links, phone numbers, and @usernames can't be sent in chats. Stored chat messages are not yet deleted automatically.
 
 ## Prerequisites
 
@@ -60,7 +60,7 @@ uv run python -m apps.bot.main
 
 During development the bot uses long polling, so it needs no public URL. It stops on Ctrl+C. The minimum age is `MIN_AGE` (default 18 for development; see D-009). With `APP_ENV=production` the bot refuses to start unless `MIN_AGE` is set explicitly.
 
-At startup the bot registers its command menu (`/start`, `/profile`, `/help`) with Telegram for private chats. After onboarding, the keyboard under the message box offers 🎭 New Anonymous Chat, which opens a menu of chats to choose from (for now, a free random chat); during a chat it shows 👤 Partner profile and ⏹ End chat, and other messages the user sends are relayed to their partner (except commands, messages refused under the chat rules, and answers to a pending step such as a profile edit). Age and gender can each be changed once per `PROFILE_CHANGE_COOLDOWN_DAYS` (default 30). `/help` shows the announcement channel link only when `ANNOUNCEMENT_CHANNEL_URL` is set, and the support link only when `SUPPORT_CONTACT` is set. Each must be an `https://` link.
+At startup the bot registers its command menu (`/start`, `/profile`, `/help`) with Telegram for private chats. After onboarding, the keyboard under the message box offers 🎭 New Anonymous Chat, which opens a menu of chats to choose from (for now, a free random chat); during a chat it shows 👤 Partner profile (whose card offers Block and Report) and ⏹ End chat, and other messages the user sends are relayed to their partner (except commands, messages refused under the chat rules, and answers to a pending step such as a profile edit). Age and gender can each be changed once per `PROFILE_CHANGE_COOLDOWN_DAYS` (default 30). `/help` shows the announcement channel link only when `ANNOUNCEMENT_CHANNEL_URL` is set, and the support link only when `SUPPORT_CONTACT` is set. Each must be an `https://` link.
 
 While Redis is available, two protections apply:
 

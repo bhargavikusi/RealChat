@@ -4,7 +4,6 @@ from datetime import UTC, datetime
 
 import pytest
 from aiogram.methods import SendPhoto
-from aiogram.types import InlineKeyboardMarkup
 from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
@@ -27,12 +26,13 @@ from backend.modules.admin.settings import SPECS, SettingKey
 from backend.modules.chat import service as chat_service
 from backend.modules.users import service as users_service
 from tests.support.chat import TERMS, USER_ID, Chat
-from tests.support.telegram import RecordingSession, message_update
+from tests.support.telegram import message_update
 from tests.support.world import (
     BOB_ID,
     CHAT_KEYS,
     MAIN_KEYS,
     World,
+    assert_chat_ended,
     keys,
     last_to,
     match,
@@ -76,15 +76,6 @@ async def test_two_users_are_matched_and_see_each_other(world: World) -> None:
     assert await world.alice.send(NEW_CHAT) == ch.ALREADY_IN_CHAT
     await world.alice.send("/start")
     assert keys(last_to(world.alice.session, USER_ID)) == CHAT_KEYS
-
-
-def assert_chat_ended(session: RecordingSession, chat_id: int, how: str) -> None:
-    """The last two messages to `chat_id`: how the chat ended, then the new-chat menu."""
-    ended, menu = session.sent_to(chat_id)[-2:]
-    assert (text_of(ended), keys(ended)) == (how, MAIN_KEYS)
-    assert text_of(menu) == MEET_PROMPT
-    assert isinstance(menu.reply_markup, InlineKeyboardMarkup)
-    assert [b.text for row in menu.reply_markup.inline_keyboard for b in row] == [RANDOM_BUTTON]
 
 
 async def test_new_chat_opens_the_menu(world: World) -> None:
