@@ -16,6 +16,7 @@ from sqlalchemy.orm import aliased
 from backend.modules.chat import private
 from backend.modules.chat.models import (
     USER_END_REASONS,
+    VIEW_ONCE_KINDS,
     ChatMessage,
     Conversation,
     ConversationParticipant,
@@ -203,7 +204,8 @@ async def reply_target(
     """Where a reply should point in the partner's chat, or None if it can't be mapped.
 
     In the user's own chat, the replied-to message is either one they sent (the partner
-    has a copy of it) or a copy of one the partner sent (the partner has the original).
+    has a copy of it) or a copy of one the partner sent (the partner has the original),
+    including the opened copy of view-once media (D-048).
     """
     row = (
         await session.execute(
@@ -221,7 +223,10 @@ async def reply_target(
                     ),
                     and_(
                         ChatMessage.sender_user_id == chat.partner_id,
-                        ChatMessage.recipient_message_id == replied_message_id,
+                        or_(
+                            ChatMessage.recipient_message_id == replied_message_id,
+                            ChatMessage.viewed_message_id == replied_message_id,
+                        ),
                     ),
                 ),
             )
@@ -260,6 +265,7 @@ class Claim:
     previous_activity: datetime
     previous_warning: datetime | None
     private_session_id: int | None = None  # the Private mode session it was sent in
+    view_once: bool = False  # delivered as a tap-to-view placeholder (D-048)
 
 
 async def claim_message(
@@ -270,8 +276,13 @@ async def claim_message(
     kind: str,
     text: str | None,
     file_id: str | None,
+    view_seconds: int | None = None,
 ) -> Claim | None:
     """Record a message before it is copied, and count it as chat activity.
+
+    In Private mode, photos, videos, voice and video messages are recorded as view-once
+    (D-048), with `view_seconds` (the viewing time once opened): the caller then
+    delivers a tap-to-view placeholder instead of a copy.
 
     Returns None if it was already recorded (a redelivered update) or the conversation
     has ended. Recording first means a message is relayed at most once, even if the bot
@@ -291,6 +302,7 @@ async def claim_message(
     previous_activity, previous_warning, now = state
     # Read under the conversation lock, which turning Private mode on or off also takes.
     private_id = await private.active_session(session, chat.conversation_id)
+    view_once = private_id is not None and kind in VIEW_ONCE_KINDS
     row_id = await session.scalar(
         insert(ChatMessage)
         .values(
@@ -301,6 +313,8 @@ async def claim_message(
             text=text,
             file_id=file_id,
             private_session_id=private_id,
+            view_once=view_once,
+            view_seconds=view_seconds if view_once else None,
         )
         .on_conflict_do_nothing(index_elements=["sender_user_id", "sender_message_id"])
         .returning(ChatMessage.id)
@@ -313,7 +327,13 @@ async def claim_message(
         .values(last_activity_at=now, idle_warned_at=None)
     )
     return Claim(
-        int(row_id), chat.conversation_id, now, previous_activity, previous_warning, private_id
+        int(row_id),
+        chat.conversation_id,
+        now,
+        previous_activity,
+        previous_warning,
+        private_id,
+        view_once,
     )
 
 

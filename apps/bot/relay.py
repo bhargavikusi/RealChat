@@ -31,15 +31,24 @@ from aiogram.enums import ChatType, ContentType, MessageEntityType
 from aiogram.exceptions import TelegramAPIError, TelegramBadRequest, TelegramForbiddenError
 from aiogram.filters import StateFilter
 from aiogram.fsm.context import FSMContext
-from aiogram.types import InlineKeyboardMarkup, Message, MessageEntity, ReplyParameters
+from aiogram.types import (
+    InlineKeyboardMarkup,
+    Message,
+    MessageEntity,
+    MessageId,
+    ReplyParameters,
+)
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from apps.bot.endings import PARTNER_UNREACHABLE, send_chat_ended
 from apps.bot.onboarding import load_context, prompt_next
+from apps.bot.private import view_once_placeholder
 from backend.config.settings import BotSettings
 from backend.core.logging import exception_summary
+from backend.modules.admin.settings import RuntimeSettings, SettingKey
 from backend.modules.chat import service as chat
 from backend.modules.chat.content import Blocked, blocked_text
+from backend.modules.chat.models import VIEW_ONCE_KINDS
 from backend.modules.moderation import service as moderation
 from backend.modules.users import service as users
 
@@ -76,6 +85,12 @@ _REFUSED_TYPES = {
     ContentType.LOCATION: Blocked.LOCATION,
     ContentType.VENUE: Blocked.LOCATION,
 }
+
+
+def _media_seconds(message: Message) -> int | None:
+    """The length of a video, voice, or video message, for the view-once timer."""
+    media = message.video or message.voice or message.video_note
+    return None if media is None else media.duration
 
 
 def _file_id(message: Message) -> str | None:
@@ -160,7 +175,12 @@ async def _end_unreachable(
 
 
 async def on_message(
-    message: Message, bot: Bot, session: AsyncSession, state: FSMContext, settings: BotSettings
+    message: Message,
+    bot: Bot,
+    session: AsyncSession,
+    state: FSMContext,
+    settings: BotSettings,
+    runtime_settings: RuntimeSettings,
 ) -> None:
     if message.from_user is None:
         return
@@ -183,6 +203,14 @@ async def on_message(
         target = await chat.reply_target(
             session, active, ctx.user.id, message.reply_to_message.message_id
         )
+    kind = _KINDS.get(ContentType(message.content_type), "other")
+    # If this is view-once media, how long it can be seen once opened, fixed now (D-048).
+    view_seconds = (
+        await runtime_settings.get(session, SettingKey.VIEW_ONCE_SECONDS)
+        + (_media_seconds(message) or 0)
+        if kind in VIEW_ONCE_KINDS
+        else None
+    )
     # Recorded before the copy is sent: a redelivered update finds this row and stops,
     # so a message is relayed at most once even if the bot stops right after sending.
     claim = await chat.claim_message(
@@ -190,27 +218,42 @@ async def on_message(
         active,
         ctx.user.id,
         message.message_id,
-        _KINDS.get(ContentType(message.content_type), "other"),
+        kind,
         message.text or message.caption,
         _file_id(message),
+        view_seconds,
     )
     partner = await users.get_user(session, active.partner_id)
     await session.commit()
     if claim is None:
         return  # already relayed, or the chat ended meanwhile
 
+    reply = (
+        None
+        if target is None
+        else ReplyParameters(message_id=target, allow_sending_without_reply=True)
+    )
     try:
-        copied = await bot.copy_message(
-            chat_id=partner.telegram_user_id,
-            from_chat_id=message.chat.id,
-            message_id=message.message_id,
-            protect_content=True,
-            reply_parameters=(
-                None
-                if target is None
-                else ReplyParameters(message_id=target, allow_sending_without_reply=True)
-            ),
-        )
+        if claim.view_once:
+            # Private mode media is sent as a tap-to-view placeholder (D-048).
+            text, button = view_once_placeholder(
+                kind, _media_seconds(message), view_seconds or 0, claim.row_id
+            )
+            copied: MessageId | Message = await bot.send_message(
+                partner.telegram_user_id,
+                text,
+                reply_markup=button,
+                protect_content=True,
+                reply_parameters=reply,
+            )
+        else:
+            copied = await bot.copy_message(
+                chat_id=partner.telegram_user_id,
+                from_chat_id=message.chat.id,
+                message_id=message.message_id,
+                protect_content=True,
+                reply_parameters=reply,
+            )
     except TelegramAPIError as error:
         await chat.discard_message(session, claim)
         if _unreachable(error):
@@ -273,8 +316,15 @@ async def on_edit(
         await message.answer(EDIT_BLOCKED.format(reason=BLOCKED[refusal]))
         return
     chat.record_edit(relayed, new_text, datetime.now(UTC))
+    # View-once media: the partner has a placeholder, and the edit shows when it is
+    # opened; once opened, it goes to the opened copy (D-048).
+    recipient_message_id = (
+        relayed.viewed_message_id if relayed.view_once else relayed.recipient_message_id
+    )
+    if recipient_message_id is None:
+        await session.commit()
+        return
     partner = await users.get_user(session, active.partner_id)
-    recipient_message_id = relayed.recipient_message_id
     await session.commit()
     try:
         if message.text is not None:

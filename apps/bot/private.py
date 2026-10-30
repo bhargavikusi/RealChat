@@ -25,15 +25,23 @@ from aiogram.exceptions import (
     TelegramForbiddenError,
     TelegramRetryAfter,
 )
-from aiogram.types import Message, ReplyKeyboardMarkup
+from aiogram.filters.callback_data import CallbackData
+from aiogram.types import (
+    CallbackQuery,
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+    Message,
+    ReplyKeyboardMarkup,
+)
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from apps.bot.chat import duration
 from apps.bot.keyboards import PRIVATE_OFF, PRIVATE_ON, chat_keyboard, main_keyboard
 from backend.core.logging import exception_summary
 from backend.modules.chat import private
 from backend.modules.chat import service as chat
-from backend.modules.chat.private import Due, SessionEnded
+from backend.modules.chat.private import Due, SessionEnded, ViewRefused
 from backend.modules.users import service as users
 from backend.modules.users.models import User
 
@@ -41,7 +49,8 @@ logger = logging.getLogger(__name__)
 
 NOTE = (
     "Messages sent from now on are deleted from both chats when Private mode is turned "
-    "off or the chat ends. Screenshots, screen recording, saving and forwarding are "
+    "off or the chat ends. Photos, videos and voice messages can be opened once, then "
+    "disappear. Screenshots, screen recording, saving and forwarding are "
     "blocked in Telegram's own apps; nothing can stop someone photographing the screen "
     "with another device. RealChat still keeps a copy for moderation for a limited time. "
     "This isn't a Telegram secret chat and it isn't end-to-end encrypted."
@@ -62,6 +71,102 @@ TIME_LIMIT = (
     f"🔓 Private mode ended because of its time limit. {DELETING} You can turn it on again."
 )
 CHAT_ENDED = "🔓 Messages sent in Private mode in your last chat are being deleted from both chats."
+
+
+# --- View-once media (D-048) ----------------------------------------------------------
+
+
+class ViewOnceAction(CallbackData, prefix="once"):
+    message: int  # the stored message (chat_messages.id) to open
+
+
+VIEW_BUTTON = "👁 View"
+_MEDIA_LABELS = {
+    "photo": "📷 Photo",
+    "video": "🎬 Video",
+    "voice": "🎤 Voice message",
+    "video_note": "⏺ Video message",
+}
+PLACEHOLDER = "{label}{length} · tap to view. It disappears {total} after opening."
+OPENED = "👁 Opened. It disappears {total} after opening."
+ALREADY_VIEWED = "This has already been opened."
+UNAVAILABLE = "This is no longer available."
+NOT_YOURS = "This button isn't available."
+COULD_NOT_OPEN = "This couldn't be opened. The sender may have deleted it."
+TRY_AGAIN = "Telegram is busy right now. Please tap 👁 View again in a moment."
+
+
+def _length(seconds: int) -> str:
+    minutes, rest = divmod(seconds, 60)
+    return f"{minutes}:{rest:02d}"
+
+
+def view_once_placeholder(
+    kind: str, media_seconds: int | None, view_seconds: int, row_id: int
+) -> tuple[str, InlineKeyboardMarkup]:
+    """The tap-to-view message sent instead of view-once media, and its button.
+
+    `view_seconds` is the stored viewing time, so the promise matches the deletion.
+    """
+    length = f" ({_length(media_seconds)})" if media_seconds else ""
+    text = PLACEHOLDER.format(
+        label=_MEDIA_LABELS[kind], length=length, total=duration(view_seconds)
+    )
+    button = InlineKeyboardButton(
+        text=VIEW_BUTTON, callback_data=ViewOnceAction(message=row_id).pack()
+    )
+    return text, InlineKeyboardMarkup(inline_keyboard=[[button]])
+
+
+_REFUSALS = {
+    ViewRefused.NOT_YOURS: NOT_YOURS,
+    ViewRefused.ALREADY_VIEWED: ALREADY_VIEWED,
+    ViewRefused.UNAVAILABLE: UNAVAILABLE,
+}
+
+
+async def on_view(
+    query: CallbackQuery, bot: Bot, callback_data: ViewOnceAction, session: AsyncSession
+) -> None:
+    """👁 View: send the media once. Opening queued the placeholder and the sender's
+    original for the end of the viewing time; the copy is queued once it exists."""
+    user = await users.get_or_create_user(session, query.from_user.id)
+    now = datetime.now(UTC)
+    opening = await private.open_view_once(session, callback_data.message, user.id, now)
+    await session.commit()
+    if isinstance(opening, ViewRefused):
+        await query.answer(_REFUSALS[opening])
+        return
+    await query.answer()
+    try:
+        copied = await bot.copy_message(
+            chat_id=opening.viewer_chat_id,
+            from_chat_id=opening.sender_chat_id,
+            message_id=opening.sender_message_id,
+            protect_content=True,
+        )
+    except TelegramRetryAfter:
+        # Telegram asked the bot to wait: the view is not used up, if it can still be had.
+        retry = await private.reopenable(session, opening)
+        await session.commit()
+        await _tell(bot, opening.viewer_chat_id, TRY_AGAIN if retry else UNAVAILABLE, None)
+        return
+    except TelegramAPIError as exc:
+        logger.info("could not open view-once media", extra=exception_summary(exc))
+        await _tell(bot, opening.viewer_chat_id, COULD_NOT_OPEN, None)
+        return
+    await private.opened(session, opening, copied.message_id, now)
+    await session.commit()
+    total = duration(opening.view_seconds)
+    try:
+        # The placeholder loses its button, so it can't be tapped again.
+        await bot.edit_message_text(
+            text=OPENED.format(total=total),
+            chat_id=opening.viewer_chat_id,
+            message_id=opening.placeholder_id,
+        )
+    except TelegramAPIError as exc:
+        logger.info("could not update a view-once placeholder", extra=exception_summary(exc))
 
 
 def _with_dice(text: str, has_dice: bool) -> str:
@@ -229,4 +334,6 @@ def create_router() -> Router:
     router.message.filter(F.chat.type == ChatType.PRIVATE)
     router.message.register(on_private_on, F.text == PRIVATE_ON)
     router.message.register(on_private_off, F.text == PRIVATE_OFF)
+    router.callback_query.filter(F.message.chat.type == ChatType.PRIVATE)
+    router.callback_query.register(on_view, ViewOnceAction.filter())
     return router
