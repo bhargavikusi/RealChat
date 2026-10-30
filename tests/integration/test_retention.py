@@ -231,11 +231,36 @@ async def test_a_run_interrupted_midway_is_retried_within_the_hour(
     seen: list[int] = []
 
     class Watched(ChatRetention):
-        async def run(self, now: datetime) -> int:
+        async def run(self, now: datetime, *, renew_lease: bool = False) -> int:
             seen.append(await redis.ttl(RUN_KEY))
-            return await super().run(now)
+            return await super().run(now, renew_lease=renew_lease)
 
     retention = Watched(redis, session_factory, RuntimeSettings(ttl_seconds=0))
     assert await retention.tick(NOW) == 0
     assert 0 < seen[0] <= 3_600
     assert await redis.ttl(RUN_KEY) > 86_000  # a full day once it succeeded
+
+
+async def test_a_long_run_keeps_its_claim(
+    redis: Redis, session_factory: Sessions, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The key's hour is renewed after every batch, so a run longer than an hour is
+    # never joined by a second one.
+    monkeypatch.setattr(rt, "BATCH_SIZE", 1)
+    alice, bob = await _people(session_factory)
+    conversation = await _conversation(session_factory, alice, bob)
+    for _ in range(3):
+        await _message(session_factory, conversation, alice, 8 * DAY)
+    real = rt.delete_expired_messages
+    seen: list[int] = []
+
+    async def batch(session: AsyncSession, cutoff: datetime, limit: int) -> int:
+        seen.append(await redis.ttl(RUN_KEY))
+        await redis.delete(RUN_KEY)  # as if the hour had just run out
+        return await real(session, cutoff, limit)
+
+    monkeypatch.setattr(rt, "delete_expired_messages", batch)
+    retention = ChatRetention(redis, session_factory, RuntimeSettings(ttl_seconds=0))
+    assert await retention.tick(NOW) == 3
+    # Before every batch after the first, the claim was there again.
+    assert all(0 < ttl <= 3_600 for ttl in seen[1:]) and len(seen) == 4

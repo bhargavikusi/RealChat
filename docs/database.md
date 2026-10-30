@@ -198,5 +198,5 @@ Chat messages are deleted by a daily worker job (`backend/modules/chat/retention
 * Rows in `chat_messages` older than the retention period (admin setting `chat_retention_days`, default 7) are deleted entirely, oldest first, in batches of 1,000, each in its own transaction. Rows locked by the relay at that moment are skipped and deleted on a later run.
 * Messages in a conversation with an open report are kept until the report is closed.
 * `conversations`, `conversation_participants`, `user_blocks`, `reports`, and `admin_audit_log` are not touched by it.
-* A Redis key (`retention:chat_messages:last_run`) makes the job run normally once a day across workers: it is set for an hour when a run starts and for a day once the run succeeds, so a failed or interrupted run is retried within the hour. Only the number of deleted rows is logged.
+* A Redis key (`retention:chat_messages:last_run`) makes the job run normally once a day across workers: it is set for an hour when a run starts, renewed after every batch while the run lasts, and set for a day once the run succeeds, so a failed or interrupted run is retried within the hour. Only the number of deleted rows is logged.
 * Deleting a stored message does not remove it from either user's Telegram chat: this job never calls Telegram.

@@ -55,7 +55,7 @@ async def run_jobs(
     matcher: Matcher, idle_chats: IdleChats, retention: ChatRetention, stop: asyncio.Event
 ) -> None:
     """Run the jobs until `stop` is set. Retention runs in its own loop, so a long
-    cleanup never delays matching or idle chats."""
+    cleanup never holds up matching or idle chats (they share only the database)."""
     cleanup = asyncio.create_task(
         _repeat((("chat retention", retention.tick),), RETENTION_CHECK_SECONDS, stop)
     )

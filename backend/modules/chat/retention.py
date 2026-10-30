@@ -7,8 +7,9 @@ report is closed. Conversations, participants, blocks, reports, and audit record
 never touched.
 
 The job normally runs once a day across all workers. A Redis key marks a run: it is
-set for an hour when a run starts and extended to a day once the run succeeds, so a
-run that fails, or a worker that crashes mid-run, is retried within the hour. It
+set for an hour when a run starts, renewed after every batch while the run lasts, and
+extended to a day once the run succeeds, so a run that fails, or a worker that crashes
+mid-run, is retried within the hour, and a long run is never joined by a second one. It
 deletes in bounded batches, each in its own short transaction, and logs only counts.
 Running it again deletes nothing more than what has expired since. Deleting a stored
 message does not remove it from either user's Telegram chat.
@@ -74,12 +75,16 @@ class ChatRetention:
         )
         if not due:
             return None
-        deleted = await self.run(now)
+        deleted = await self.run(now, renew_lease=True)
         await self._redis.set(RUN_KEY, now.isoformat(), ex=int(RUN_INTERVAL.total_seconds()))
         return deleted
 
-    async def run(self, now: datetime) -> int:
-        """Delete every expired message, batch by batch; returns how many were deleted."""
+    async def run(self, now: datetime, *, renew_lease: bool = False) -> int:
+        """Delete every expired message, batch by batch; returns how many were deleted.
+
+        With `renew_lease`, the run key's hour is renewed after every batch, so it does
+        not lapse while a long run is still going.
+        """
         async with self._sessions() as session:
             days = await self._runtime.get(session, SettingKey.CHAT_RETENTION_DAYS)
             await session.commit()
@@ -92,5 +97,9 @@ class ChatRetention:
             total += deleted
             if deleted < BATCH_SIZE:
                 break
+            if renew_lease:
+                await self._redis.set(
+                    RUN_KEY, now.isoformat(), ex=int(RETRY_INTERVAL.total_seconds())
+                )
         logger.info("deleted expired chat messages", extra={"count": total})
         return total

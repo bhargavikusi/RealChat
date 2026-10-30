@@ -445,7 +445,7 @@ Work happens on short-lived issue branches, such as `feature/12-onboarding`, cre
 * Deleting stored messages does not remove them from users' Telegram chats.
 
 **Why:** Owner decisions. Deleting the whole record keeps the least data: no per-message record of sender, time, or content remains. Conversations and their participants are still kept, as the record of which chats happened. Leaving numbers out of the terms keeps them accurate whatever the setting.
-**Consequence:** Because the job normally runs daily, a message can stay up to a day past the retention period. It runs in its own loop in the worker, so a long cleanup never delays matching. It deletes in batches of 1,000 per transaction, skips messages being written at that moment (they go on the next run), and logs only counts. A failed or interrupted run is retried within the hour.
+**Consequence:** Because the job normally runs daily, a message can stay up to a day past the retention period. It runs in its own loop in the worker, so matching and idle chats never wait for a cleanup to finish; they still share the database, so a very large cleanup can slow them somewhat. It deletes in batches of 1,000 per transaction, skips messages being written at that moment (they go on the next run), and logs only counts. A failed or interrupted run is retried within the hour, and a long run keeps its claim renewed so a second run does not start alongside it.
 
 ## Open
 
