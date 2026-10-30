@@ -134,6 +134,37 @@ Each message relayed between chat partners (D-028). It maps the sender's message
 
 `(sender_user_id, sender_message_id)` is unique and is claimed before sending, so a message delivered to the bot twice is relayed at most once, even if the bot stopped right after sending it. A record is removed if its copy could not be delivered, or was taken back because the chat ended. If linking the record to its copy fails, the copy is taken back but the record stays, with `recipient_message_id` NULL and its content, so a redelivery is still recognized; it is subject to the same retention as other content. The index on `(conversation_id, recipient_message_id)` serves reply lookups. Contact cards, locations, and refused text are never stored (D-042). The content columns (`text`, `edited_text`, `file_id`) are for moderation only and are never written to ordinary logs. Each row is deleted entirely once it is older than the retention period (D-028, D-046; admin setting, default 7 days), unless its conversation has an open report (see `reports`). The index on `created_at` serves that cleanup.
 
+`private_session_id` (bigint, nullable, references `private_sessions.id`) links a message to the Private mode session it was sent in (D-047). It is set when the message is recorded, under the conversation's row lock, which turning Private mode on or off also takes, so a message is never linked to a session that has already ended. A partial index on it serves "the messages of this session".
+
+### `private_sessions`
+
+Periods of Private mode in a conversation (D-031, D-047).
+
+| Column | Type | Notes |
+|---|---|---|
+| `id` | bigint identity | |
+| `conversation_id` | bigint | References `conversations.id`, with `ON DELETE CASCADE`. |
+| `started_by_user_id` | bigint | References `users.id`. |
+| `started_at` | timestamptz | |
+| `ended_at`, `end_reason` | timestamptz, varchar(16), nullable | Set together (constraint). `turned_off`, `chat_ended`, or `time_limit`. |
+| `ended_by_user_id` | bigint, nullable | References `users.id`. The user who turned it off. |
+
+A partial unique index on `conversation_id` where `ended_at IS NULL` allows one active session per conversation. A partial index on `started_at` for active sessions serves the worker, which ends sessions whose chat has ended or that reached the time limit (admin setting, default 24 hours, at most 46), locking each row and skipping rows another worker holds. Ending a session updates only a row whose `ended_at` is still NULL, so it ends, and its messages are queued, once.
+
+### `telegram_deletions`
+
+The queue of messages to delete from users' Telegram chats (D-047). It holds Telegram identifiers only, no content, and is independent of the retention of `chat_messages`.
+
+| Column | Type | Notes |
+|---|---|---|
+| `id` | bigint identity | |
+| `chat_id`, `message_id` | bigint | The private chat (the user's Telegram id) and the message. Unique together. |
+| `not_before` | timestamptz | Not tried before this time: when queued for most messages; 24 hours and 5 minutes after sending for dice, which Telegram refuses to delete earlier. A worker trying an entry pushes it back by one minute, so another worker leaves it alone and an attempt cut short is retried. |
+| `expires_at` | timestamptz | 48 hours after sending, when Telegram stops allowing deletion. Entries past it are removed without being tried. A constraint requires `not_before < expires_at`. |
+| `created_at` | timestamptz | |
+
+Ending a session queues the sender's original and the partner's copy of each of its messages. A message whose copy was still on its way when the session (or the chat) ended is queued when the relay links or withdraws it. Entries are removed once deleted, already gone, refused, or for a user who blocked the bot. Entries Telegram could not be asked about (network errors, or a request to slow down) stay and are retried. The table references no other table, so the integration tests empty it explicitly.
+
 ### `user_blocks`
 
 Blocks between users (D-045). Blocks do not affect random matching; they will stop direct messages and chat requests once those exist.

@@ -291,7 +291,7 @@ Work happens on short-lived issue branches, such as `feature/12-onboarding`, cre
 **Date:** 2026-10-27
 **Decision:**
 
-* While a user is in a conversation, the keyboard under the message box is replaced by chat controls in at most two rows: 👤 Partner profile and 🔒 Private mode, then ⏹ End chat. The main keyboard (D-022) returns when the conversation ends.
+* While a user is in a conversation, the keyboard under the message box is replaced by chat controls in at most two rows: 👤 Partner profile and 🔒 Private mode (🔓 Private mode off while it is on, D-047), then ⏹ End chat. The main keyboard (D-022) returns when the conversation ends.
 * The fourth slot is unassigned (O-010).
 * Until O-010 is decided, 🚫 Block and ⚠️ Report are inline buttons on the partner's profile card and on the "chat ended" message.
 
@@ -308,6 +308,7 @@ Work happens on short-lived issue branches, such as `feature/12-onboarding`, cre
 * It is called "Private mode". It is not described as a Telegram Secret Chat, as end-to-end encrypted, or as screenshot-proof.
 
 **Why:** Owner request. The naming and storage rules keep the description honest (requirements §10) and stop the mode from becoming a way to avoid moderation.
+**Details:** D-047.
 
 ### D-032 — Search time limit
 
@@ -446,6 +447,24 @@ Work happens on short-lived issue branches, such as `feature/12-onboarding`, cre
 
 **Why:** Owner decisions. Deleting the whole record keeps the least data: no per-message record of sender, time, or content remains. Conversations and their participants are still kept, as the record of which chats happened. Leaving numbers out of the terms keeps them accurate whatever the setting.
 **Consequence:** Because the job normally runs daily, a message can stay up to a day past the retention period. It runs in its own loop in the worker, so matching and idle chats never wait for a cleanup to finish; they still share the database, so a very large cleanup can slow them somewhat. It deletes in batches of 1,000 per transaction, skips messages being written at that moment (they go on the next run), and logs only counts. A failed or interrupted run is retried within the hour, and a long run keeps its claim renewed so a second run does not start alongside it.
+
+### D-047 — How Private mode works
+
+**Date:** 2026-10-30
+**Decision:** (details of D-031)
+
+* 🔒 Private mode is on the chat keyboard's first row, next to 👤 Partner profile; while it is on, the button reads 🔓 Private mode off. Either user turns it on or off, and both are told, with the note required by D-031.
+* Every message sent while it is on is relayed normally, including dice and games. When it is turned off, when the chat ends in any way, or when it reaches its time limit, both copies of each of those messages (the sender's original and the partner's copy) are deleted from Telegram, as far as Telegram allows.
+* The time limit is an admin runtime setting: 24 hours by default, 1–46 hours. When it is reached, both users are told and can turn Private mode on again.
+* Telegram lets bots delete messages for 48 hours, and does not let them delete a dice message in a private chat until it is more than 24 hours old (Bot API documentation, confirmed by a test on the development bot on 2026-10-30). Dice and games are therefore deleted automatically once they are past 24 hours, and users are told this when Private mode ends.
+* Deletions are queued in the database and sent by the worker, up to 100 per chat per call. An entry is removed when the message is deleted, is already gone, can't be deleted, or passes the 48-hour limit. Only counts are logged.
+* Messages refused under the chat rules (D-042), and the bot's own notices, are not deleted.
+* The note says screenshots, screen recording, saving, and forwarding are blocked in Telegram's own apps (all relayed messages are protected content, D-036), and that nothing can stop someone photographing the screen with another device.
+* View-once media (photos, videos, and voice messages deleted shortly after the partner opens them: automatic in Private mode, optional in normal chats) is planned as separate work. The Bot API has no view-once option and does not tell bots when a message is viewed, so it would use a tap-to-view button.
+* Wording and layout are provisional until the design pass.
+
+**Why:** Owner decisions. Dice stay relayed normally rather than refused or changed, and are removed as soon as Telegram allows.
+**Consequence:** Dice sent in Private mode stay visible for about a day after it ends. Deletion is not instant: it usually takes a few seconds after Private mode ends.
 
 ## Open
 

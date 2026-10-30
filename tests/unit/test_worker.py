@@ -2,7 +2,6 @@
 
 import asyncio
 from datetime import datetime
-from typing import Any, cast
 
 import pytest
 
@@ -34,7 +33,11 @@ async def test_a_long_cleanup_does_not_delay_matching(monkeypatch: pytest.Monkey
     matcher, idle, retention = Ticks(), Ticks(), StuckRetention()
     stop = asyncio.Event()
     running = asyncio.create_task(
-        worker.run_jobs(cast(Any, matcher), cast(Any, idle), cast(Any, retention), stop)
+        worker.run_jobs(
+            (("matcher", matcher.tick), ("idle chats", idle.tick)),
+            (("chat retention", retention.tick, 60.0),),
+            stop,
+        )
     )
     await asyncio.wait_for(retention.started.wait(), timeout=1)
     before = matcher.count

@@ -27,6 +27,7 @@ class SettingKey(StrEnum):
     CHAT_IDLE_GRACE_SECONDS = "chat_idle_grace_seconds"
     CHAT_RETENTION_DAYS = "chat_retention_days"
     REPORTS_PER_DAY = "reports_per_day"
+    PRIVATE_MODE_HOURS = "private_mode_hours"
 
 
 @dataclass(frozen=True)
@@ -94,6 +95,15 @@ SPECS: dict[SettingKey, SettingSpec] = {
             default=10,
             minimum=1,
             maximum=100,
+        ),
+        SettingSpec(
+            SettingKey.PRIVATE_MODE_HOURS,
+            "Private mode time limit",
+            "hours",
+            default=24,
+            minimum=1,
+            # Telegram lets bots delete messages for 48 hours; this leaves time to retry.
+            maximum=46,
         ),
     )
 }

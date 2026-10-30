@@ -21,6 +21,7 @@ def test_approved_defaults() -> None:
         SettingKey.CHAT_IDLE_GRACE_SECONDS: 60,
         SettingKey.CHAT_RETENTION_DAYS: 7,
         SettingKey.REPORTS_PER_DAY: 10,
+        SettingKey.PRIVATE_MODE_HOURS: 24,
     }
 
 
