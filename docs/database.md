@@ -149,7 +149,7 @@ Periods of Private mode in a conversation (D-031, D-047).
 | `ended_at`, `end_reason` | timestamptz, varchar(16), nullable | Set together (constraint). `turned_off`, `chat_ended`, or `time_limit`. |
 | `ended_by_user_id` | bigint, nullable | References `users.id`. The user who turned it off. |
 
-A partial unique index on `conversation_id` where `ended_at IS NULL` allows one active session per conversation. A partial index on `started_at` for active sessions serves the worker, which ends sessions whose chat has ended or that reached the time limit (admin setting, default 24 hours, at most 46), locking each row and skipping rows another worker holds. Ending a session updates only a row whose `ended_at` is still NULL, so it ends, and its messages are queued, once.
+A partial unique index on `conversation_id` where `ended_at IS NULL` allows one active session per conversation. A partial index on `started_at` for active sessions serves the worker, which ends sessions whose chat has ended or that reached the time limit (admin setting, default 24 hours, at most 46). It locks the conversation row before deciding, in the same order as turning Private mode off, recording a message, linking its copy, and ending the chat; so a message being recorded or linked is either seen and queued, or sees the session ended and queues itself, and the reason is never a stale `time_limit` for a chat that just ended. Ending a session updates only a row whose `ended_at` is still NULL, so it ends, and its messages are queued, once.
 
 ### `telegram_deletions`
 
@@ -160,10 +160,10 @@ The queue of messages to delete from users' Telegram chats (D-047). It holds Tel
 | `id` | bigint identity | |
 | `chat_id`, `message_id` | bigint | The private chat (the user's Telegram id) and the message. Unique together. |
 | `not_before` | timestamptz | Not tried before this time: when queued for most messages; 24 hours and 5 minutes after sending for dice, which Telegram refuses to delete earlier. A worker trying an entry pushes it back by one minute, so another worker leaves it alone and an attempt cut short is retried. |
-| `expires_at` | timestamptz | 48 hours after sending, when Telegram stops allowing deletion. Entries past it are removed without being tried. A constraint requires `not_before < expires_at`. |
+| `expires_at` | timestamptz | 48 hours after the bot recorded the message (`chat_messages.created_at`), approximating when Telegram stops allowing deletion. The bot records a message moments after the user sends it, so this can be slightly later than Telegram's own limit; a late attempt is refused by Telegram and the entry removed. Entries past it are removed without being tried. A constraint requires `not_before < expires_at`. |
 | `created_at` | timestamptz | |
 
-Ending a session queues the sender's original and the partner's copy of each of its messages. A message whose copy was still on its way when the session (or the chat) ended is queued when the relay links or withdraws it. Entries are removed once deleted, already gone, refused, or for a user who blocked the bot. Entries Telegram could not be asked about (network errors, or a request to slow down) stay and are retried. The table references no other table, so the integration tests empty it explicitly.
+Ending a session queues the sender's original and the partner's copy of each of its messages. A message whose copy was still on its way when the session (or the chat) ended is queued when the relay links it, or, if the chat ended, both its original and its copy are queued as the relay withdraws the copy, so a failed withdrawal is retried. Entries are removed once deleted, already gone, refused, or for a user who blocked the bot. Entries Telegram could not be asked about stay and are retried: after a network error once the one-minute lease runs out, and after a request to slow down once the time Telegram asked for has passed. The table references no other table, so the integration tests empty it explicitly.
 
 ### `user_blocks`
 

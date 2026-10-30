@@ -6,11 +6,11 @@ from itertools import count
 from typing import Any
 
 import pytest
-from aiogram.exceptions import TelegramBadRequest, TelegramForbiddenError, TelegramRetryAfter
+from aiogram.exceptions import TelegramForbiddenError, TelegramRetryAfter
 from aiogram.methods import DeleteMessages
 from aiogram.types import Dice
 from redis.asyncio import Redis
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from apps.bot import private as pv
@@ -19,6 +19,7 @@ from backend.config.settings import BotSettings
 from backend.modules.admin.models import AppSetting
 from backend.modules.admin.settings import RuntimeSettings, SettingKey
 from backend.modules.chat import private
+from backend.modules.chat import service as chat_service
 from backend.modules.chat.models import ChatMessage, PrivateSession, TelegramDeletion
 from backend.modules.chat.private import PrivateModeJob
 from tests.support.chat import USER_ID, Chat
@@ -254,10 +255,7 @@ async def test_a_message_that_cant_be_deleted_does_not_stop_the_rest(
     await _queue_three(world)
     first = (await stored(session_factory))[0]
     gone = (USER_ID, first.sender_message_id)
-    world.worker.bulk_delete_error = TelegramBadRequest(
-        method=DeleteMessages(chat_id=USER_ID, message_ids=[1]), message="Bad Request"
-    )
-    world.worker.undeletable.add(gone)
+    world.worker.undeletable.add(gone)  # fails the batch call, then its own call
     assert await deletions.tick(datetime.now(UTC)) == 6  # all settled
     assert set(world.worker.deleted) == await both_copies(world, await stored(session_factory)) - {
         gone
@@ -281,14 +279,15 @@ async def test_a_request_to_slow_down_keeps_them_queued(
 ) -> None:
     await _queue_three(world)
     world.worker.bulk_delete_error = TelegramRetryAfter(
-        method=DeleteMessages(chat_id=USER_ID, message_ids=[1]), message="Too Many", retry_after=3
+        method=DeleteMessages(chat_id=USER_ID, message_ids=[1]), message="Too Many", retry_after=300
     )
     now = datetime.now(UTC)
     assert await deletions.tick(now) == 0
     assert len(await queued(session_factory)) == 6
     world.worker.bulk_delete_error = None
-    assert await deletions.tick(now) == 0  # held by the attempt's lease
-    assert await deletions.tick(now + timedelta(minutes=2)) == 6
+    # They wait as long as Telegram asked (5 minutes), not just the one-minute lease.
+    assert await deletions.tick(now + timedelta(minutes=2)) == 0
+    assert await deletions.tick(now + timedelta(minutes=6)) == 6
 
 
 # --- Messages in flight ----------------------------------------------------------------
@@ -323,10 +322,40 @@ async def test_a_message_in_flight_when_the_chat_ends_is_deleted_too(
     await world.alice.dispatcher.feed_update(
         world.alice.bot, content_update(next(Chat._ids), USER_ID, message_id, text="late")
     )
+    (copy,) = world.alice.session.copies()
+    copy_id = 10_000 + world.alice.session.requests.index(copy) + 1
     await job.tick(datetime.now(UTC))
     await deletions.tick(datetime.now(UTC))
-    # The copy was withdrawn by the relay; the sender's original is deleted from the queue.
-    assert (USER_ID, message_id) in world.worker.deleted
+    # The relay tried to withdraw the copy itself; both are also queued, so the copy is
+    # retried even if that withdrawal failed.
+    assert {(USER_ID, message_id), (BOB_ID, copy_id)} <= set(world.worker.deleted)
+
+
+async def test_ending_at_the_time_limit_waits_for_a_copy_being_linked(
+    world: World, session_factory: Sessions, job: PrivateModeJob
+) -> None:
+    await world.alice.send(PRIVATE_ON)
+    alice = await world.user_id(USER_ID)
+    async with session_factory() as session:
+        active = await chat_service.active_chat(session, alice)
+        assert active is not None
+        claim = await chat_service.claim_message(
+            session, active, alice, next(_message_ids), "text", "linking", None
+        )
+        assert claim is not None
+        await session.execute(
+            update(PrivateSession).values(started_at=datetime.now(UTC) - timedelta(hours=25))
+        )
+        await session.commit()
+    async with session_factory() as linking:
+        # The copy is being linked (not yet committed) as the time limit is reached.
+        assert await chat_service.complete_message(linking, claim, 4_321)
+        task = asyncio.create_task(job.tick(datetime.now(UTC)))
+        await wait_until_blocked(session_factory)
+        await linking.commit()
+        assert await task == 1
+    places = {(d.chat_id, d.message_id) for d in await queued(session_factory)}
+    assert (BOB_ID, 4_321) in places  # the copy was seen and queued
 
 
 # --- Honest wording --------------------------------------------------------------------

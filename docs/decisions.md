@@ -459,7 +459,7 @@ Work happens on short-lived issue branches, such as `feature/12-onboarding`, cre
 * Telegram lets bots delete messages for 48 hours, and does not let them delete a dice message in a private chat until it is more than 24 hours old (Bot API documentation, confirmed by a test on the development bot on 2026-10-30). Dice and games are therefore deleted automatically once they are past 24 hours, and users are told this when Private mode ends.
 * Deletions are queued in the database and sent by the worker, up to 100 per chat per call. An entry is removed when the message is deleted, is already gone, can't be deleted, or passes the 48-hour limit. Only counts are logged.
 * Messages refused under the chat rules (D-042), and the bot's own notices, are not deleted.
-* The note says screenshots, screen recording, saving, and forwarding are blocked in Telegram's own apps (all relayed messages are protected content, D-036), and that nothing can stop someone photographing the screen with another device.
+* The note says screenshots, screen recording, saving, and forwarding are blocked in Telegram's own apps (all relayed messages are protected content, D-036), and that nothing can stop someone photographing the screen with another device. This wording is provisional: the owner will provide reference wording during the design pass, to be checked against Telegram's documentation as D-036 requires.
 * View-once media (photos, videos, and voice messages deleted shortly after the partner opens them: automatic in Private mode, optional in normal chats) is planned as separate work. The Bot API has no view-once option and does not tell bots when a message is viewed, so it would use a tap-to-view button.
 * Wording and layout are provisional until the design pass.
 

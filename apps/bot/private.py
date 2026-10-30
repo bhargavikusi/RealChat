@@ -15,7 +15,7 @@ As elsewhere, every database transaction is ended before any Telegram call.
 
 import logging
 from collections import defaultdict
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 from aiogram import Bot, F, Router
 from aiogram.enums import ChatType
@@ -174,15 +174,21 @@ class TelegramDeletions:
         for entry in due:
             by_chat[entry.chat_id].append(entry)
         settled: list[int] = []
+        wait: timedelta | None = None
         try:
             for chat_id, entries in by_chat.items():
                 for start in range(0, len(entries), PER_CALL):
                     settled += await self._delete(chat_id, entries[start : start + PER_CALL])
-        except TelegramRetryAfter:
-            # Asked to slow down: what was not tried stays queued for a later tick.
+        except TelegramRetryAfter as exc:
+            # Asked to slow down: the rest waits as long as Telegram asked.
+            wait = timedelta(seconds=exc.retry_after)
             logger.info("deletions paused at Telegram's request")
         async with self._sessions() as session:
             await private.remove(session, settled)
+            if wait is not None:
+                done = set(settled)
+                rest = [entry.id for entry in due if entry.id not in done]
+                await private.defer(session, rest, now + max(wait, private.CLAIM_LEASE))
             await session.commit()
         if settled:
             logger.info("deleted queued messages", extra={"count": len(settled)})

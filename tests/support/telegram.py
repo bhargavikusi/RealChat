@@ -109,7 +109,13 @@ class RecordingSession(BaseSession):
         if isinstance(method, DeleteMessages):
             if self.bulk_delete_error is not None:
                 raise self.bulk_delete_error
-            self.deleted += [(int(method.chat_id), m) for m in method.message_ids]
+            targets = [(int(method.chat_id), m) for m in method.message_ids]
+            if self.undeletable & set(targets):
+                # As for a single message: a refused one fails the call.
+                raise TelegramBadRequest(
+                    method=method, message="Bad Request: message can't be deleted for everyone"
+                )
+            self.deleted += targets
             return True  # type: ignore[return-value]
         if isinstance(method, DeleteMessage):
             target = (int(method.chat_id), method.message_id)

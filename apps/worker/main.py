@@ -6,10 +6,10 @@ It uses the bot's configuration, because it sends Telegram messages (match
 announcements, ended searches, and idle-chat warnings and endings). Only one matcher
 runs at a time, even with several workers, thanks to a Redis lock; idle chats are
 locked row by row in PostgreSQL, so each is warned and ended once (D-027, D-032,
-D-039). Private mode sessions are ended when their chat ends or their time limit is
-reached (D-047). Two jobs that call out or can run long have loops of their own, so they
-never hold up matching: deleting Private mode messages from Telegram, and deleting
-expired chat messages about once a day (D-046).
+D-039). Jobs that call Telegram or can run long have loops of their own, so they never
+hold up matching: ending Private mode sessions whose chat ended or that reached the
+time limit, and telling both users (D-047); deleting Private mode messages from
+Telegram; and deleting expired chat messages about once a day (D-046).
 """
 
 import asyncio
@@ -40,6 +40,7 @@ TICK_SECONDS = 1.0
 # The retention job does its work once a day; this is only how often it checks.
 RETENTION_CHECK_SECONDS = 60.0
 DELETIONS_SECONDS = 1.0
+PRIVATE_MODE_SECONDS = 1.0
 
 Job = Callable[[datetime], Awaitable[object]]
 
@@ -103,12 +104,9 @@ async def run() -> None:
     try:
         logger.info("worker starting")
         await run_jobs(
+            (("matcher", matcher.tick), ("idle chats", idle_chats.tick)),
             (
-                ("matcher", matcher.tick),
-                ("idle chats", idle_chats.tick),
-                ("private mode", private_mode.tick),
-            ),
-            (
+                ("private mode", private_mode.tick, PRIVATE_MODE_SECONDS),
                 ("private mode deletions", deletions.tick, DELETIONS_SECONDS),
                 ("chat retention", retention.tick, RETENTION_CHECK_SECONDS),
             ),

@@ -208,11 +208,12 @@ async def session_ended(session: AsyncSession, private_id: int) -> bool:
 
 async def sessions_to_end(
     session: AsyncSession, now: datetime, limit_after: timedelta, batch: int
-) -> list[tuple[int, str]]:
-    """Active sessions to end now, with the reason: their chat has ended, or they reached
-    the time limit. Their rows are locked, skipping any another worker is handling."""
+) -> list[tuple[int, int]]:
+    """Active sessions that look due to end (their chat has ended, or they reached the
+    time limit), as (session id, conversation id). Nothing is locked: `end_if_due`
+    decides under the conversation lock."""
     rows = await session.execute(
-        select(PrivateSession.id, Conversation.ended_at)
+        select(PrivateSession.id, PrivateSession.conversation_id)
         .join(Conversation, Conversation.id == PrivateSession.conversation_id)
         .where(
             PrivateSession.ended_at.is_(None),
@@ -223,12 +224,45 @@ async def sessions_to_end(
         )
         .order_by(PrivateSession.started_at)
         .limit(batch)
-        .with_for_update(of=PrivateSession, skip_locked=True)
     )
-    return [
-        (private_id, "chat_ended" if ended_at is not None else "time_limit")
-        for private_id, ended_at in rows
-    ]
+    return [(int(private_id), int(conversation_id)) for private_id, conversation_id in rows]
+
+
+async def end_if_due(
+    session: AsyncSession,
+    private_id: int,
+    conversation_id: int,
+    now: datetime,
+    limit_after: timedelta,
+) -> SessionEnded | None:
+    """End a session if its chat has ended or it reached the time limit.
+
+    The conversation row is locked first, as turning Private mode off, recording a
+    message, linking a copy, and ending the chat all do. So a message being recorded or
+    linked is either seen here and queued, or sees the session ended and queues itself;
+    and a chat that is ending is waited for, so the reason is never a stale "time_limit".
+    """
+    chat_ended_at = (
+        await session.execute(
+            select(Conversation.ended_at)
+            .where(Conversation.id == conversation_id)
+            .with_for_update()
+        )
+    ).scalar_one()
+    started_at = await session.scalar(
+        select(PrivateSession.started_at).where(
+            PrivateSession.id == private_id, PrivateSession.ended_at.is_(None)
+        )
+    )
+    if started_at is None:
+        return None  # ended meanwhile
+    if chat_ended_at is not None:
+        reason = "chat_ended"
+    elif started_at <= now - limit_after:
+        reason = "time_limit"
+    else:
+        return None
+    return await end_session(session, private_id, now, reason)
 
 
 # --- The deletion queue ----------------------------------------------------------------
@@ -276,6 +310,21 @@ async def claim_due(session: AsyncSession, now: datetime, limit: int) -> list[Du
     return [Due(int(i), int(c), int(m)) for i, c, m in rows]
 
 
+async def defer(session: AsyncSession, ids: list[int], until: datetime) -> None:
+    """Hold entries back until `until` (but never past their deadline), e.g. when
+    Telegram asks the bot to slow down."""
+    if ids:
+        await session.execute(
+            update(TelegramDeletion)
+            .where(TelegramDeletion.id.in_(ids))
+            .values(
+                not_before=func.least(
+                    literal(until), TelegramDeletion.expires_at - timedelta(seconds=1)
+                )
+            )
+        )
+
+
 async def remove(session: AsyncSession, ids: list[int]) -> None:
     if ids:
         await session.execute(delete(TelegramDeletion).where(TelegramDeletion.id.in_(ids)))
@@ -294,7 +343,8 @@ class PrivateNotifier(Protocol):
 
 class PrivateModeJob:
     """Ends Private mode when its chat has ended or its time limit is reached. Runs in
-    the worker, once per tick; the deletions it queues are sent by the bot layer."""
+    the worker, in a loop of its own (its notices call Telegram); the deletions it
+    queues are sent by the bot layer."""
 
     def __init__(
         self,
@@ -309,15 +359,19 @@ class PrivateModeJob:
     async def tick(self, now: datetime) -> int:
         """End the sessions that are due; returns how many ended."""
         async with self._sessions() as session:
-            hours = await self._runtime.get(session, SettingKey.PRIVATE_MODE_HOURS)
-            ended = [
-                done
-                for private_id, reason in await sessions_to_end(
-                    session, now, timedelta(hours=hours), BATCH_SIZE
-                )
-                if (done := await end_session(session, private_id, now, reason)) is not None
-            ]
+            limit_after = timedelta(
+                hours=await self._runtime.get(session, SettingKey.PRIVATE_MODE_HOURS)
+            )
+            candidates = await sessions_to_end(session, now, limit_after, BATCH_SIZE)
             await session.commit()
+        ended = []
+        for private_id, conversation_id in candidates:
+            # One short transaction each, so no conversation stays locked for long.
+            async with self._sessions() as session:
+                done = await end_if_due(session, private_id, conversation_id, now, limit_after)
+                await session.commit()
+            if done is not None:
+                ended.append(done)
         for done in ended:
             try:
                 await self._notifier.private_ended(done)

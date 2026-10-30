@@ -329,7 +329,12 @@ async def complete_message(session: AsyncSession, claim: Claim, recipient_messag
     now = datetime.now(UTC)
     if not await _conversation_open(session, claim.conversation_id):
         if claim.private_session_id is not None:
-            await private.queue_deletions(session, now, this)  # the sender's original
+            # Both copies are queued: the caller's withdrawal of the copy is best effort,
+            # and the queue retries it.
+            await session.execute(
+                update(ChatMessage).where(this).values(recipient_message_id=recipient_message_id)
+            )
+            await private.queue_deletions(session, now, this)
         await session.execute(delete(ChatMessage).where(this))
         return False
     await session.execute(
