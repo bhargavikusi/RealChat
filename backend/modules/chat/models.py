@@ -104,9 +104,9 @@ class ChatMessage(Base):
     """A message relayed between chat partners, kept for moderation (D-028).
 
     `text` holds the original text or caption and is never overwritten; `edited_text`
-    holds the latest edit (D-038, D-043). Content (`text`, `edited_text`, `file_id`) is
-    deleted after the retention period; the row itself maps the sender's message to the
-    partner's copy, so replies and edits can be mirrored.
+    holds the latest edit (D-038, D-043). The row maps the sender's message to the
+    partner's copy, so replies and edits can be mirrored, and the whole row is deleted
+    after the retention period (D-046), unless its conversation has an open report.
     """
 
     __tablename__ = "chat_messages"
@@ -117,6 +117,8 @@ class ChatMessage(Base):
         UniqueConstraint("sender_user_id", "sender_message_id"),
         # Serves "the message this reply points to" and "the copy of this message".
         Index("ix_chat_messages_conversation_recipient", "conversation_id", "recipient_message_id"),
+        # Serves the retention cleanup, which deletes the oldest messages first.
+        Index("ix_chat_messages_created_at", "created_at"),
     )
 
     id: Mapped[int] = mapped_column(BigInteger, Identity(), primary_key=True)
