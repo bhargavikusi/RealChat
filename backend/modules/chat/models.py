@@ -161,10 +161,11 @@ class ChatMessage(Base):
     )
     # View-once media (D-048): the partner got a tap-to-view placeholder, whose id is
     # `recipient_message_id`. `viewed_at` is when it was opened (once), and
-    # `viewed_message_id` the copy then sent to the partner. `media_seconds` is the
-    # length of a video or voice message, added to the view timer.
+    # `viewed_message_id` the copy then sent to the partner. `view_seconds` is how long
+    # it can be seen once opened: the view timer when it was sent, plus the length of a
+    # video or voice message. It is fixed then, so the placeholder's promise holds.
     view_once: Mapped[bool] = mapped_column(Boolean, server_default="false")
-    media_seconds: Mapped[int | None] = mapped_column(Integer)
+    view_seconds: Mapped[int | None] = mapped_column(Integer)
     viewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     viewed_message_id: Mapped[int | None] = mapped_column(BigInteger)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

@@ -39,7 +39,6 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from apps.bot.chat import duration
 from apps.bot.keyboards import PRIVATE_OFF, PRIVATE_ON, chat_keyboard, main_keyboard
 from backend.core.logging import exception_summary
-from backend.modules.admin.settings import RuntimeSettings, SettingKey
 from backend.modules.chat import private
 from backend.modules.chat import service as chat
 from backend.modules.chat.private import Due, SessionEnded, ViewRefused
@@ -94,6 +93,7 @@ ALREADY_VIEWED = "This has already been opened."
 UNAVAILABLE = "This is no longer available."
 NOT_YOURS = "This button isn't available."
 COULD_NOT_OPEN = "This couldn't be opened. The sender may have deleted it."
+TRY_AGAIN = "Telegram is busy right now. Please tap 👁 View again in a moment."
 
 
 def _length(seconds: int) -> str:
@@ -102,12 +102,15 @@ def _length(seconds: int) -> str:
 
 
 def view_once_placeholder(
-    kind: str, media_seconds: int | None, view_for: int, row_id: int
+    kind: str, media_seconds: int | None, view_seconds: int, row_id: int
 ) -> tuple[str, InlineKeyboardMarkup]:
-    """The tap-to-view message sent instead of view-once media, and its button."""
+    """The tap-to-view message sent instead of view-once media, and its button.
+
+    `view_seconds` is the stored viewing time, so the promise matches the deletion.
+    """
     length = f" ({_length(media_seconds)})" if media_seconds else ""
     text = PLACEHOLDER.format(
-        label=_MEDIA_LABELS[kind], length=length, total=duration(view_for + (media_seconds or 0))
+        label=_MEDIA_LABELS[kind], length=length, total=duration(view_seconds)
     )
     button = InlineKeyboardButton(
         text=VIEW_BUTTON, callback_data=ViewOnceAction(message=row_id).pack()
@@ -123,18 +126,13 @@ _REFUSALS = {
 
 
 async def on_view(
-    query: CallbackQuery,
-    bot: Bot,
-    callback_data: ViewOnceAction,
-    session: AsyncSession,
-    runtime_settings: RuntimeSettings,
+    query: CallbackQuery, bot: Bot, callback_data: ViewOnceAction, session: AsyncSession
 ) -> None:
-    """👁 View: send the media once, and delete it, the placeholder, and the sender's
-    original once the viewing time has passed."""
+    """👁 View: send the media once. Opening queued the placeholder and the sender's
+    original for the end of the viewing time; the copy is queued once it exists."""
     user = await users.get_or_create_user(session, query.from_user.id)
     now = datetime.now(UTC)
     opening = await private.open_view_once(session, callback_data.message, user.id, now)
-    view_for = await runtime_settings.get(session, SettingKey.VIEW_ONCE_SECONDS)
     await session.commit()
     if isinstance(opening, ViewRefused):
         await query.answer(_REFUSALS[opening])
@@ -147,16 +145,19 @@ async def on_view(
             message_id=opening.sender_message_id,
             protect_content=True,
         )
-        copy_id: int | None = copied.message_id
+    except TelegramRetryAfter:
+        # Telegram asked the bot to wait: the view is not used up, if it can still be had.
+        retry = await private.reopenable(session, opening)
+        await session.commit()
+        await _tell(bot, opening.viewer_chat_id, TRY_AGAIN if retry else UNAVAILABLE, None)
+        return
     except TelegramAPIError as exc:
         logger.info("could not open view-once media", extra=exception_summary(exc))
-        copy_id = None
-    await private.opened(session, opening, copy_id, now, timedelta(seconds=view_for))
-    await session.commit()
-    if copy_id is None:
         await _tell(bot, opening.viewer_chat_id, COULD_NOT_OPEN, None)
         return
-    total = duration(view_for + opening.media_seconds)
+    await private.opened(session, opening, copied.message_id, now)
+    await session.commit()
+    total = duration(opening.view_seconds)
     try:
         # The placeholder loses its button, so it can't be tapped again.
         await bot.edit_message_text(

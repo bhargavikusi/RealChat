@@ -1,6 +1,6 @@
 """add view-once media
 
-View-once fields on chat messages: the flag, the media length, and when and as which
+View-once fields on chat messages: the flag, the viewing time, and when and as which
 message it was opened (D-048).
 
 Revision ID: 2ee64b2df2f8
@@ -26,7 +26,7 @@ def upgrade() -> None:
         "chat_messages",
         sa.Column("view_once", sa.Boolean(), server_default="false", nullable=False),
     )
-    op.add_column("chat_messages", sa.Column("media_seconds", sa.Integer(), nullable=True))
+    op.add_column("chat_messages", sa.Column("view_seconds", sa.Integer(), nullable=True))
     op.add_column(
         "chat_messages", sa.Column("viewed_at", sa.DateTime(timezone=True), nullable=True)
     )
@@ -46,5 +46,5 @@ def downgrade() -> None:
     op.drop_constraint(op.f("ck_chat_messages_viewed_once"), "chat_messages", type_="check")
     op.drop_column("chat_messages", "viewed_message_id")
     op.drop_column("chat_messages", "viewed_at")
-    op.drop_column("chat_messages", "media_seconds")
+    op.drop_column("chat_messages", "view_seconds")
     op.drop_column("chat_messages", "view_once")

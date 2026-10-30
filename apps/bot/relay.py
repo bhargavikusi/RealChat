@@ -48,6 +48,7 @@ from backend.core.logging import exception_summary
 from backend.modules.admin.settings import RuntimeSettings, SettingKey
 from backend.modules.chat import service as chat
 from backend.modules.chat.content import Blocked, blocked_text
+from backend.modules.chat.models import VIEW_ONCE_KINDS
 from backend.modules.moderation import service as moderation
 from backend.modules.users import service as users
 
@@ -202,6 +203,14 @@ async def on_message(
         target = await chat.reply_target(
             session, active, ctx.user.id, message.reply_to_message.message_id
         )
+    kind = _KINDS.get(ContentType(message.content_type), "other")
+    # If this is view-once media, how long it can be seen once opened, fixed now (D-048).
+    view_seconds = (
+        await runtime_settings.get(session, SettingKey.VIEW_ONCE_SECONDS)
+        + (_media_seconds(message) or 0)
+        if kind in VIEW_ONCE_KINDS
+        else None
+    )
     # Recorded before the copy is sent: a redelivered update finds this row and stops,
     # so a message is relayed at most once even if the bot stops right after sending.
     claim = await chat.claim_message(
@@ -209,17 +218,12 @@ async def on_message(
         active,
         ctx.user.id,
         message.message_id,
-        _KINDS.get(ContentType(message.content_type), "other"),
+        kind,
         message.text or message.caption,
         _file_id(message),
-        _media_seconds(message),
+        view_seconds,
     )
     partner = await users.get_user(session, active.partner_id)
-    view_for = (
-        await runtime_settings.get(session, SettingKey.VIEW_ONCE_SECONDS)
-        if claim is not None and claim.view_once
-        else 0
-    )
     await session.commit()
     if claim is None:
         return  # already relayed, or the chat ended meanwhile
@@ -233,10 +237,7 @@ async def on_message(
         if claim.view_once:
             # Private mode media is sent as a tap-to-view placeholder (D-048).
             text, button = view_once_placeholder(
-                _KINDS[ContentType(message.content_type)],
-                _media_seconds(message),
-                view_for,
-                claim.row_id,
+                kind, _media_seconds(message), view_seconds or 0, claim.row_id
             )
             copied: MessageId | Message = await bot.send_message(
                 partner.telegram_user_id,
@@ -315,12 +316,15 @@ async def on_edit(
         await message.answer(EDIT_BLOCKED.format(reason=BLOCKED[refusal]))
         return
     chat.record_edit(relayed, new_text, datetime.now(UTC))
-    if relayed.view_once:
-        # The partner has a placeholder, not the media; opening it shows the edit.
+    # View-once media: the partner has a placeholder, and the edit shows when it is
+    # opened; once opened, it goes to the opened copy (D-048).
+    recipient_message_id = (
+        relayed.viewed_message_id if relayed.view_once else relayed.recipient_message_id
+    )
+    if recipient_message_id is None:
         await session.commit()
         return
     partner = await users.get_user(session, active.partner_id)
-    recipient_message_id = relayed.recipient_message_id
     await session.commit()
     try:
         if message.text is not None:

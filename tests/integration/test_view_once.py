@@ -6,8 +6,10 @@ from itertools import count
 from typing import Any
 
 import pytest
+from aiogram.exceptions import TelegramRetryAfter
 from aiogram.methods import CopyMessage, EditMessageCaption, EditMessageText, SendMessage
-from aiogram.types import Document, PhotoSize, Video, Voice
+from aiogram.types import Chat as TelegramChat
+from aiogram.types import Document, Message, PhotoSize, Video, VideoNote, Voice
 from redis.asyncio import Redis
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -278,3 +280,122 @@ async def test_a_tap_while_private_mode_is_turned_off_waits_and_is_refused(
         await turning_off.commit()
         assert await tap == pv.UNAVAILABLE
     assert opened_copies(world) == []
+
+
+# --- Review follow-ups -----------------------------------------------------------------
+
+
+async def test_opened_media_keeps_its_timer_when_private_mode_ends(
+    world: World, session_factory: Sessions, deletions: pv.TelegramDeletions
+) -> None:
+    await world.alice.send(PRIVATE_ON)
+    sent = await send(world.alice, photo=PHOTO)
+    (row,) = await stored(session_factory)
+    before = datetime.now(UTC)
+    await open_it(world, row.id)
+    (copy,) = opened_copies(world)
+    copy_id = 10_000 + world.bob.session.requests.index(copy) + 1
+    await world.alice.send(PRIVATE_OFF)
+    assert await deletions.tick(datetime.now(UTC)) == 0  # not cut short
+    assert await deletions.tick(before + timedelta(seconds=30)) == 3
+    assert {(BOB_ID, copy_id), (BOB_ID, row.recipient_message_id), (USER_ID, sent)} == set(
+        world.worker.deleted
+    )
+
+
+async def test_opening_alone_queues_the_original_and_placeholder(
+    world: World, session_factory: Sessions
+) -> None:
+    # Even if the bot stops before sending the copy, these two are still deleted.
+    await world.alice.send(PRIVATE_ON)
+    sent = await send(world.alice, photo=PHOTO)
+    (row,) = await stored(session_factory)
+    bob = await world.user_id(BOB_ID)
+    async with session_factory() as session:
+        opening = await private.open_view_once(session, row.id, bob, datetime.now(UTC))
+        assert not isinstance(opening, private.ViewRefused)
+        await session.commit()
+    assert set(await queued(session_factory)) == {
+        (BOB_ID, row.recipient_message_id),
+        (USER_ID, sent),
+    }
+
+
+async def test_a_busy_telegram_does_not_use_up_the_view(
+    world: World, session_factory: Sessions
+) -> None:
+    await world.alice.send(PRIVATE_ON)
+    await send(world.alice, photo=PHOTO)
+    (row,) = await stored(session_factory)
+    world.bob.session.copy_error = TelegramRetryAfter(
+        method=CopyMessage(chat_id=0, from_chat_id=0, message_id=0),
+        message="Too Many Requests",
+        retry_after=5,
+    )
+    await open_it(world, row.id)
+    assert world.bob.session.sent_texts()[-1] == pv.TRY_AGAIN
+    (unopened,) = await stored(session_factory)
+    assert unopened.viewed_at is None
+    assert await queued(session_factory) == {}
+    world.bob.session.copy_error = None
+    assert await open_it(world, row.id) == ""  # can be opened after all
+    assert len(opened_copies(world)) == 2  # the failed try, then this one
+
+
+async def test_the_timer_is_fixed_when_the_media_is_sent(
+    world: World, session_factory: Sessions
+) -> None:
+    await world.alice.send(PRIVATE_ON)
+    await send(world.alice, photo=PHOTO)  # promised 20 seconds
+    async with session_factory() as session:
+        session.add(AppSetting(key=SettingKey.VIEW_ONCE_SECONDS.value, value=200))
+        await session.commit()
+    (row,) = await stored(session_factory)
+    before = datetime.now(UTC)
+    await open_it(world, row.id)
+    for not_before in (await queued(session_factory)).values():
+        assert not_before < before + timedelta(seconds=25)
+
+
+async def test_video_messages_are_view_once_too(world: World, session_factory: Sessions) -> None:
+    await world.alice.send(PRIVATE_ON)
+    await send(
+        world.alice, video_note=VideoNote(file_id="n", file_unique_id="n", length=1, duration=12)
+    )
+    (placeholder,) = placeholders_to_bob(world)
+    assert placeholder.text == (
+        "⏺ Video message (0:12) · tap to view. It disappears 32 seconds after opening."
+    )
+    (row,) = await stored(session_factory)
+    assert (row.kind, row.view_seconds) == ("video_note", 32)
+
+
+async def test_replies_and_edits_reach_the_opened_copy(
+    world: World, session_factory: Sessions
+) -> None:
+    await world.alice.send(PRIVATE_ON)
+    sent = await send(world.alice, photo=PHOTO, caption="first")
+    (row,) = await stored(session_factory)
+    await open_it(world, row.id)
+    (copy,) = opened_copies(world)
+    copy_id = 10_000 + world.bob.session.requests.index(copy) + 1
+    # Bob replies to the opened photo: Alice sees it as a reply to her original.
+    await send(world.bob, text="nice", reply_to_message=replying_to(BOB_ID, copy_id))
+    reply = world.bob.session.copies()[-1]
+    assert reply.reply_parameters is not None and reply.reply_parameters.message_id == sent
+    # Alice edits the caption: the opened copy shows it.
+    await world.alice.dispatcher.feed_update(
+        world.alice.bot,
+        edited_update(next(Chat._ids), USER_ID, sent, photo=PHOTO, caption="second"),
+    )
+    (edit,) = [m for m in world.alice.session.requests if isinstance(m, EditMessageCaption)]
+    assert (edit.chat_id, edit.message_id, edit.caption) == (BOB_ID, copy_id, "second")
+
+
+def replying_to(chat_id: int, message_id: int) -> Message:
+    return Message(
+        message_id=message_id,
+        date=datetime.now(UTC),
+        chat=TelegramChat(id=chat_id, type="private"),
+        text="-",
+    )

@@ -454,7 +454,7 @@ Work happens on short-lived issue branches, such as `feature/12-onboarding`, cre
 **Decision:** (details of D-031)
 
 * 🔒 Private mode is on the chat keyboard's first row, next to 👤 Partner profile; while it is on, the button reads 🔓 Private mode off. Either user turns it on or off, and both are told, with the note required by D-031.
-* Every message sent while it is on is relayed normally, including dice and games. When it is turned off, when the chat ends in any way, or when it reaches its time limit, both copies of each of those messages (the sender's original and the partner's copy) are deleted from Telegram, as far as Telegram allows.
+* Every message sent while it is on is relayed normally, including dice and games, except photos, videos, voice messages, and video messages, which are sent as view-once media (D-048). When it is turned off, when the chat ends in any way, or when it reaches its time limit, both copies of each of those messages (the sender's original and the partner's copy) are deleted from Telegram, as far as Telegram allows.
 * The time limit is an admin runtime setting: 24 hours by default, 1–46 hours. When it is reached, both users are told and can turn Private mode on again.
 * Telegram lets bots delete messages for 48 hours, and does not let them delete a dice message in a private chat until it is more than 24 hours old (Bot API documentation, confirmed by a test on the development bot on 2026-10-30). Dice and games are therefore deleted automatically once they are past 24 hours, and users are told this when Private mode ends.
 * Deletions are queued in the database and sent by the worker, up to 100 per chat per call. An entry is removed when the message is deleted, is already gone, can't be deleted, or passes the 48-hour limit. Only counts are logged.
@@ -473,12 +473,14 @@ Work happens on short-lived issue branches, such as `feature/12-onboarding`, cre
 
 * While Private mode is on, photos, videos, voice messages, and video messages are view-once. Other kinds (text, stickers, GIFs, files) are relayed as before. Normal chats are unchanged for now.
 * The partner receives a placeholder ("📷 Photo · tap to view. It disappears 20 seconds after opening.") with a 👁 View button. On tap, the bot sends the media as protected content, with its caption, and the placeholder says it was opened.
-* The opened copy, the placeholder, and the sender's original are deleted after the timer: an admin runtime setting, default 20 seconds (10–300). For videos, voice, and video messages, their length is added.
-* Each item opens once, only for the partner. A tap after Private mode or the chat ended is refused, and unopened placeholders and originals are deleted with the rest of the session (D-047).
-* A caption edit is stored (D-043) but not sent to the placeholder; opening shows the edited caption.
+* The opened copy, the placeholder, and the sender's original are deleted after the viewing time: the view timer (an admin runtime setting, default 20 seconds, 10–300) plus the length of a video, voice, or video message. It is fixed when the media is sent, so the placeholder's promise holds even if the setting changes.
+* Each item opens once, only for the partner. A tap after Private mode or the chat ended is refused, and unopened placeholders and originals are deleted with the rest of the session (D-047). Media opened before Private mode ends keeps its full viewing time.
+* Opening queues the placeholder and the original at once; the opened copy is queued once it is sent. If Telegram asks the bot to wait at that moment, the opening is undone so it can be tapped again.
+* Replies to the opened copy point at the sender's original, and a caption edit after opening is shown on the opened copy.
+* A caption edit before opening is stored (D-043) but not sent to the placeholder; opening shows the edited caption.
 * Media is still stored for moderation with normal retention. The Private mode note says media can be opened once.
 
-**Why:** Owner decisions. The Bot API has no view-once or self-destruct option and does not tell bots when a message is opened (Bot API documentation, checked 2026-10-30). Telegram does not offer its own view-once option in chats with bots, and a photo sent to a bot arrives as an ordinary photo (checked on the development bot). A button tap is the one signal a bot receives, so tap-to-view starts the timer at the moment of opening.
+**Why:** Owner decisions, including that opened media keeps its viewing time when Private mode ends. The Bot API has no view-once or self-destruct option and does not tell bots when a message is opened (Bot API documentation, checked 2026-10-30). Telegram does not offer its own view-once option in chats with bots, and a photo sent to a bot arrives as an ordinary photo (checked on the development bot). A button tap is the one signal a bot receives, so tap-to-view starts the timer at the moment of opening.
 **Consequence:** The partner sees a placeholder rather than a preview. If the sender deletes their original before it is opened, it cannot be opened. If the bot stops between sending the opened copy and recording it, that copy is not deleted automatically. Wording and layout are provisional until the design pass.
 
 ## Open
