@@ -274,7 +274,7 @@ Work happens on short-lived issue branches, such as `feature/12-onboarding`, cre
 **Decision:**
 
 * Relayed message text, captions, message types, Telegram file identifiers, and timestamps are stored for moderation and report verification.
-* They are deleted automatically after the retention period, an admin runtime setting with a default of 7 days (D-035). Messages tied to an open report are kept until the report is closed.
+* They are deleted automatically after the retention period, an admin runtime setting with a default of 7 days (D-035). Messages tied to an open report are kept until the report is closed. How they are deleted: D-046.
 * Access is restricted to authorised code paths; ordinary logs never contain message content. The terms describe this before storage starts.
 
 **Why:** Owner decision. Reports can be checked against what was actually said, while keeping private content only briefly (requirements §20).
@@ -432,6 +432,20 @@ Work happens on short-lived issue branches, such as `feature/12-onboarding`, cre
 **Consequence:** Until direct messages and chat requests exist, a block made outside a chat is stored and shown (as ✅ Unblock) but has no other effect. Someone who blocked a partner can be matched with them again, and then leaves with ⏹ End chat.
 
 ---
+
+### D-046 — Expired chat messages are deleted entirely, once a day
+
+**Date:** 2026-10-30
+**Decision:**
+
+* A worker job runs once a day and deletes every stored chat message older than the retention period (D-028, D-035). The whole message record goes: text, edits, file identifier, sender, and time. Messages in a conversation with an open report are kept until the report is closed.
+* Conversations, their participants, blocks, reports, and audit records are kept; they have their own retention (requirements §20).
+* In a chat still open after the retention period, replies to the deleted messages arrive as plain messages and edits to them are not passed on.
+* The draft terms say messages are deleted "after a set period" (terms version `draft-8`). Legal and policy texts do not give numbers for periods admins can change, so the text stays true when a setting changes.
+* Deleting stored messages does not remove them from users' Telegram chats.
+
+**Why:** Owner decisions. Deleting the whole record keeps the least data: no per-message record of sender, time, or content remains. Conversations and their participants are still kept, as the record of which chats happened. Leaving numbers out of the terms keeps them accurate whatever the setting.
+**Consequence:** Because the job normally runs daily, a message can stay up to a day past the retention period. It runs in its own loop in the worker, so matching and idle chats never wait for a cleanup to finish; they still share the database, so a very large cleanup can slow them somewhat. It deletes in batches of 1,000 per transaction, skips messages being written at that moment (they go on the next run), and logs only counts. A failed or interrupted run is retried within the hour, and a long run keeps its claim renewed so a second run does not start alongside it.
 
 ## Open
 

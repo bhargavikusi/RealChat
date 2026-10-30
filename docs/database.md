@@ -132,7 +132,7 @@ Each message relayed between chat partners (D-028). It maps the sender's message
 | `file_id` | text, nullable | A Telegram file identifier for media; files are never downloaded. |
 | `created_at` | timestamptz | |
 
-`(sender_user_id, sender_message_id)` is unique and is claimed before sending, so a message delivered to the bot twice is relayed at most once, even if the bot stopped right after sending it. A record is removed if its copy could not be delivered, or was taken back because the chat ended. If linking the record to its copy fails, the copy is taken back but the record stays, with `recipient_message_id` NULL and its content, so a redelivery is still recognized; it is subject to the same retention as other content. The index on `(conversation_id, recipient_message_id)` serves reply lookups. Contact cards, locations, and refused text are never stored (D-042). The content columns (`text`, `edited_text`, `file_id`) are for moderation only, are never written to ordinary logs, and are to be deleted after the retention period (D-028, default 7 days). Messages in a conversation with an open report (see `reports`) are to be kept until the report is closed. The automatic cleanup is a separate piece of work and is not running yet, so content is currently kept.
+`(sender_user_id, sender_message_id)` is unique and is claimed before sending, so a message delivered to the bot twice is relayed at most once, even if the bot stopped right after sending it. A record is removed if its copy could not be delivered, or was taken back because the chat ended. If linking the record to its copy fails, the copy is taken back but the record stays, with `recipient_message_id` NULL and its content, so a redelivery is still recognized; it is subject to the same retention as other content. The index on `(conversation_id, recipient_message_id)` serves reply lookups. Contact cards, locations, and refused text are never stored (D-042). The content columns (`text`, `edited_text`, `file_id`) are for moderation only and are never written to ordinary logs. Each row is deleted entirely once it is older than the retention period (D-028, D-046; admin setting, default 7 days), unless its conversation has an open report (see `reports`). The index on `created_at` serves that cleanup.
 
 ### `user_blocks`
 
@@ -192,3 +192,11 @@ Account deletion (`service.delete_account`, D-016, D-025) runs in one transactio
 * The `users` row is kept with its Telegram user ID and timestamps, and `deleted_at` is set. A moderator or admin role is reset to `user`, with an audit entry. Admin audit entries are kept. An `active` account becomes `deleted`. A `suspended` or `banned` account keeps its status, so deleting cannot be used to escape a restriction.
 
 A deleted user who returns goes through onboarding again. Accepting the terms sets the status back to `active`; a restricted status is never changed this way.
+
+Chat messages are deleted by a daily worker job (`backend/modules/chat/retention.py`, D-046):
+
+* Rows in `chat_messages` older than the retention period (admin setting `chat_retention_days`, default 7) are deleted entirely, oldest first, in batches of 1,000, each in its own transaction. Rows locked by the relay at that moment are skipped and deleted on a later run.
+* Messages in a conversation with an open report are kept until the report is closed.
+* `conversations`, `conversation_participants`, `user_blocks`, `reports`, and `admin_audit_log` are not touched by it.
+* A Redis key (`retention:chat_messages:last_run`) makes the job run normally once a day across workers: it is set for an hour when a run starts, renewed after every batch while the run lasts, and set for a day once the run succeeds, so a failed or interrupted run is retried within the hour. Only the number of deleted rows is logged.
+* Deleting a stored message does not remove it from either user's Telegram chat: this job never calls Telegram.
