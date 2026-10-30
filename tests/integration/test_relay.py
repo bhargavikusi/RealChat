@@ -28,7 +28,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from apps.bot import onboarding as ob
 from apps.bot import profile as pr
 from apps.bot import relay as rl
-from apps.bot.endings import PARTNER_UNREACHABLE
+from apps.bot.endings import PARTNER_ENDED, PARTNER_UNREACHABLE
 from apps.bot.keyboards import END_CHAT
 from backend.config.settings import BotSettings
 from backend.modules.chat import service as chat_service
@@ -44,6 +44,7 @@ from tests.support.world import (
     match,
     onboarded_world,
     search,
+    text_of,
 )
 
 Sessions = async_sessionmaker[AsyncSession]
@@ -404,6 +405,23 @@ async def test_a_copy_delivered_after_the_chat_ended_is_withdrawn(
     deletions = [r for r in world.alice.session.requests if isinstance(r, DeleteMessage)]
     assert [(d.chat_id, d.message_id) for d in deletions] == [(BOB_ID, copy_id)]
     assert await stored(session_factory) == []
+
+
+async def test_an_unreachable_partner_who_already_ended_the_chat_is_not_announced_twice(
+    world: World, session_factory: Sessions
+) -> None:
+    async def partner_ends_meanwhile() -> None:
+        await world.bob.send(END_CHAT)
+
+    world.alice.session.during_copy = partner_ends_meanwhile
+    world.alice.session.fail_copies("Forbidden: bot was blocked by the user", forbidden=True)
+    await send(world.alice, text="Are you there?")
+    # Alice was told once, by Bob's ending, and not again as "can't be reached".
+    assert_chat_ended(world.bob.session, USER_ID, PARTNER_ENDED)
+    assert PARTNER_UNREACHABLE not in [text_of(m) for m in world.alice.session.sent_to(USER_ID)]
+    async with session_factory() as session:
+        conversation = (await session.execute(select(Conversation))).scalar_one()
+        assert conversation.end_reason == "user_ended"
 
 
 # --- Abuse and privacy ---------------------------------------------------------------

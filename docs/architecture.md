@@ -28,7 +28,7 @@ Implemented so far:
 
   The matcher: each tick takes a Redis lock (30 seconds, not renewed), so normally only one matcher runs even with several workers. Correctness does not depend on the lock: a pair is claimed from Redis atomically, and the database refuses a second open conversation, so an overlapping tick cannot create a double match. It ends searches past the time limit (an admin setting) and tells those users; re-checks waiting users in PostgreSQL (active account, onboarding complete, current terms, no open conversation) and drops anyone ineligible; pairs the rest oldest first, avoiding partners from the last few minutes while anyone else is waiting (D-033), and swapping partners between pairs where that avoids a repeat; each tick considers at most the 200 longest-waiting searches still within the time limit, so an alternative further back in a longer queue is not seen in that tick; then, for each pair, takes both out of the queue atomically, re-checks them with their user rows share-locked and creates the conversation in one transaction, and only after that commit tells both users. Account deletion locks the same row first, so a deletion and a match never interleave. If the database refuses the match, whoever is still eligible goes back to their old place in the queue; on any database error both go back before the error is raised. A failed tick is logged without exception messages and the next one runs as usual.
 
-No blocking, reporting, chat-content cleanup, or Mini App exist yet.
+No chat-content cleanup or Mini App exist yet.
 
 ## Overview (planned)
 

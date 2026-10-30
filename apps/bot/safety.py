@@ -32,6 +32,7 @@ from apps.bot.keyboards import main_keyboard
 from backend.core.logging import exception_summary
 from backend.modules.admin.settings import RuntimeSettings, SettingKey
 from backend.modules.chat import service as chat
+from backend.modules.matching.queue import SearchQueue
 from backend.modules.moderation import service as moderation
 from backend.modules.moderation.models import REPORT_DETAILS_MAX_LENGTH, REPORT_REASONS
 from backend.modules.moderation.service import NotPartnerError, ReportOutcome
@@ -260,6 +261,7 @@ async def on_reason(
     session: AsyncSession,
     state: FSMContext,
     runtime_settings: RuntimeSettings,
+    search_queue: SearchQueue,
 ) -> None:
     conversation_id = callback_data.conversation
     if callback_data.reason not in REPORT_REASONS:
@@ -294,9 +296,10 @@ async def on_reason(
         await bot.send_message(query.from_user.id, REPORT_SENT_ENDED, reply_markup=main_keyboard())
     else:
         await bot.send_message(query.from_user.id, REPORT_SENT)
-    if in_chat:
-        # In a chat with someone else: the next message belongs to that chat, so no
-        # details are asked for.
+    if in_chat or await search_queue.current(user.id) is not None:
+        # In a chat with someone else, or searching for one: the next message may belong
+        # to that chat, so no details are asked for. A search started later clears
+        # the details step, so it can't catch a new chat's messages either.
         return
     await state.set_state(ReportDetails.text)
     await state.set_data({"report": filed.report_id, "ended": filed.ended_chat})

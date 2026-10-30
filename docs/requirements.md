@@ -485,7 +485,7 @@ Users should be able to:
 * Report profiles and conversations.
 * Select a report reason.
 * Provide optional supporting context.
-* Stop receiving messages from blocked users.
+* Stop receiving direct messages and chat requests from blocked users. Blocked users can still be matched again in random chat (D-045).
 * Leave a conversation immediately.
 * Control discoverability and relevant privacy settings.
 

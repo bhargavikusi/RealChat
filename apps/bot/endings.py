@@ -101,9 +101,13 @@ async def send_chat_ended(
     message box or buttons of its own, not both. The layout is provisional (D-045).
     """
     await bot.send_message(chat_id, how, reply_markup=main_keyboard())
-    await bot.send_message(
-        chat_id, SAFETY_PROMPT, reply_markup=safety_keyboard(conversation_id, blocked)
-    )
+    try:
+        await bot.send_message(
+            chat_id, SAFETY_PROMPT, reply_markup=safety_keyboard(conversation_id, blocked)
+        )
+    except TelegramAPIError as exc:
+        # Block and Report stay on the partner's card; the menu must still follow.
+        logger.warning("could not offer block and report", extra=exception_summary(exc))
     await send_menu(bot, chat_id)
 
 

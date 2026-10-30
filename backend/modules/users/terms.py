@@ -29,8 +29,7 @@ scams, and sharing other people's private information are not allowed.
 • You can block or report a chat partner from their profile card or after a chat. \
 Blocking or reporting someone you're chatting with ends the chat, and they are only \
 told that the chat ended. Reporting also blocks them. Blocking doesn't stop you being \
-matched again in a random chat. A reported chat's messages are kept until the report \
-is closed.
+matched again in a random chat.
 • Accounts that break these rules may be restricted or banned.
 • You can delete your account at any time from your profile (Advanced settings). \
 Your profile is erased immediately. A minimal record (your Telegram user ID, account \

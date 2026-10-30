@@ -24,7 +24,7 @@ from backend.modules.moderation.models import (
     Report,
     UserBlock,
 )
-from backend.modules.users import service as users
+from backend.modules.users.models import User
 
 REPORT_PERIOD = timedelta(hours=24)
 
@@ -164,12 +164,14 @@ async def file_report(
     Raises NotPartnerError if the user was not in it, and ValueError for an unknown
     reason. A user reports a conversation at most once, and files at most `per_day`
     reports in 24 hours; the user's row is locked while counting, so simultaneous
-    reports cannot pass the limit together.
+    reports cannot pass the limit together. The lock is FOR NO KEY UPDATE, which does
+    not conflict with the key-share lock the report's foreign keys take on the other
+    user's row, so two users reporting each other at once do not deadlock.
     """
     if reason not in REPORT_REASONS:
         raise ValueError(f"unknown report reason: {reason}")
     partner_id = await partner_in(session, user_id, conversation_id)
-    await users.lock_user(session, user_id)
+    await session.execute(select(User.id).where(User.id == user_id).with_for_update(key_share=True))
     if await has_reported(session, user_id, conversation_id):
         return Filed(ReportOutcome.ALREADY_REPORTED, partner_id)
     recent = await session.scalar(

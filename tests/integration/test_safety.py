@@ -357,6 +357,22 @@ async def test_reporting_an_old_chat_leaves_the_current_one_alone(
     assert (await reports(session_factory))[0].details is None
 
 
+async def test_no_details_are_asked_for_while_searching(
+    world: World, carol: Chat, session_factory: Sessions
+) -> None:
+    first = await ended_chat(world)
+    assert await search(world.alice) == ch.SEARCHING
+    await world.alice.press_data(data("reason", first, reason="spam"))
+    assert world.alice.session.sent_texts()[-1] == sf.REPORT_SENT  # no details asked
+    # Matched afterwards, Alice's first message goes to her new partner.
+    assert await search(carol) == ch.SEARCHING
+    await world.tick()
+    before = len(world.alice.session.copies())
+    await world.alice.send("hi Carol")
+    assert len(world.alice.session.copies()) == before + 1
+    assert (await reports(session_factory))[0].details is None
+
+
 # --- Access ----------------------------------------------------------------------------
 
 
@@ -427,6 +443,29 @@ async def test_simultaneous_reports_cannot_pass_the_limit_together(
         await holding.commit()
         assert await task is ReportOutcome.LIMIT_REACHED
     assert len(await reports(session_factory)) == 1
+
+
+async def test_reporting_does_not_wait_on_a_report_about_the_reporter(
+    world: World, session_factory: Sessions
+) -> None:
+    # A report key-share locks the reported user's row. Reports by that user must not
+    # wait on it, or two users reporting each other at once would deadlock.
+    first = await ended_chat(world)
+    second = await ended_chat(world)
+    alice, bob = await world.user_id(USER_ID), await world.user_id(BOB_ID)
+    async with session_factory() as holding:
+        filed = await moderation.file_report(holding, alice, first, "spam", NOW, 10)
+        assert filed.outcome is ReportOutcome.FILED
+
+        async def other() -> ReportOutcome:
+            async with session_factory() as session:
+                result = await moderation.file_report(session, bob, second, "spam", NOW, 10)
+                await session.commit()
+                return result.outcome
+
+        assert await asyncio.wait_for(other(), timeout=5) is ReportOutcome.FILED
+        await holding.commit()
+    assert len(await reports(session_factory)) == 2
 
 
 async def test_simultaneous_blocks_store_one(world: World, session_factory: Sessions) -> None:

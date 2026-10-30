@@ -141,13 +141,17 @@ def _unreachable(error: TelegramAPIError) -> bool:
 async def _end_unreachable(
     message: Message, bot: Bot, session: AsyncSession, user_id: int, active: chat.ActiveChat
 ) -> None:
-    await chat.end_conversation(
+    ended = await chat.end_conversation(
         session,
         user_id,
         datetime.now(UTC),
         reason="unreachable",
         conversation_id=active.conversation_id,
     )
+    if ended is None:
+        # The chat already ended another way, and the user was told then.
+        await session.commit()
+        return
     blocked = await moderation.is_blocked(session, user_id, active.partner_id)
     await session.commit()
     await send_chat_ended(
