@@ -6,13 +6,14 @@ caller. User ids here are internal `users.id` values, never Telegram IDs.
 
 from collections.abc import Collection
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import and_, delete, exists, func, or_, select, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 
+from backend.modules.chat import private
 from backend.modules.chat.models import (
     USER_END_REASONS,
     ChatMessage,
@@ -258,6 +259,7 @@ class Claim:
     activity_set_to: datetime
     previous_activity: datetime
     previous_warning: datetime | None
+    private_session_id: int | None = None  # the Private mode session it was sent in
 
 
 async def claim_message(
@@ -287,6 +289,8 @@ async def claim_message(
     if state is None:
         return None
     previous_activity, previous_warning, now = state
+    # Read under the conversation lock, which turning Private mode on or off also takes.
+    private_id = await private.active_session(session, chat.conversation_id)
     row_id = await session.scalar(
         insert(ChatMessage)
         .values(
@@ -296,6 +300,7 @@ async def claim_message(
             kind=kind,
             text=text,
             file_id=file_id,
+            private_session_id=private_id,
         )
         .on_conflict_do_nothing(index_elements=["sender_user_id", "sender_message_id"])
         .returning(ChatMessage.id)
@@ -307,23 +312,38 @@ async def claim_message(
         .where(Conversation.id == chat.conversation_id)
         .values(last_activity_at=now, idle_warned_at=None)
     )
-    return Claim(int(row_id), chat.conversation_id, now, previous_activity, previous_warning)
+    return Claim(
+        int(row_id), chat.conversation_id, now, previous_activity, previous_warning, private_id
+    )
 
 
 async def complete_message(session: AsyncSession, claim: Claim, recipient_message_id: int) -> bool:
     """Link a recorded message to its delivered copy.
 
     Returns False, and removes the record, if the conversation ended while the copy was
-    on its way; the caller then withdraws the copy.
+    on its way; the caller then withdraws the copy. A Private mode message whose session
+    ended while it was on its way is queued for deletion here, since the session's own
+    queueing could not see its copy (D-047).
     """
+    this = ChatMessage.id == claim.row_id
+    now = datetime.now(UTC)
     if not await _conversation_open(session, claim.conversation_id):
-        await session.execute(delete(ChatMessage).where(ChatMessage.id == claim.row_id))
+        if claim.private_session_id is not None:
+            # Both copies are queued: the caller's withdrawal of the copy is best effort,
+            # and the queue retries it.
+            await session.execute(
+                update(ChatMessage).where(this).values(recipient_message_id=recipient_message_id)
+            )
+            await private.queue_deletions(session, now, this)
+        await session.execute(delete(ChatMessage).where(this))
         return False
     await session.execute(
-        update(ChatMessage)
-        .where(ChatMessage.id == claim.row_id)
-        .values(recipient_message_id=recipient_message_id)
+        update(ChatMessage).where(this).values(recipient_message_id=recipient_message_id)
     )
+    if claim.private_session_id is not None and await private.session_ended(
+        session, claim.private_session_id
+    ):
+        await private.queue_deletions(session, now, this)
     return True
 
 

@@ -14,6 +14,8 @@ from aiogram.exceptions import TelegramAPIError, TelegramBadRequest, TelegramFor
 from aiogram.methods import (
     AnswerCallbackQuery,
     CopyMessage,
+    DeleteMessage,
+    DeleteMessages,
     GetMe,
     SendMessage,
     SendPhoto,
@@ -47,6 +49,13 @@ class RecordingSession(BaseSession):
         self.reject_callback_answers: str | None = None
         # When set, copyMessage fails with this error (see `fail_copies`).
         self.copy_error: TelegramAPIError | None = None
+        # When set, deleteMessages fails with this error.
+        self.bulk_delete_error: TelegramAPIError | None = None
+        # (chat id, message id) pairs that deleteMessage refuses, as Telegram does for a
+        # fresh dice.
+        self.undeletable: set[tuple[int, int]] = set()
+        # (chat id, message id) of every message deleted successfully.
+        self.deleted: list[tuple[int, int]] = []
         # When set, awaited while copyMessage is "in flight", before it returns or fails.
         self.during_copy: Callable[[], Awaitable[None]] | None = None
 
@@ -97,6 +106,25 @@ class RecordingSession(BaseSession):
                 ],
             )
             return sent  # type: ignore[return-value]
+        if isinstance(method, DeleteMessages):
+            if self.bulk_delete_error is not None:
+                raise self.bulk_delete_error
+            targets = [(int(method.chat_id), m) for m in method.message_ids]
+            if self.undeletable & set(targets):
+                # As for a single message: a refused one fails the call.
+                raise TelegramBadRequest(
+                    method=method, message="Bad Request: message can't be deleted for everyone"
+                )
+            self.deleted += targets
+            return True  # type: ignore[return-value]
+        if isinstance(method, DeleteMessage):
+            target = (int(method.chat_id), method.message_id)
+            if target in self.undeletable:
+                raise TelegramBadRequest(
+                    method=method, message="Bad Request: message can't be deleted for everyone"
+                )
+            self.deleted.append(target)
+            return True  # type: ignore[return-value]
         if isinstance(method, GetMe):
             return BOT_USER  # type: ignore[return-value]
         # Most other methods (answerCallbackQuery, etc.) return True.

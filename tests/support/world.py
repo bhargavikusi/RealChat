@@ -17,7 +17,7 @@ from apps.bot.endings import (
     SAFETY_PROMPT,
     UNBLOCK_BUTTON,
 )
-from apps.bot.keyboards import END_CHAT, NEW_CHAT, PARTNER_PROFILE
+from apps.bot.keyboards import END_CHAT, NEW_CHAT, PARTNER_PROFILE, PRIVATE_OFF, PRIVATE_ON
 from backend.config.settings import BotSettings
 from backend.modules.admin.settings import RuntimeSettings
 from backend.modules.matching.matcher import Matcher
@@ -30,7 +30,8 @@ from tests.support.telegram import RecordingSession, make_bot
 Sessions = async_sessionmaker[AsyncSession]
 BOB_ID = 5353
 MAIN_KEYS = [[NEW_CHAT]]
-CHAT_KEYS = [[PARTNER_PROFILE], [END_CHAT]]
+CHAT_KEYS = [[PARTNER_PROFILE, PRIVATE_ON], [END_CHAT]]
+PRIVATE_CHAT_KEYS = [[PARTNER_PROFILE, PRIVATE_OFF], [END_CHAT]]
 
 
 class World:

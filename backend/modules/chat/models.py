@@ -31,6 +31,9 @@ from backend.database.engine import Base
 END_REASONS = ("user_ended", "unreachable", "idle", "blocked", "reported")
 # Endings caused by one of the users, who is recorded in `ended_by_user_id`.
 USER_END_REASONS = ("user_ended", "blocked", "reported")
+# Why Private mode ended (D-047): a user turned it off, the chat ended, or it reached
+# its time limit.
+PRIVATE_END_REASONS = ("turned_off", "chat_ended", "time_limit")
 # What a relayed message was. Text and captions are stored in `text`.
 MESSAGE_KINDS = (
     "text",
@@ -119,6 +122,12 @@ class ChatMessage(Base):
         Index("ix_chat_messages_conversation_recipient", "conversation_id", "recipient_message_id"),
         # Serves the retention cleanup, which deletes the oldest messages first.
         Index("ix_chat_messages_created_at", "created_at"),
+        # Serves "the messages sent in this Private mode session".
+        Index(
+            "ix_chat_messages_private_session_id",
+            "private_session_id",
+            postgresql_where=text("private_session_id IS NOT NULL"),
+        ),
     )
 
     id: Mapped[int] = mapped_column(BigInteger, Identity(), primary_key=True)
@@ -138,4 +147,75 @@ class ChatMessage(Base):
     edited_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     # A Telegram file identifier only; files are never downloaded.
     file_id: Mapped[str | None] = mapped_column(Text)
+    # The Private mode session it was sent in, if any (D-047).
+    private_session_id: Mapped[int | None] = mapped_column(
+        BigInteger, ForeignKey("private_sessions.id")
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class PrivateSession(Base):
+    """A period of Private mode in a conversation (D-031, D-047).
+
+    Messages sent while it is active are deleted from both users' Telegram chats once it
+    ends. At most one session per conversation is active at a time.
+    """
+
+    __tablename__ = "private_sessions"
+    __table_args__ = (
+        CheckConstraint(
+            f"end_reason IN ({', '.join(repr(r) for r in PRIVATE_END_REASONS)})",
+            name="end_reason",
+        ),
+        CheckConstraint("(ended_at IS NULL) = (end_reason IS NULL)", name="ended_pair"),
+        Index(
+            "uq_private_sessions_active_conversation",
+            "conversation_id",
+            unique=True,
+            postgresql_where=text("ended_at IS NULL"),
+        ),
+        # Serves the worker's search for active sessions to end.
+        Index(
+            "ix_private_sessions_active_started_at",
+            "started_at",
+            postgresql_where=text("ended_at IS NULL"),
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, Identity(), primary_key=True)
+    conversation_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("conversations.id", ondelete="CASCADE")
+    )
+    started_by_user_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("users.id"))
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    ended_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    end_reason: Mapped[str | None] = mapped_column(String(16))
+    ended_by_user_id: Mapped[int | None] = mapped_column(BigInteger, ForeignKey("users.id"))
+
+
+class TelegramDeletion(Base):
+    """A message to delete from a user's Telegram chat (D-047).
+
+    Holds only Telegram identifiers, no content, so it is independent of the retention of
+    stored messages. An entry is removed once the message is deleted, turns out to be
+    gone already, or can no longer be deleted (Telegram allows it for 48 hours).
+    """
+
+    __tablename__ = "telegram_deletions"
+    __table_args__ = (
+        UniqueConstraint("chat_id", "message_id"),
+        CheckConstraint("not_before < expires_at", name="window"),
+        # Serves the worker's search for entries that are due.
+        Index("ix_telegram_deletions_not_before", "not_before"),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, Identity(), primary_key=True)
+    # A private chat's id, which is the user's Telegram id.
+    chat_id: Mapped[int] = mapped_column(BigInteger)
+    message_id: Mapped[int] = mapped_column(BigInteger)
+    # Not tried before this time: when queued for most messages, 24 hours after sending
+    # for dice (Telegram refuses earlier), and pushed back while a worker is trying it.
+    not_before: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    # 48 hours after the message was sent: after this Telegram refuses to delete it.
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

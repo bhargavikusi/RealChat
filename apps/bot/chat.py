@@ -42,7 +42,14 @@ from apps.bot.endings import (
     send_menu,
     tell_chat_ended,
 )
-from apps.bot.keyboards import END_CHAT, NEW_CHAT, PARTNER_PROFILE, chat_keyboard, main_keyboard
+from apps.bot.keyboards import (
+    END_CHAT,
+    NEW_CHAT,
+    PARTNER_PROFILE,
+    chat_keyboard,
+    current_keyboard,
+    main_keyboard,
+)
 from apps.bot.onboarding import load_context, prompt_next
 from apps.bot.profile import profile_caption
 from backend.config.settings import BotSettings
@@ -125,9 +132,10 @@ async def _start_search(
         await prompt_next(bot, chat_id, session, ctx, state, settings)
         return
     active = await chat.active_chat(session, ctx.user.id)
+    keyboard = await current_keyboard(session, ctx.user.id)
     await session.commit()
     if active is not None:
-        await bot.send_message(chat_id, ALREADY_IN_CHAT, reply_markup=chat_keyboard())
+        await bot.send_message(chat_id, ALREADY_IN_CHAT, reply_markup=keyboard)
         return
     # Any half-finished profile edit is abandoned, so its answers can't be mixed up
     # with what the user sends next.
@@ -155,12 +163,13 @@ async def on_new_chat(
         await prompt_next(bot, message.chat.id, session, ctx, state, settings)
         return
     active = await chat.active_chat(session, ctx.user.id)
+    keyboard = await current_keyboard(session, ctx.user.id)
     await session.commit()
     # Any half-finished profile or admin edit is abandoned, so the next message is not
     # taken as its answer.
     await state.clear()
     if active is not None:
-        await message.answer(ALREADY_IN_CHAT, reply_markup=chat_keyboard())
+        await message.answer(ALREADY_IN_CHAT, reply_markup=keyboard)
         return
     await send_menu(bot, message.chat.id)
 
