@@ -164,7 +164,7 @@ Reports about chat partners (D-037, D-045).
 | `created_at` | timestamptz | |
 | `closed_at` | timestamptz, nullable | Set exactly when the status is `closed`, enforced by a constraint. |
 
-`(reporter_user_id, conversation_id)` is unique: one report per user per conversation. The index on `(reporter_user_id, created_at)` serves the per-user limit on reports in 24 hours (an admin setting); the reporter's `users` row is locked while counting (`FOR NO KEY UPDATE`, which does not conflict with the key-share locks that foreign keys take, so two users reporting each other at once do not deadlock), so simultaneous reports cannot pass the limit together. A partial index on `conversation_id` for open reports serves the retention cleanup, which keeps those conversations' messages. Rows are kept when either account is deleted.
+`(reporter_user_id, conversation_id)` is unique: one report per user per conversation. The index on `(reporter_user_id, created_at)` serves the per-user limit on reports in 24 hours (an admin setting); the reporter's `users` row is locked while counting (`FOR NO KEY UPDATE`), so simultaneous reports cannot pass the limit together. A block or report takes all its locks up front, in the same order as account deletion: the user's row, the partner's row (key share), then the conversation. So two users blocking or reporting each other in the same chat at once, or one doing so while the other deletes their account, cannot deadlock. A partial index on `conversation_id` for open reports serves the retention cleanup, which keeps those conversations' messages. Rows are kept when either account is deleted.
 
 ## Where rules are enforced
 

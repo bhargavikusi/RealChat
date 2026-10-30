@@ -510,3 +510,82 @@ async def test_details_are_added_once_and_only_by_the_reporter(
         assert not await moderation.add_details(session, alice, filed.report_id, "second")
         await session.commit()
     assert (await reports(session_factory))[0].details == "first"
+
+
+async def _open_chat(sessions: Sessions, first: int, second: int) -> int:
+    async with sessions() as session:
+        conversation_id = await chat_service.start_conversation(session, first, second)
+        await session.commit()
+    return conversation_id
+
+
+async def _report(sessions: Sessions, user_id: int, conversation_id: int) -> moderation.Filed:
+    async with sessions() as session:
+        filed = await moderation.file_report(session, user_id, conversation_id, "spam", NOW, 100)
+        await session.commit()
+    return filed
+
+
+async def _block(sessions: Sessions, user_id: int, conversation_id: int) -> moderation.Blocked:
+    async with sessions() as session:
+        blocked = await moderation.block(session, user_id, conversation_id, NOW)
+        await session.commit()
+    return blocked
+
+
+async def _delete(sessions: Sessions, user_id: int) -> None:
+    # As account deletion does: lock the user, end their chat, erase the profile.
+    async with sessions() as session:
+        await users.lock_user(session, user_id)
+        await chat_service.end_conversation(session, user_id, NOW)
+        await users.delete_account(session, user_id, NOW)
+        await session.commit()
+
+
+ROUNDS = 15
+
+
+async def test_both_users_reporting_one_open_chat_at_once_never_deadlock(
+    world: World, session_factory: Sessions
+) -> None:
+    await ended_chat(world)
+    alice, bob = await world.user_id(USER_ID), await world.user_id(BOB_ID)
+    for _ in range(ROUNDS):
+        conversation_id = await _open_chat(session_factory, alice, bob)
+        filed = await asyncio.gather(
+            _report(session_factory, alice, conversation_id),
+            _report(session_factory, bob, conversation_id),
+        )
+        assert [f.outcome for f in filed] == [ReportOutcome.FILED] * 2
+        assert sorted(f.ended_chat for f in filed) == [False, True]  # ended once
+
+
+async def test_both_users_blocking_one_open_chat_at_once_never_deadlock(
+    world: World, session_factory: Sessions
+) -> None:
+    await ended_chat(world)
+    alice, bob = await world.user_id(USER_ID), await world.user_id(BOB_ID)
+    for _ in range(ROUNDS):
+        conversation_id = await _open_chat(session_factory, alice, bob)
+        blocked = await asyncio.gather(
+            _block(session_factory, alice, conversation_id),
+            _block(session_factory, bob, conversation_id),
+        )
+        assert sorted(b.ended_chat for b in blocked) == [False, True]
+        async with session_factory() as session:
+            for user_id in (alice, bob):
+                await moderation.unblock(session, user_id, conversation_id, NOW)
+            await session.commit()
+
+
+async def test_reporting_while_the_partner_deletes_their_account_never_deadlocks(
+    world: World, session_factory: Sessions
+) -> None:
+    await ended_chat(world)
+    alice, bob = await world.user_id(USER_ID), await world.user_id(BOB_ID)
+    for _ in range(ROUNDS):
+        conversation_id = await _open_chat(session_factory, alice, bob)
+        filed, _ = await asyncio.gather(
+            _report(session_factory, alice, conversation_id), _delete(session_factory, bob)
+        )
+        assert filed.outcome is ReportOutcome.FILED

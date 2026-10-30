@@ -16,6 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 
 from backend.modules.chat import service as chat
+from backend.modules.chat.models import Conversation
 from backend.modules.chat.models import ConversationParticipant as Participant
 from backend.modules.moderation.models import (
     REPORT_DETAILS_MAX_LENGTH,
@@ -87,6 +88,39 @@ async def _add_block(
     return added is not None
 
 
+async def _lock(
+    session: AsyncSession,
+    user_id: int,
+    partner_id: int,
+    conversation_id: int,
+    *,
+    serialize_user: bool = False,
+) -> None:
+    """Take every lock a block or report needs, up front and always in the same order.
+
+    Users first, then the conversation, as account deletion does (it locks the user,
+    then ends their chat). The partner's row gets the key-share lock that the new
+    rows' foreign keys would take anyway; taking it before the conversation lock means
+    a block or report never holds the conversation while waiting on a user, so two
+    users acting on the same chat at once, or one acting while the other deletes their
+    account, cannot deadlock. With `serialize_user`, the user's own row is locked FOR
+    NO KEY UPDATE, so one user's simultaneous reports are counted one at a time;
+    it does not conflict with key-share locks taken by reports about that user.
+    """
+    own = select(User.id).where(User.id == user_id)
+    await session.execute(
+        own.with_for_update(key_share=True)
+        if serialize_user
+        else own.with_for_update(read=True, key_share=True)
+    )
+    await session.execute(
+        select(User.id).where(User.id == partner_id).with_for_update(read=True, key_share=True)
+    )
+    await session.execute(
+        select(Conversation.id).where(Conversation.id == conversation_id).with_for_update()
+    )
+
+
 @dataclass(frozen=True)
 class Blocked:
     partner_id: int
@@ -103,6 +137,7 @@ async def block(
     store one block, and only one of them ends the conversation.
     """
     partner_id = await partner_in(session, user_id, conversation_id)
+    await _lock(session, user_id, partner_id, conversation_id)
     added = await _add_block(session, user_id, partner_id, conversation_id)
     ended = await chat.end_conversation(
         session, user_id, now, "blocked", conversation_id=conversation_id
@@ -164,14 +199,12 @@ async def file_report(
     Raises NotPartnerError if the user was not in it, and ValueError for an unknown
     reason. A user reports a conversation at most once, and files at most `per_day`
     reports in 24 hours; the user's row is locked while counting, so simultaneous
-    reports cannot pass the limit together. The lock is FOR NO KEY UPDATE, which does
-    not conflict with the key-share lock the report's foreign keys take on the other
-    user's row, so two users reporting each other at once do not deadlock.
+    reports cannot pass the limit together (see `_lock` for the lock order).
     """
     if reason not in REPORT_REASONS:
         raise ValueError(f"unknown report reason: {reason}")
     partner_id = await partner_in(session, user_id, conversation_id)
-    await session.execute(select(User.id).where(User.id == user_id).with_for_update(key_share=True))
+    await _lock(session, user_id, partner_id, conversation_id, serialize_user=True)
     if await has_reported(session, user_id, conversation_id):
         return Filed(ReportOutcome.ALREADY_REPORTED, partner_id)
     recent = await session.scalar(
