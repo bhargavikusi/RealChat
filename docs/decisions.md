@@ -483,6 +483,19 @@ Work happens on short-lived issue branches, such as `feature/12-onboarding`, cre
 **Why:** Owner decisions, including that opened media keeps its viewing time when Private mode ends. The Bot API has no view-once or self-destruct option and does not tell bots when a message is opened (Bot API documentation, checked 2026-10-30). Telegram does not offer its own view-once option in chats with bots, and a photo sent to a bot arrives as an ordinary photo (checked on the development bot). A button tap is the one signal a bot receives, so tap-to-view starts the timer at the moment of opening.
 **Consequence:** The partner sees a placeholder rather than a preview. If the sender deletes their original before it is opened, it cannot be opened. If the bot stops between sending the opened copy and recording it, that copy is not deleted automatically. Wording and layout are provisional until the design pass.
 
+### D-049 — Asking before sending media right after Private mode ends
+
+**Date:** 2026-10-31
+**Decision:**
+
+* A photo, video, voice message, or video message sent within a short window after Private mode ended is held, not relayed, when the partner turned it off or it reached its time limit. The sender is asked whether to send it as a normal message, with [Send] and [Don't send]. A user who turned Private mode off themselves is never asked.
+* The window is an admin runtime setting, default 30 seconds (0–300, 0 turns it off).
+* Send relays it as a normal message; Don't send relays nothing, and the sender's own copy stays in their chat. Each question is answered once; it lapses when the chat ends, Private mode is turned on again, or the user starts something else.
+* Only the held message's details are kept, in the user's short-lived bot state; nothing is recorded or stored until it is sent.
+* Text and other kinds are relayed as before.
+
+**Why:** Owner decision. A user who turned Private mode on may send a photo without noticing that their partner just turned it off, and would otherwise have it delivered as a normal photo.
+
 ## Open
 
 Each of these needs the owner's decision. Until then, the behavior stays configurable and is not presented to users as final.

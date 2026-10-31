@@ -270,6 +270,34 @@ async def end_if_due(
     return await end_session(session, private_id, now, reason)
 
 
+async def ended_by_someone_else(
+    session: AsyncSession, conversation_id: int, user_id: int, since: datetime
+) -> str | None:
+    """Why Private mode ended, if it did at or after `since` without this user choosing
+    it: "turned_off" (by the partner) or "time_limit". None otherwise, including when it
+    is on again, or this user turned it off themselves (D-049)."""
+    if await active_session(session, conversation_id) is not None:
+        return None
+    latest = (
+        await session.execute(
+            select(PrivateSession.end_reason, PrivateSession.ended_by_user_id)
+            .where(
+                PrivateSession.conversation_id == conversation_id,
+                PrivateSession.ended_at.is_not(None),
+                PrivateSession.ended_at >= since,
+            )
+            .order_by(PrivateSession.ended_at.desc())
+            .limit(1)
+        )
+    ).first()
+    if latest is None:
+        return None
+    reason, ended_by = latest
+    if reason == "time_limit" or (reason == "turned_off" and ended_by != user_id):
+        return str(reason)
+    return None
+
+
 # --- View-once media (D-048) ----------------------------------------------------------
 
 
