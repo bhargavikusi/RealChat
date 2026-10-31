@@ -268,6 +268,19 @@ class Claim:
     view_once: bool = False  # delivered as a tap-to-view placeholder (D-048)
 
 
+@dataclass(frozen=True)
+class Hold:
+    """Not recorded: ask the sender first (D-049)."""
+
+    reason: str  # how Private mode ended: "turned_off" (by the partner) or "time_limit"
+    session_id: int  # the session that ended
+
+
+@dataclass(frozen=True)
+class Lapsed:
+    """Not recorded: the sender's answer was about an older Private mode session."""
+
+
 async def claim_message(
     session: AsyncSession,
     chat: ActiveChat,
@@ -277,12 +290,23 @@ async def claim_message(
     text: str | None,
     file_id: str | None,
     view_seconds: int | None = None,
-) -> Claim | None:
+    *,
+    ask_since: datetime | None = None,
+    confirmed_after: int | None = None,
+) -> Claim | Hold | Lapsed | None:
     """Record a message before it is copied, and count it as chat activity.
 
     In Private mode, photos, videos, voice and video messages are recorded as view-once
     (D-048), with `view_seconds` (the viewing time once opened): the caller then
     delivers a tap-to-view placeholder instead of a copy.
+
+    Media that would go out as a normal message right after the partner turned Private
+    mode off, or after its time limit, is not recorded (D-049). With `ask_since`, that
+    returns Hold, so the caller can ask the sender first. With `confirmed_after` (the
+    session the sender was asked about), it returns Lapsed instead if Private mode has
+    been turned on since, so an old answer never applies to a newer session. Both
+    decisions are made under the conversation lock that turning Private mode on or off
+    takes, so they cannot be overtaken.
 
     Returns None if it was already recorded (a redelivered update) or the conversation
     has ended. Recording first means a message is relayed at most once, even if the bot
@@ -302,6 +326,18 @@ async def claim_message(
     previous_activity, previous_warning, now = state
     # Read under the conversation lock, which turning Private mode on or off also takes.
     private_id = await private.active_session(session, chat.conversation_id)
+    if private_id is None and kind in VIEW_ONCE_KINDS:
+        if confirmed_after is not None:
+            if await private.latest_session(session, chat.conversation_id) != confirmed_after:
+                return Lapsed()
+        elif ask_since is not None:
+            ended = await private.ended_by_someone_else(
+                session, chat.conversation_id, sender_id, ask_since
+            )
+            if ended is not None:
+                return Hold(ended.reason, ended.session_id)
+    elif confirmed_after is not None:
+        return Lapsed()  # Private mode is on again
     view_once = private_id is not None and kind in VIEW_ONCE_KINDS
     row_id = await session.scalar(
         insert(ChatMessage)

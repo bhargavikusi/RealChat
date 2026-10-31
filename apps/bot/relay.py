@@ -18,26 +18,35 @@ Order of work, so no transaction is held during a Telegram call:
    partner.
 
 Replies point at the matching message on the partner's side, and edits to text and
-captions are mirrored. Messages from users who are not in a chat, commands, and
-anything sent while another step is waiting for an answer go to the other handlers.
+captions are mirrored. Media sent just after the partner turned Private mode off, or
+after its time limit, is held until the sender confirms (D-049). Messages from users
+who are not in a chat, commands, and anything sent while another step is waiting for an
+answer go to the other handlers.
 """
 
+import json
 import logging
-from datetime import UTC, datetime
+from dataclasses import asdict, dataclass
+from datetime import UTC, datetime, timedelta
+from typing import Any
 
 from aiogram import Bot, F, Router
 from aiogram.dispatcher.event.bases import SkipHandler
 from aiogram.enums import ChatType, ContentType, MessageEntityType
 from aiogram.exceptions import TelegramAPIError, TelegramBadRequest, TelegramForbiddenError
 from aiogram.filters import StateFilter
+from aiogram.filters.callback_data import CallbackData
 from aiogram.fsm.context import FSMContext
 from aiogram.types import (
+    CallbackQuery,
+    InlineKeyboardButton,
     InlineKeyboardMarkup,
     Message,
     MessageEntity,
     MessageId,
     ReplyParameters,
 )
+from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from apps.bot.endings import PARTNER_UNREACHABLE, send_chat_ended
@@ -154,7 +163,7 @@ def _unreachable(error: TelegramAPIError) -> bool:
 
 
 async def _end_unreachable(
-    message: Message, bot: Bot, session: AsyncSession, user_id: int, active: chat.ActiveChat
+    chat_id: int, bot: Bot, session: AsyncSession, user_id: int, active: chat.ActiveChat
 ) -> None:
     ended = await chat.end_conversation(
         session,
@@ -170,7 +179,32 @@ async def _end_unreachable(
     blocked = await moderation.is_blocked(session, user_id, active.partner_id)
     await session.commit()
     await send_chat_ended(
-        bot, message.chat.id, PARTNER_UNREACHABLE, active.conversation_id, blocked=blocked
+        bot, chat_id, PARTNER_UNREACHABLE, active.conversation_id, blocked=blocked
+    )
+
+
+@dataclass(frozen=True)
+class Outgoing:
+    """What is needed to relay a message the sender sent, now or after a question."""
+
+    message_id: int  # in the sender's chat
+    kind: str
+    text: str | None
+    file_id: str | None
+    media_seconds: int | None
+    replied_message_id: int | None  # the message it replies to, in the sender's chat
+
+
+def _outgoing(message: Message) -> Outgoing:
+    return Outgoing(
+        message_id=message.message_id,
+        kind=_KINDS.get(ContentType(message.content_type), "other"),
+        text=message.text or message.caption,
+        file_id=_file_id(message),
+        media_seconds=_media_seconds(message),
+        replied_message_id=(
+            None if message.reply_to_message is None else message.reply_to_message.message_id
+        ),
     )
 
 
@@ -181,6 +215,7 @@ async def on_message(
     state: FSMContext,
     settings: BotSettings,
     runtime_settings: RuntimeSettings,
+    held_media: "HeldMedia",
 ) -> None:
     if message.from_user is None:
         return
@@ -198,17 +233,51 @@ async def on_message(
         await session.commit()
         await message.answer(BLOCKED[refusal])
         return
+    outgoing = _outgoing(message)
+    window = (
+        await runtime_settings.get(session, SettingKey.PRIVATE_ENDED_ASK_SECONDS)
+        if outgoing.kind in VIEW_ONCE_KINDS
+        else 0
+    )
+    result = await relay(
+        bot,
+        session,
+        runtime_settings,
+        message.chat.id,
+        ctx.user.id,
+        active,
+        outgoing,
+        ask_since=datetime.now(UTC) - timedelta(seconds=window) if window > 0 else None,
+    )
+    if isinstance(result, chat.Hold):
+        await hold(message.chat.id, bot, held_media, active, outgoing, result)
+
+
+async def relay(
+    bot: Bot,
+    session: AsyncSession,
+    runtime_settings: RuntimeSettings,
+    sender_chat_id: int,
+    sender_id: int,
+    active: chat.ActiveChat,
+    outgoing: Outgoing,
+    *,
+    ask_since: datetime | None = None,
+    confirmed_after: int | None = None,
+) -> chat.Hold | chat.Lapsed | None:
+    """Record a message, copy it to the partner, and link the copy (see the module notes).
+
+    Returns Hold or Lapsed, without sending anything, when media is not to go out as a
+    normal message right now (D-049; see `chat.claim_message`).
+    """
     target = None
-    if message.reply_to_message is not None:
-        target = await chat.reply_target(
-            session, active, ctx.user.id, message.reply_to_message.message_id
-        )
-    kind = _KINDS.get(ContentType(message.content_type), "other")
+    if outgoing.replied_message_id is not None:
+        target = await chat.reply_target(session, active, sender_id, outgoing.replied_message_id)
     # If this is view-once media, how long it can be seen once opened, fixed now (D-048).
     view_seconds = (
         await runtime_settings.get(session, SettingKey.VIEW_ONCE_SECONDS)
-        + (_media_seconds(message) or 0)
-        if kind in VIEW_ONCE_KINDS
+        + (outgoing.media_seconds or 0)
+        if outgoing.kind in VIEW_ONCE_KINDS
         else None
     )
     # Recorded before the copy is sent: a redelivered update finds this row and stops,
@@ -216,17 +285,21 @@ async def on_message(
     claim = await chat.claim_message(
         session,
         active,
-        ctx.user.id,
-        message.message_id,
-        kind,
-        message.text or message.caption,
-        _file_id(message),
+        sender_id,
+        outgoing.message_id,
+        outgoing.kind,
+        outgoing.text,
+        outgoing.file_id,
         view_seconds,
+        ask_since=ask_since,
+        confirmed_after=confirmed_after,
     )
     partner = await users.get_user(session, active.partner_id)
     await session.commit()
     if claim is None:
-        return  # already relayed, or the chat ended meanwhile
+        return None  # already relayed, or the chat ended meanwhile
+    if isinstance(claim, chat.Hold | chat.Lapsed):
+        return claim
 
     reply = (
         None
@@ -237,7 +310,7 @@ async def on_message(
         if claim.view_once:
             # Private mode media is sent as a tap-to-view placeholder (D-048).
             text, button = view_once_placeholder(
-                kind, _media_seconds(message), view_seconds or 0, claim.row_id
+                outgoing.kind, outgoing.media_seconds, view_seconds or 0, claim.row_id
             )
             copied: MessageId | Message = await bot.send_message(
                 partner.telegram_user_id,
@@ -249,20 +322,20 @@ async def on_message(
         else:
             copied = await bot.copy_message(
                 chat_id=partner.telegram_user_id,
-                from_chat_id=message.chat.id,
-                message_id=message.message_id,
+                from_chat_id=sender_chat_id,
+                message_id=outgoing.message_id,
                 protect_content=True,
                 reply_parameters=reply,
             )
     except TelegramAPIError as error:
         await chat.discard_message(session, claim)
         if _unreachable(error):
-            await _end_unreachable(message, bot, session, ctx.user.id, active)
-            return
+            await _end_unreachable(sender_chat_id, bot, session, sender_id, active)
+            return None
         await session.commit()
         if isinstance(error, TelegramBadRequest):
-            await message.answer(UNSUPPORTED)
-            return
+            await bot.send_message(sender_chat_id, UNSUPPORTED)
+            return None
         raise
 
     try:
@@ -276,6 +349,194 @@ async def on_message(
     if not delivered:
         # The chat ended while the copy was on its way: take it back.
         await _withdraw(bot, partner.telegram_user_id, copied.message_id)
+    return None
+
+
+# --- Media sent just after Private mode ended (D-049) -----------------------------------
+
+
+class HeldAction(CallbackData, prefix="held"):
+    action: str  # "send" or "drop"
+    message: int  # the held message, by its id in the sender's chat
+
+
+# How long an unanswered question stays valid. Its details are kept no longer than this.
+HELD_TTL_SECONDS = 600
+_KIND_NAMES = {
+    "photo": "photo",
+    "video": "video",
+    "voice": "voice message",
+    "video_note": "video message",
+}
+HELD_BY_PARTNER = (
+    "Your chat partner turned off Private mode, so this {kind} would be sent as a normal "
+    "message. Send it?"
+)
+HELD_BY_TIME_LIMIT = (
+    "Private mode ended at its time limit, so this {kind} would be sent as a normal "
+    "message. Send it?"
+)
+SEND_BUTTON = "Send"
+DROP_BUTTON = "Don't send"
+NOT_SENT = "Not sent."
+HELD_EXPIRED = "This has expired. Send it again if you still want to."
+HELD_EDIT_REFUSED = "{reason} Your held {kind} won't be sent."
+
+
+class HeldMedia:
+    """Media waiting for the sender's answer, by sender and message (D-049).
+
+    Each entry is a Redis key that expires after HELD_TTL_SECONDS, so an unanswered
+    question leaves nothing behind. Taking an entry removes it in the same step, so a
+    question is answered once even if both buttons are tapped at once.
+    """
+
+    def __init__(self, redis: Redis) -> None:
+        self._redis = redis
+
+    @staticmethod
+    def _key(telegram_user_id: int, message_id: int) -> str:
+        return f"held:{telegram_user_id}:{message_id}"
+
+    async def put(self, telegram_user_id: int, message_id: int, details: dict[str, Any]) -> None:
+        await self._redis.set(
+            self._key(telegram_user_id, message_id), json.dumps(details), ex=HELD_TTL_SECONDS
+        )
+
+    async def take(self, telegram_user_id: int, message_id: int) -> dict[str, Any] | None:
+        raw = await self._redis.getdel(self._key(telegram_user_id, message_id))
+        return None if raw is None else dict(json.loads(raw))
+
+    async def get(self, telegram_user_id: int, message_id: int) -> dict[str, Any] | None:
+        raw = await self._redis.get(self._key(telegram_user_id, message_id))
+        return None if raw is None else dict(json.loads(raw))
+
+    async def replace(
+        self, telegram_user_id: int, message_id: int, details: dict[str, Any]
+    ) -> None:
+        """Update an entry, keeping its expiry; does nothing if it has gone."""
+        await self._redis.set(
+            self._key(telegram_user_id, message_id), json.dumps(details), keepttl=True, xx=True
+        )
+
+    async def discard(self, telegram_user_id: int, message_id: int) -> None:
+        await self._redis.delete(self._key(telegram_user_id, message_id))
+
+
+async def hold(
+    chat_id: int,
+    bot: Bot,
+    held_media: HeldMedia,
+    active: chat.ActiveChat,
+    outgoing: Outgoing,
+    held: chat.Hold,
+) -> None:
+    """Keep media back and ask whether to send it normally. Only its details are kept,
+    briefly; the media itself stays in the sender's own chat."""
+    await held_media.put(
+        chat_id,
+        outgoing.message_id,
+        {"conversation": active.conversation_id, "session": held.session_id, **asdict(outgoing)},
+    )
+    template = HELD_BY_TIME_LIMIT if held.reason == "time_limit" else HELD_BY_PARTNER
+    buttons = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text=label,
+                    callback_data=HeldAction(action=action, message=outgoing.message_id).pack(),
+                )
+                for label, action in ((SEND_BUTTON, "send"), (DROP_BUTTON, "drop"))
+            ]
+        ]
+    )
+    await bot.send_message(
+        chat_id,
+        template.format(kind=_KIND_NAMES[outgoing.kind]),
+        reply_markup=buttons,
+        reply_parameters=ReplyParameters(
+            message_id=outgoing.message_id, allow_sending_without_reply=True
+        ),
+    )
+
+
+async def on_held(
+    query: CallbackQuery,
+    bot: Bot,
+    callback_data: HeldAction,
+    session: AsyncSession,
+    state: FSMContext,
+    settings: BotSettings,
+    runtime_settings: RuntimeSettings,
+    held_media: HeldMedia,
+) -> None:
+    """[Send] or [Don't send] for held media. Each question is answered once."""
+    details = await held_media.take(query.from_user.id, callback_data.message)
+    await _remove_buttons(bot, query)
+    if details is None:
+        await query.answer(HELD_EXPIRED)
+        return
+    if callback_data.action != "send":
+        await query.answer(NOT_SENT)
+        return
+    ctx = await load_context(session, query.from_user)
+    if not ctx.terms_accepted:
+        # As for any message: the current terms come first.
+        await query.answer(HELD_EXPIRED)
+        await prompt_next(bot, query.from_user.id, session, ctx, state, settings)
+        return
+    active = await chat.active_chat(session, ctx.user.id)
+    conversation_id = details.pop("conversation")
+    session_id = details.pop("session")
+    if active is None or active.conversation_id != conversation_id:
+        await session.commit()
+        await query.answer(HELD_EXPIRED)
+        return
+    result = await relay(
+        bot,
+        session,
+        runtime_settings,
+        query.from_user.id,
+        ctx.user.id,
+        active,
+        Outgoing(**details),
+        confirmed_after=session_id,
+    )
+    # Lapsed: Private mode was turned on again since the question was asked.
+    await query.answer(HELD_EXPIRED if isinstance(result, chat.Lapsed) else None)
+
+
+async def held_edit(
+    held_media: HeldMedia, message: Message, new_text: str, refusal: Blocked | None
+) -> bool:
+    """Apply an edit to held media; returns whether the message was held.
+
+    An edit that breaks the chat rules (D-042) cancels the held message, since Send would
+    copy the edited message as it now is.
+    """
+    details = await held_media.get(message.chat.id, message.message_id)
+    if details is None:
+        return False
+    if refusal is not None:
+        await held_media.discard(message.chat.id, message.message_id)
+        await message.answer(
+            HELD_EDIT_REFUSED.format(reason=BLOCKED[refusal], kind=_KIND_NAMES[details["kind"]])
+        )
+        return True
+    details["text"] = new_text
+    await held_media.replace(message.chat.id, message.message_id, details)
+    return True
+
+
+async def _remove_buttons(bot: Bot, query: CallbackQuery) -> None:
+    if query.message is None:
+        return
+    try:
+        await bot.edit_message_reply_markup(
+            chat_id=query.message.chat.id, message_id=query.message.message_id, reply_markup=None
+        )
+    except TelegramAPIError as exc:
+        logger.info("could not remove buttons", extra=exception_summary(exc))
 
 
 async def _withdraw(bot: Bot, chat_id: int, message_id: int) -> None:
@@ -287,7 +548,12 @@ async def _withdraw(bot: Bot, chat_id: int, message_id: int) -> None:
 
 
 async def on_edit(
-    message: Message, bot: Bot, session: AsyncSession, state: FSMContext, settings: BotSettings
+    message: Message,
+    bot: Bot,
+    session: AsyncSession,
+    state: FSMContext,
+    settings: BotSettings,
+    held_media: HeldMedia,
 ) -> None:
     """Mirror an edited text or caption onto the partner's copy (D-038)."""
     if message.from_user is None:
@@ -295,6 +561,13 @@ async def on_edit(
     new_text = message.text if message.text is not None else message.caption
     if new_text is None:
         return  # only text and captions are mirrored
+    if await held_edit(
+        held_media,
+        message,
+        new_text,
+        _text_refusal(new_text, message.entities or message.caption_entities),
+    ):
+        return  # media still waiting for the sender's answer (D-049)
     ctx = await load_context(session, message.from_user)
     active = await chat.active_chat(session, ctx.user.id)
     relayed = await chat.relayed_message(session, ctx.user.id, message.message_id)
@@ -354,4 +627,7 @@ def create_router() -> Router:
     # Commands are never relayed; they reach their own handlers.
     router.message.register(on_message, ~F.text.startswith("/"))
     router.edited_message.register(on_edit)
+    # The answer to a held-media question (D-049); it needs no state filter.
+    router.callback_query.filter(F.message.chat.type == ChatType.PRIVATE)
+    router.callback_query.register(on_held, HeldAction.filter())
     return router

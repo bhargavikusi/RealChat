@@ -342,7 +342,7 @@ async def test_ending_at_the_time_limit_waits_for_a_copy_being_linked(
         claim = await chat_service.claim_message(
             session, active, alice, next(_message_ids), "text", "linking", None
         )
-        assert claim is not None
+        assert isinstance(claim, chat_service.Claim)
         await session.execute(
             update(PrivateSession).values(started_at=datetime.now(UTC) - timedelta(hours=25))
         )
