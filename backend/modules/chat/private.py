@@ -270,17 +270,23 @@ async def end_if_due(
     return await end_session(session, private_id, now, reason)
 
 
+@dataclass(frozen=True)
+class EndedBySomeoneElse:
+    reason: str  # "turned_off" (by the partner) or "time_limit"
+    session_id: int
+
+
 async def ended_by_someone_else(
     session: AsyncSession, conversation_id: int, user_id: int, since: datetime
-) -> str | None:
-    """Why Private mode ended, if it did at or after `since` without this user choosing
-    it: "turned_off" (by the partner) or "time_limit". None otherwise, including when it
-    is on again, or this user turned it off themselves (D-049)."""
+) -> EndedBySomeoneElse | None:
+    """How Private mode ended, if it did at or after `since` without this user choosing
+    it. None otherwise, including when it is on again, or this user turned it off
+    themselves (D-049). Callers hold the conversation lock, so the answer stays true."""
     if await active_session(session, conversation_id) is not None:
         return None
     latest = (
         await session.execute(
-            select(PrivateSession.end_reason, PrivateSession.ended_by_user_id)
+            select(PrivateSession.end_reason, PrivateSession.ended_by_user_id, PrivateSession.id)
             .where(
                 PrivateSession.conversation_id == conversation_id,
                 PrivateSession.ended_at.is_not(None),
@@ -292,10 +298,20 @@ async def ended_by_someone_else(
     ).first()
     if latest is None:
         return None
-    reason, ended_by = latest
+    reason, ended_by, session_id = latest
     if reason == "time_limit" or (reason == "turned_off" and ended_by != user_id):
-        return str(reason)
+        return EndedBySomeoneElse(str(reason), int(session_id))
     return None
+
+
+async def latest_session(session: AsyncSession, conversation_id: int) -> int | None:
+    """The id of the conversation's most recent Private mode session, active or not."""
+    return await session.scalar(
+        select(PrivateSession.id)
+        .where(PrivateSession.conversation_id == conversation_id)
+        .order_by(PrivateSession.id.desc())
+        .limit(1)
+    )
 
 
 # --- View-once media (D-048) ----------------------------------------------------------

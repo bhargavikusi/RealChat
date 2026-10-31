@@ -1,5 +1,6 @@
 """Asking before sending media right after Private mode ended (D-049)."""
 
+import asyncio
 from datetime import UTC, datetime, timedelta
 from itertools import count
 from typing import Any
@@ -7,7 +8,7 @@ from typing import Any
 import pytest
 from aiogram.types import PhotoSize, Voice
 from redis.asyncio import Redis
-from sqlalchemy import select, update
+from sqlalchemy import delete, select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from apps.bot import private as pv
@@ -16,10 +17,14 @@ from apps.bot.keyboards import END_CHAT, PRIVATE_OFF, PRIVATE_ON
 from backend.config.settings import BotSettings
 from backend.modules.admin.models import AppSetting
 from backend.modules.admin.settings import RuntimeSettings, SettingKey
+from backend.modules.chat import private
+from backend.modules.chat.content import Blocked
 from backend.modules.chat.models import ChatMessage, PrivateSession
 from backend.modules.chat.private import PrivateModeJob
-from tests.support.chat import USER_ID, Chat
-from tests.support.telegram import content_update
+from backend.modules.users.models import TermsAcceptance
+from tests.support.chat import TERMS, USER_ID, Chat
+from tests.support.db import wait_until_blocked
+from tests.support.telegram import content_update, edited_update
 from tests.support.world import BOB_ID, World, match, onboarded_world
 
 Sessions = async_sessionmaker[AsyncSession]
@@ -207,3 +212,95 @@ async def test_send_in_a_newer_chat_sends_nothing(world: World) -> None:
     await world.alice.press_data(send_button)
     assert world.alice.session.callback_answers()[-1] == rl.HELD_EXPIRED
     assert to_bob(world) == 0
+
+
+# --- Review follow-ups -----------------------------------------------------------------
+
+
+async def test_an_edit_that_adds_a_link_cancels_the_held_media(
+    world: World, session_factory: Sessions
+) -> None:
+    await partner_turned_it_off(world)
+    sent = await send(world.alice, photo=PHOTO, caption="hi")
+    send_button = world.alice.session.last_buttons()[rl.SEND_BUTTON]
+    await world.alice.dispatcher.feed_update(
+        world.alice.bot,
+        edited_update(next(Chat._ids), USER_ID, sent, photo=PHOTO, caption="see example.com"),
+    )
+    assert world.alice.last() == rl.HELD_EDIT_REFUSED.format(
+        reason=rl.BLOCKED[Blocked.LINK], kind="photo"
+    )
+    await world.alice.press_data(send_button)
+    assert world.alice.session.callback_answers()[-1] == rl.HELD_EXPIRED
+    assert to_bob(world) == 0
+
+
+async def test_a_harmless_edit_is_kept_for_sending(world: World, session_factory: Sessions) -> None:
+    await partner_turned_it_off(world)
+    sent = await send(world.alice, photo=PHOTO, caption="hi")
+    await world.alice.dispatcher.feed_update(
+        world.alice.bot,
+        edited_update(next(Chat._ids), USER_ID, sent, photo=PHOTO, caption="hello"),
+    )
+    await world.alice.press(rl.SEND_BUTTON)
+    (row,) = await stored(session_factory)
+    assert row.text == "hello"
+    assert to_bob(world) == 1
+
+
+async def test_send_needs_the_current_terms(world: World, session_factory: Sessions) -> None:
+    await partner_turned_it_off(world)
+    await send(world.alice, photo=PHOTO)
+    send_button = world.alice.session.last_buttons()[rl.SEND_BUTTON]
+    alice = await world.user_id(USER_ID)
+    async with session_factory() as session:  # as if the terms changed meanwhile
+        await session.execute(delete(TermsAcceptance).where(TermsAcceptance.user_id == alice))
+        await session.commit()
+    await world.alice.press_data(send_button)
+    assert world.alice.last() == TERMS
+    assert to_bob(world) == 0
+
+
+async def test_an_old_answer_never_applies_to_a_newer_session(world: World) -> None:
+    await partner_turned_it_off(world)
+    await send(world.alice, photo=PHOTO)
+    send_button = world.alice.session.last_buttons()[rl.SEND_BUTTON]
+    await world.bob.send(PRIVATE_ON)  # a newer session...
+    await world.bob.send(PRIVATE_OFF)  # ...which has ended too
+    await world.alice.press_data(send_button)
+    assert world.alice.session.callback_answers()[-1] == rl.HELD_EXPIRED
+    assert to_bob(world) == 0
+
+
+async def test_the_question_is_decided_under_the_chat_lock(
+    world: World, session_factory: Sessions
+) -> None:
+    # The partner turns Private mode off at the very moment the photo is sent: the
+    # photo waits for that to commit, then is held rather than sent normally.
+    await world.alice.send(PRIVATE_ON)
+    (conversation_id,) = {r.conversation_id for r in await sessions(session_factory)}
+    bob = await world.user_id(BOB_ID)
+    async with session_factory() as turning_off:
+        assert await private.turn_off(turning_off, conversation_id, bob, datetime.now(UTC))
+        sending = asyncio.create_task(send(world.alice, photo=PHOTO))
+        await wait_until_blocked(session_factory)
+        await turning_off.commit()
+        await sending
+    assert world.alice.last() == rl.HELD_BY_PARTNER.format(kind="photo")
+    assert to_bob(world) == 0
+
+
+async def test_held_details_expire(world: World, redis: Redis) -> None:
+    await partner_turned_it_off(world)
+    sent = await send(world.alice, photo=PHOTO)
+    ttl = await redis.ttl(f"held:{USER_ID}:{sent}")
+    assert 0 < ttl <= rl.HELD_TTL_SECONDS
+    await redis.delete(f"held:{USER_ID}:{sent}")  # as if it had expired
+    await world.alice.press(rl.SEND_BUTTON)
+    assert world.alice.session.callback_answers()[-1] == rl.HELD_EXPIRED
+    assert to_bob(world) == 0
+
+
+async def sessions(sessions_factory: Sessions) -> list[PrivateSession]:
+    async with sessions_factory() as session:
+        return list((await session.execute(select(PrivateSession))).scalars())

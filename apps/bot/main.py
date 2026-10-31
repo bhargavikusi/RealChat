@@ -50,8 +50,8 @@ def create_dispatcher(
     # FSM state (position within optional onboarding steps) lives in Redis so it
     # survives restarts; durable progress is in PostgreSQL. `settings` is passed to
     # every handler that declares a `settings` parameter, and `avatars` and
-    # `runtime_settings` (admin-changeable values, D-035) and `search_queue` (D-027)
-    # likewise.
+    # `runtime_settings` (admin-changeable values, D-035), `search_queue` (D-027), and
+    # `held_media` (media waiting for the sender's answer, D-049) likewise.
     # Event isolation processes one update at a time per user and chat, so a quick
     # second message cannot be routed by the FSM state the first one is changing.
     # The locks live in Redis: they expire on their own (no per-user memory kept in
@@ -63,6 +63,7 @@ def create_dispatcher(
         avatars=Avatars(redis),
         runtime_settings=RuntimeSettings(),
         search_queue=SearchQueue(redis),
+        held_media=relay.HeldMedia(redis),
     )
     # Order matters: duplicates are discarded before they count toward flood limits.
     dispatcher.update.outer_middleware(

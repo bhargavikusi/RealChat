@@ -490,8 +490,10 @@ Work happens on short-lived issue branches, such as `feature/12-onboarding`, cre
 
 * A photo, video, voice message, or video message sent within a short window after Private mode ended is held, not relayed, when the partner turned it off or it reached its time limit. The sender is asked whether to send it as a normal message, with [Send] and [Don't send]. A user who turned Private mode off themselves is never asked.
 * The window is an admin runtime setting, default 30 seconds (0–300, 0 turns it off).
-* Send relays it as a normal message; Don't send relays nothing, and the sender's own copy stays in their chat. Each question is answered once; it lapses when the chat ends, Private mode is turned on again, or the user starts something else.
-* Only the held message's details are kept, in the user's short-lived bot state; nothing is recorded or stored until it is sent.
+* Send relays it as a normal message; Don't send relays nothing, and the sender's own copy stays in their chat. Each question is answered once. It lapses after 10 minutes, when the chat ends, or when Private mode has been turned on again since (even if it was then turned off). Other messages sent meanwhile do not affect it.
+* Send needs the current terms, as any message does. An edit to the held message's caption is checked against the chat rules (D-042): one that breaks them cancels the held message, since Send copies the message as it now is.
+* The decision to hold, and the check that an answer still applies, are made under the conversation lock that turning Private mode on or off takes, so they cannot be overtaken.
+* Only the held message's details (ids, kind, caption) are kept, in a Redis entry that expires after 10 minutes; nothing is recorded in the database until it is sent.
 * Text and other kinds are relayed as before.
 
 **Why:** Owner decision. A user who turned Private mode on may send a photo without noticing that their partner just turned it off, and would otherwise have it delivered as a normal photo.
