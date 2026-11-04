@@ -439,15 +439,16 @@ async def test_a_hold_entry_must_match_its_hold(
     async with session_factory() as session:
         other = await users.get_or_create_user(session, 5353)
         hold_id = await coins.hold(session, user_id, 2, "paid_match", "search")
+        await session.commit()
+    entry_user = user_id if owner == "same" else other.id
+    async with session_factory() as session:
         if captured:
-            # Captured without its entry, as if a bug had skipped it.
+            # Captured in the same transaction as the bad entry (a captured hold must
+            # have its entry by commit).
             await session.execute(
                 text("UPDATE coin_holds SET status = 'captured', settled_at = now() WHERE id = :h"),
                 {"h": hold_id},
             )
-        await session.commit()
-    entry_user = user_id if owner == "same" else other.id
-    async with session_factory() as session:
         with pytest.raises(DBAPIError, match="does not match its coin hold") as raised:
             await session.execute(
                 text(
@@ -455,6 +456,35 @@ async def test_a_hold_entry_must_match_its_hold(
                     "hold_id) VALUES (:u, :a, 'paid_match', 'entry', :h)"
                 ),
                 {"u": entry_user, "a": amount, "h": hold_id},
+            )
+    assert sqlstate(raised) == RESTRICT_VIOLATION
+
+
+async def test_a_captured_hold_must_have_its_entry(session_factory: Sessions, user_id: int) -> None:
+    await _credit(session_factory, user_id, 10, "a")
+    async with session_factory() as session:
+        hold_id = await coins.hold(session, user_id, 2, "paid_match", "search")
+        await session.commit()
+    async with session_factory() as session:
+        await session.execute(
+            text("UPDATE coin_holds SET status = 'captured', settled_at = now() WHERE id = :h"),
+            {"h": hold_id},
+        )
+        with pytest.raises(DBAPIError, match="has no ledger entry") as raised:
+            await session.commit()  # checked at commit
+    assert sqlstate(raised) == RESTRICT_VIOLATION
+    assert (await _balance(session_factory, user_id)) == coins.Balance(10, 2)  # still held
+
+
+async def test_a_hold_must_start_as_held(session_factory: Sessions, user_id: int) -> None:
+    async with session_factory() as session:
+        with pytest.raises(DBAPIError, match="must start as held") as raised:
+            await session.execute(
+                text(
+                    "INSERT INTO coin_holds (user_id, amount, purpose, idempotency_key, status, "
+                    "settled_at) VALUES (:u, 2, 'paid_match', 'k', 'captured', now())"
+                ),
+                {"u": user_id},
             )
     assert sqlstate(raised) == RESTRICT_VIOLATION
 

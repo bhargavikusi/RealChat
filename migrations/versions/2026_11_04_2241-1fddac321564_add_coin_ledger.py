@@ -41,6 +41,29 @@ END;
 $$
 """
 
+HOLD_START_FUNCTION = """
+CREATE FUNCTION coin_holds_start_held() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+    IF NEW.status <> 'held' OR NEW.settled_at IS NOT NULL THEN
+        RAISE EXCEPTION 'a coin hold must start as held' USING ERRCODE = 'restrict_violation';
+    END IF;
+    RETURN NEW;
+END;
+$$
+"""
+
+HOLD_CHARGED_FUNCTION = """
+CREATE FUNCTION coin_holds_captured_charged() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM coin_transactions WHERE hold_id = NEW.id) THEN
+        RAISE EXCEPTION 'a captured coin hold has no ledger entry'
+            USING ERRCODE = 'restrict_violation';
+    END IF;
+    RETURN NULL;
+END;
+$$
+"""
+
 HOLD_ENTRY_FUNCTION = """
 CREATE FUNCTION coin_transactions_hold_matches() RETURNS trigger LANGUAGE plpgsql AS $$
 DECLARE
@@ -178,6 +201,19 @@ def upgrade() -> None:
         "CREATE TRIGGER coin_holds_transition BEFORE UPDATE OR DELETE ON coin_holds "
         "FOR EACH ROW EXECUTE FUNCTION coin_holds_transition()"
     )
+    # Holds start as held, and a captured hold must have its ledger entry by the end of
+    # the transaction (a deferred constraint trigger, so capture can write both).
+    op.execute(HOLD_START_FUNCTION)
+    op.execute(
+        "CREATE TRIGGER coin_holds_start_held BEFORE INSERT ON coin_holds "
+        "FOR EACH ROW EXECUTE FUNCTION coin_holds_start_held()"
+    )
+    op.execute(HOLD_CHARGED_FUNCTION)
+    op.execute(
+        "CREATE CONSTRAINT TRIGGER coin_holds_captured_charged AFTER UPDATE ON coin_holds "
+        "DEFERRABLE INITIALLY DEFERRED FOR EACH ROW WHEN (NEW.status = 'captured') "
+        "EXECUTE FUNCTION coin_holds_captured_charged()"
+    )
     op.execute(HOLD_ENTRY_FUNCTION)
     op.execute(
         "CREATE TRIGGER coin_transactions_hold_matches BEFORE INSERT ON coin_transactions "
@@ -206,6 +242,10 @@ def downgrade() -> None:
         "admin_audit_log",
         "action IN ('role_changed', 'setting_changed')",
     )
+    op.execute("DROP TRIGGER coin_holds_captured_charged ON coin_holds")
+    op.execute("DROP FUNCTION coin_holds_captured_charged()")
+    op.execute("DROP TRIGGER coin_holds_start_held ON coin_holds")
+    op.execute("DROP FUNCTION coin_holds_start_held()")
     op.execute("DROP TRIGGER coin_transactions_hold_matches ON coin_transactions")
     op.execute("DROP FUNCTION coin_transactions_hold_matches()")
     op.execute("DROP TRIGGER coin_holds_transition ON coin_holds")

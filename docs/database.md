@@ -230,7 +230,7 @@ Coins set aside for something that may still fail, such as a paid search (D-050)
 | `status` | varchar(16) | `held` (default), `captured`, or `released`. |
 | `created_at`, `settled_at` | timestamptz | `settled_at` is set exactly when the status leaves `held` (constraint). |
 
-Available coins are the balance minus the user's `held` holds (a partial index serves this). Capturing changes the status only from `held` and adds a ledger row of the hold's purpose, keyed to the hold; releasing changes the status only. A trigger rejects deleting any hold, and allows only one change: from `held` to `captured` or `released`, with its user, amount, purpose, key, and creation time unchanged. So each hold is spent or released once, even when tried twice at the same moment. A hold's idempotency key is bound to its user, amount, and purpose: reusing it for anything else is refused.
+Available coins are the balance minus the user's `held` holds (a partial index serves this). Capturing changes the status only from `held` and adds a ledger row of the hold's purpose, keyed to the hold; releasing changes the status only. A trigger rejects deleting any hold, and allows only one change: from `held` to `captured` or `released`, with its user, amount, purpose, key, and creation time unchanged. A new hold must start as `held`, and a deferred constraint trigger refuses to commit a captured hold without its ledger row, so held coins are never marked spent without being charged. So each hold is spent or released once, even when tried twice at the same moment. A hold's idempotency key is bound to its user, amount, and purpose: reusing it for anything else is refused.
 
 ## Where rules are enforced
 
