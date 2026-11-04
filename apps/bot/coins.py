@@ -49,8 +49,12 @@ async def on_coins(
     if not (ctx.terms_accepted and ctx.profile.onboarding_completed_at is not None):
         await prompt_next(bot, message.chat.id, session, ctx, state, settings)
         return
-    balance = await coins.balance(session, ctx.user.id)
-    entries = await coins.history(session, ctx.user.id, HISTORY_LENGTH)
+    await session.commit()
+    # Any half-finished profile or admin edit is abandoned, so the next message is not
+    # taken as its answer.
+    await state.clear()
+    # A fresh transaction, so the balance and history come from one snapshot.
+    balance, entries = await coins.summary(session, ctx.user.id, HISTORY_LENGTH)
     await session.commit()
     await message.answer(coins_text(balance, entries))
 

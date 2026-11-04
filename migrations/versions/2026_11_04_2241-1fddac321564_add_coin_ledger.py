@@ -21,6 +21,15 @@ branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
 
+SETTLED_FINAL_FUNCTION = """
+CREATE FUNCTION coin_holds_settled_final() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+    RAISE EXCEPTION 'a captured or released coin hold cannot change'
+        USING ERRCODE = 'restrict_violation';
+END;
+$$
+"""
+
 APPEND_ONLY_FUNCTION = """
 CREATE FUNCTION coin_transactions_append_only() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
@@ -88,6 +97,18 @@ def upgrade() -> None:
             name=op.f("ck_coin_transactions_kind"),
         ),
         sa.CheckConstraint("amount <> 0", name=op.f("ck_coin_transactions_nonzero")),
+        sa.CheckConstraint(
+            "(kind IN ('welcome_bonus', 'referral_reward', 'daily_reward', 'admin_grant')) "
+            "= (amount > 0)",
+            name=op.f("ck_coin_transactions_sign"),
+        ),
+        sa.CheckConstraint(
+            "hold_id IS NULL OR kind = 'paid_match'", name=op.f("ck_coin_transactions_hold_kind")
+        ),
+        sa.CheckConstraint(
+            "kind NOT IN ('admin_grant', 'admin_correction') OR note IS NOT NULL",
+            name=op.f("ck_coin_transactions_admin_note"),
+        ),
         sa.ForeignKeyConstraint(
             ["hold_id"], ["coin_holds.id"], name=op.f("fk_coin_transactions_hold_id_coin_holds")
         ),
@@ -99,6 +120,13 @@ def upgrade() -> None:
     )
     op.create_index(
         "ix_coin_transactions_user_id_id", "coin_transactions", ["user_id", "id"], unique=False
+    )
+    op.create_index(
+        "uq_coin_transactions_hold_id",
+        "coin_transactions",
+        ["hold_id"],
+        unique=True,
+        postgresql_where=sa.text("hold_id IS NOT NULL"),
     )
 
     # Append-only at the database boundary, like the admin audit log: any UPDATE,
@@ -112,6 +140,12 @@ def upgrade() -> None:
     op.execute(
         "CREATE TRIGGER coin_transactions_no_truncate BEFORE TRUNCATE ON coin_transactions "
         "FOR EACH STATEMENT EXECUTE FUNCTION coin_transactions_append_only()"
+    )
+    # A hold is settled once: after capture or release its row cannot change.
+    op.execute(SETTLED_FINAL_FUNCTION)
+    op.execute(
+        "CREATE TRIGGER coin_holds_settled_final BEFORE UPDATE OR DELETE ON coin_holds "
+        "FOR EACH ROW WHEN (OLD.status <> 'held') EXECUTE FUNCTION coin_holds_settled_final()"
     )
     op.drop_constraint(op.f("ck_admin_audit_log_action"), "admin_audit_log", type_="check")
     op.create_check_constraint(
@@ -135,9 +169,16 @@ def downgrade() -> None:
         "admin_audit_log",
         "action IN ('role_changed', 'setting_changed')",
     )
+    op.execute("DROP TRIGGER coin_holds_settled_final ON coin_holds")
+    op.execute("DROP FUNCTION coin_holds_settled_final()")
     op.execute("DROP TRIGGER coin_transactions_no_truncate ON coin_transactions")
     op.execute("DROP TRIGGER coin_transactions_append_only ON coin_transactions")
     op.execute("DROP FUNCTION coin_transactions_append_only()")
+    op.drop_index(
+        "uq_coin_transactions_hold_id",
+        table_name="coin_transactions",
+        postgresql_where=sa.text("hold_id IS NOT NULL"),
+    )
     op.drop_index("ix_coin_transactions_user_id_id", table_name="coin_transactions")
     op.drop_table("coin_transactions")
     op.drop_index(

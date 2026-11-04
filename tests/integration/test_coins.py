@@ -37,7 +37,7 @@ async def user_id(session_factory: Sessions) -> int:
 
 async def _credit(sessions: Sessions, user_id: int, amount: int, key: str) -> bool:
     async with sessions() as session:
-        added = await coins.credit(session, user_id, amount, "admin_grant", key)
+        added = await coins.credit(session, user_id, amount, "admin_grant", key, note="test")
         await session.commit()
         return added
 
@@ -83,7 +83,7 @@ async def test_credits_and_debits_must_be_positive(
 ) -> None:
     async with session_factory() as session:
         with pytest.raises(ValueError):
-            await coins.credit(session, user_id, amount, "admin_grant", "x")
+            await coins.credit(session, user_id, amount, "admin_grant", "x", note="test")
         with pytest.raises(ValueError):
             await coins.debit(session, user_id, amount, "paid_match", "y")
 
@@ -101,8 +101,10 @@ async def test_the_ledger_is_append_only(
 ) -> None:
     await _credit(session_factory, user_id, 5, "a")
     async with session_factory() as session:
-        with pytest.raises(DBAPIError, match="append-only"):
+        with pytest.raises(DBAPIError, match="append-only") as raised:
             await session.execute(text(statement))
+    # restrict_violation: the trigger, not some other error.
+    assert raised.value.orig.sqlstate == "23001"  # type: ignore[union-attr]
 
 
 async def test_history_is_newest_first(session_factory: Sessions, user_id: int) -> None:
@@ -135,11 +137,11 @@ async def test_a_hold_is_captured_or_released_once(session_factory: Sessions, us
         first = await coins.hold(session, user_id, 2, "paid_match", "search-1")
         assert await coins.hold(session, user_id, 2, "paid_match", "search-1") == first
         second = await coins.hold(session, user_id, 2, "paid_match", "search-2")
-        assert await coins.capture(session, first, "paid_match", NOW)
-        assert not await coins.capture(session, first, "paid_match", NOW)
+        assert await coins.capture(session, first, NOW)
+        assert not await coins.capture(session, first, NOW)
         assert not await coins.release(session, first, NOW)
         assert await coins.release(session, second, NOW)
-        assert not await coins.capture(session, second, "paid_match", NOW)
+        assert not await coins.capture(session, second, NOW)
         await session.commit()
     assert await _balance(session_factory, user_id) == coins.Balance(8, 0)
     async with session_factory() as session:
@@ -189,14 +191,19 @@ async def test_simultaneous_captures_spend_once(session_factory: Sessions, user_
     async with session_factory() as session:
         hold_id = await coins.hold(session, user_id, 2, "paid_match", "search")
         await session.commit()
+    async with session_factory() as first:
+        assert await coins.capture(first, hold_id, NOW)  # holds the hold's row lock
 
-    async def capture() -> bool:
-        async with session_factory() as session:
-            done = await coins.capture(session, hold_id, "paid_match", NOW)
-            await session.commit()
-            return done
+        async def second() -> bool:
+            async with session_factory() as session:
+                done = await coins.capture(session, hold_id, NOW)
+                await session.commit()
+                return done
 
-    assert sorted(await asyncio.gather(capture(), capture())) == [False, True]
+        task = asyncio.create_task(second())
+        await wait_until_blocked(session_factory)  # really overlapping
+        await first.commit()
+        assert await task is False
     assert (await _balance(session_factory, user_id)).total == 8
 
 
@@ -207,8 +214,8 @@ async def test_admins_grant_and_correct_with_a_reason(
     session_factory: Sessions, user_id: int
 ) -> None:
     async with session_factory() as session:
-        assert (await admin.adjust_coins(session, USER_ID, 10, "launch promo")).total == 10
-        assert (await admin.adjust_coins(session, USER_ID, -4, "double grant")).total == 6
+        assert (await admin.adjust_coins(session, USER_ID, 10, "launch promo"))[0].total == 10
+        assert (await admin.adjust_coins(session, USER_ID, -4, "double grant"))[0].total == 6
         with pytest.raises(AdminError, match="can't go below 0"):
             await admin.adjust_coins(session, USER_ID, -7, "too much")
         with pytest.raises(AdminError, match="reason"):
@@ -308,3 +315,115 @@ async def test_a_repeated_spend_reports_done_even_when_coins_ran_out(
         await session.commit()
     async with session_factory() as session:  # e.g. a retry after a lost reply
         assert not await coins.debit(session, user_id, 4, "paid_match", "spend")
+
+
+# --- Review follow-ups -----------------------------------------------------------------
+
+
+async def test_a_hold_key_cannot_be_reused_for_another_hold(
+    session_factory: Sessions, user_id: int
+) -> None:
+    await _credit(session_factory, user_id, 10, "a")
+    async with session_factory() as session:
+        other = await users.get_or_create_user(session, 5353)
+        await coins.credit(session, other.id, 10, "admin_grant", "b", note="test")
+        await coins.hold(session, user_id, 2, "paid_match", "search")
+        with pytest.raises(ValueError, match="different hold"):
+            await coins.hold(session, other.id, 2, "paid_match", "search")  # another user
+        with pytest.raises(ValueError, match="different hold"):
+            await coins.hold(session, user_id, 3, "paid_match", "search")  # another amount
+
+
+_INSERT = "INSERT INTO coin_transactions (user_id, amount, kind, idempotency_key, hold_id, note) "
+
+
+@pytest.mark.parametrize(
+    ("statement", "constraint"),
+    [
+        (_INSERT + "VALUES (:u, 5, 'paid_match', 'k1', NULL, NULL)", "ck_coin_transactions_sign"),
+        (
+            _INSERT + "VALUES (:u, -5, 'welcome_bonus', 'k2', NULL, NULL)",
+            "ck_coin_transactions_sign",
+        ),
+        (
+            _INSERT + "VALUES (:u, 5, 'admin_grant', 'k3', NULL, NULL)",
+            "ck_coin_transactions_admin_note",
+        ),
+        (
+            _INSERT + "VALUES (:u, 5, 'welcome_bonus', 'k4', :h, NULL)",
+            "ck_coin_transactions_hold_kind",
+        ),
+    ],
+)
+async def test_the_database_enforces_ledger_rules(
+    session_factory: Sessions, user_id: int, statement: str, constraint: str
+) -> None:
+    await _credit(session_factory, user_id, 5, "funds")
+    async with session_factory() as session:
+        hold_id = await coins.hold(session, user_id, 1, "paid_match", "h")
+        await session.commit()
+    async with session_factory() as session:
+        with pytest.raises(DBAPIError, match=constraint):
+            await session.execute(text(statement), {"u": user_id, "h": hold_id})
+
+
+async def test_the_database_settles_a_hold_once(session_factory: Sessions, user_id: int) -> None:
+    await _credit(session_factory, user_id, 10, "a")
+    async with session_factory() as session:
+        hold_id = await coins.hold(session, user_id, 2, "paid_match", "search")
+        assert await coins.capture(session, hold_id, NOW)
+        await session.commit()
+    async with session_factory() as session:
+        with pytest.raises(DBAPIError, match="cannot change"):
+            await session.execute(
+                text("UPDATE coin_holds SET status = 'held', settled_at = NULL WHERE id = :h"),
+                {"h": hold_id},
+            )
+    async with session_factory() as session:
+        with pytest.raises(DBAPIError, match="uq_coin_transactions_hold_id"):
+            await session.execute(
+                text(
+                    "INSERT INTO coin_transactions (user_id, amount, kind, idempotency_key, "
+                    "hold_id) VALUES (:u, -2, 'paid_match', 'again', :h)"
+                ),
+                {"u": user_id, "h": hold_id},
+            )
+
+
+async def test_an_admin_key_makes_a_rerun_harmless(
+    session_factory: Sessions, user_id: int, capsys: pytest.CaptureFixture[str]
+) -> None:
+    command = ["coins", str(USER_ID), "5", "--reason", "promo", "--key", "promo-1"]
+    assert await admin_cli.run(command, session_factory) == 0
+    assert await admin_cli.run(command, session_factory) == 0
+    assert capsys.readouterr().out.splitlines() == [
+        f"{USER_ID}: 5 coins (0 held, 5 available)",
+        "That key was already used, so nothing changed.",
+        f"{USER_ID}: 5 coins (0 held, 5 available)",
+    ]
+    async with session_factory() as session:
+        audit = (await session.execute(select(AdminAuditEntry))).scalars().all()
+        assert len(audit) == 1
+
+
+@pytest.mark.parametrize("amount", [2_147_483_648, -2_147_483_648])
+async def test_admin_amounts_must_fit(session_factory: Sessions, user_id: int, amount: int) -> None:
+    async with session_factory() as session:
+        with pytest.raises(AdminError, match="between"):
+            await admin.adjust_coins(session, USER_ID, amount, "too much")
+
+
+async def test_coins_abandons_a_pending_profile_edit(
+    bot_settings: BotSettings, redis: Redis, session_factory: Sessions
+) -> None:
+    chat = Chat(bot_settings, redis, session_factory)
+    await complete_onboarding(chat)
+    await chat.send("/profile")
+    await chat.press("✏️ Nickname")  # now waiting for a new nickname
+    await chat.send("/coins")
+    await chat.send("Zed")
+    async with session_factory() as session:
+        profile = await users.get_profile(
+            session, (await users.get_or_create_user(session, USER_ID)).id
+        )
+        assert profile.nickname == "Night Owl"

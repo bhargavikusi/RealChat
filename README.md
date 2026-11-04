@@ -60,7 +60,7 @@ uv run python -m apps.bot.main
 
 During development the bot uses long polling, so it needs no public URL. It stops on Ctrl+C. The minimum age is `MIN_AGE` (default 18 for development; see D-009). With `APP_ENV=production` the bot refuses to start unless `MIN_AGE` is set explicitly.
 
-At startup the bot registers its command menu (`/start`, `/profile`, `/help`) with Telegram for private chats. After onboarding, the keyboard under the message box offers 🎭 New Anonymous Chat, which opens a menu of chats to choose from (for now, a free random chat); during a chat it shows 👤 Partner profile (whose card offers Block and Report), 🔒 Private mode, and ⏹ End chat, and other messages the user sends are relayed to their partner (except commands, messages refused under the chat rules, and answers to a pending step such as a profile edit). Age and gender can each be changed once per `PROFILE_CHANGE_COOLDOWN_DAYS` (default 30). `/help` shows the announcement channel link only when `ANNOUNCEMENT_CHANNEL_URL` is set, and the support link only when `SUPPORT_CONTACT` is set. Each must be an `https://` link.
+At startup the bot registers its command menu (`/start`, `/profile`, `/coins`, `/help`) with Telegram for private chats. After onboarding, the keyboard under the message box offers 🎭 New Anonymous Chat, which opens a menu of chats to choose from (for now, a free random chat); during a chat it shows 👤 Partner profile (whose card offers Block and Report), 🔒 Private mode, and ⏹ End chat, and other messages the user sends are relayed to their partner (except commands, messages refused under the chat rules, and answers to a pending step such as a profile edit). Age and gender can each be changed once per `PROFILE_CHANGE_COOLDOWN_DAYS` (default 30). `/help` shows the announcement channel link only when `ANNOUNCEMENT_CHANNEL_URL` is set, and the support link only when `SUPPORT_CONTACT` is set. Each must be an `https://` link.
 
 While Redis is available, two protections apply:
 
@@ -89,10 +89,10 @@ uv run python -m apps.admin_cli revoke <telegram_user_id>
 uv run python -m apps.admin_cli list
 ```
 
-The same tool grants or corrects coins, with a reason that is kept in the ledger, and shows an account's coins:
+The same tool grants or corrects coins, with a reason that is kept in the ledger, and shows an account's coins. With `--key`, running the same adjustment again changes nothing:
 
 ```bash
-uv run python -m apps.admin_cli coins <telegram_user_id> <amount> --reason "<why>"
+uv run python -m apps.admin_cli coins <telegram_user_id> <amount> --reason "<why>" [--key <id>]
 uv run python -m apps.admin_cli balance <telegram_user_id>
 ```
 

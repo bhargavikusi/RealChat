@@ -35,6 +35,11 @@ TRANSACTION_KINDS = (
     "admin_grant",
     "admin_correction",
 )
+# Kinds that add coins, and kinds that remove them; the database checks the sign.
+CREDIT_KINDS = ("welcome_bonus", "referral_reward", "daily_reward", "admin_grant")
+DEBIT_KINDS = ("paid_match", "admin_correction")
+# Admin entries must say why.
+ADMIN_KINDS = ("admin_grant", "admin_correction")
 HOLD_PURPOSES = ("paid_match",)
 HOLD_STATUSES = ("held", "captured", "released")
 
@@ -71,6 +76,22 @@ class CoinTransaction(Base):
     __tablename__ = "coin_transactions"
     __table_args__ = (
         CheckConstraint("amount <> 0", name="nonzero"),
+        CheckConstraint(
+            f"(kind IN ({', '.join(repr(k) for k in CREDIT_KINDS)})) = (amount > 0)",
+            name="sign",
+        ),
+        CheckConstraint("hold_id IS NULL OR kind = 'paid_match'", name="hold_kind"),
+        CheckConstraint(
+            f"kind NOT IN ({', '.join(repr(k) for k in ADMIN_KINDS)}) OR note IS NOT NULL",
+            name="admin_note",
+        ),
+        # A hold is spent by at most one entry.
+        Index(
+            "uq_coin_transactions_hold_id",
+            "hold_id",
+            unique=True,
+            postgresql_where=text("hold_id IS NOT NULL"),
+        ),
         CheckConstraint(f"kind IN ({', '.join(repr(k) for k in TRANSACTION_KINDS)})", name="kind"),
         # Serves balances and history.
         Index("ix_coin_transactions_user_id_id", "user_id", "id"),

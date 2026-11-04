@@ -75,43 +75,58 @@ async def set_role(session: AsyncSession, telegram_user_id: int, role: str) -> s
     return old
 
 
-async def adjust_coins(
-    session: AsyncSession, telegram_user_id: int, amount: int, reason: str
-) -> coins.Balance:
-    """Grant (positive) or correct (negative) an account's coins; returns the new balance.
+# Coin amounts are stored as 32-bit integers.
+MAX_COIN_ADJUSTMENT = 2_147_483_647
 
-    Each adjustment is a ledger entry with the reason as its note, and an audit entry.
-    A correction cannot take the balance below what is available.
+
+async def adjust_coins(
+    session: AsyncSession, telegram_user_id: int, amount: int, reason: str, key: str | None = None
+) -> tuple[coins.Balance, bool]:
+    """Grant (positive) or correct (negative) an account's coins.
+
+    Returns the new balance and whether this call applied it. With `key`, running the
+    same adjustment again (say, after an unclear failure) applies it once. Each
+    adjustment is a ledger entry with the reason as its note, and an audit entry. A
+    correction cannot take the balance below what is available.
     """
     reason = reason.strip()
     if not reason:
         raise AdminError("Give a reason for the adjustment.")
     if amount == 0:
         raise AdminError("The amount must not be 0.")
+    if abs(amount) > MAX_COIN_ADJUSTMENT:
+        raise AdminError(
+            f"The amount must be between -{MAX_COIN_ADJUSTMENT} and {MAX_COIN_ADJUSTMENT}."
+        )
     user = (
         await session.execute(select(User).where(User.telegram_user_id == telegram_user_id))
     ).scalar_one_or_none()
     if user is None:
         raise AdminError("No account for that Telegram user ID. They must start the bot first.")
-    key = f"admin:{uuid.uuid4()}"
+    ledger_key = f"admin:{key or uuid.uuid4()}"
     if amount > 0:
-        await coins.credit(session, user.id, amount, "admin_grant", key, note=reason)
+        applied = await coins.credit(
+            session, user.id, amount, "admin_grant", ledger_key, note=reason
+        )
     else:
         try:
-            await coins.debit(session, user.id, -amount, "admin_correction", key, note=reason)
+            applied = await coins.debit(
+                session, user.id, -amount, "admin_correction", ledger_key, note=reason
+            )
         except coins.InsufficientCoinsError as error:
             raise AdminError(
                 f"Only {error.available} coins are available; a correction can't go below 0."
             ) from error
-    session.add(
-        AdminAuditEntry(
-            actor_user_id=None,
-            action="coins_adjusted",
-            target_user_id=user.id,
-            new_value=str(amount),
+    if applied:
+        session.add(
+            AdminAuditEntry(
+                actor_user_id=None,
+                action="coins_adjusted",
+                target_user_id=user.id,
+                new_value=str(amount),
+            )
         )
-    )
-    return await coins.balance(session, user.id)
+    return await coins.balance(session, user.id), applied
 
 
 async def coin_balance(session: AsyncSession, telegram_user_id: int) -> coins.Balance:

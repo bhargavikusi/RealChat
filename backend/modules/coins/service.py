@@ -43,17 +43,21 @@ class Balance:
 
 
 async def balance(session: AsyncSession, user_id: int) -> Balance:
-    total = await session.scalar(
-        select(func.coalesce(func.sum(CoinTransaction.amount), 0)).where(
-            CoinTransaction.user_id == user_id
-        )
+    """The user's balance. Both sums are read in one statement, so they come from the
+    same snapshot: a capture committing in between cannot make coins look available
+    twice."""
+    total = (
+        select(func.coalesce(func.sum(CoinTransaction.amount), 0))
+        .where(CoinTransaction.user_id == user_id)
+        .scalar_subquery()
     )
-    held = await session.scalar(
-        select(func.coalesce(func.sum(CoinHold.amount), 0)).where(
-            CoinHold.user_id == user_id, CoinHold.status == "held"
-        )
+    held = (
+        select(func.coalesce(func.sum(CoinHold.amount), 0))
+        .where(CoinHold.user_id == user_id, CoinHold.status == "held")
+        .scalar_subquery()
     )
-    return Balance(int(total or 0), int(held or 0))
+    row = (await session.execute(select(total, held))).one()
+    return Balance(int(row[0]), int(row[1]))
 
 
 async def _lock_user(session: AsyncSession, user_id: int) -> None:
@@ -147,9 +151,17 @@ async def hold(session: AsyncSession, user_id: int, amount: int, purpose: str, k
     if amount <= 0:
         raise ValueError("a hold must be positive")
     await _lock_user(session, user_id)
-    existing = await session.scalar(select(CoinHold.id).where(CoinHold.idempotency_key == key))
+    existing = (
+        await session.execute(
+            select(CoinHold.id, CoinHold.user_id, CoinHold.amount, CoinHold.purpose).where(
+                CoinHold.idempotency_key == key
+            )
+        )
+    ).first()
     if existing is not None:
-        return int(existing)
+        if (existing.user_id, existing.amount, existing.purpose) != (user_id, amount, purpose):
+            raise ValueError("this idempotency key belongs to a different hold")
+        return int(existing.id)
     available = (await balance(session, user_id)).available
     if available < amount:
         raise InsufficientCoinsError(available, amount)
@@ -163,22 +175,23 @@ async def hold(session: AsyncSession, user_id: int, amount: int, purpose: str, k
     return int(hold_id)
 
 
-async def capture(session: AsyncSession, hold_id: int, kind: str, now: datetime) -> bool:
+async def capture(session: AsyncSession, hold_id: int, now: datetime) -> bool:
     """Spend held coins; returns whether this call captured it (False if it had already
     been captured or released). The status change and the ledger entry are written
-    together, and the entry's key is tied to the hold, so a hold is spent at most once."""
+    together, and the entry is of the kind the hold was made for, so a hold is spent
+    at most once and only as intended (the database also enforces both)."""
     captured = (
         await session.execute(
             update(CoinHold)
             .where(CoinHold.id == hold_id, CoinHold.status == "held")
             .values(status="captured", settled_at=now)
-            .returning(CoinHold.user_id, CoinHold.amount)
+            .returning(CoinHold.user_id, CoinHold.amount, CoinHold.purpose)
         )
     ).first()
     if captured is None:
         return False
-    user_id, amount = captured
-    await _record(session, user_id, -amount, kind, f"hold:{hold_id}:capture", hold_id=hold_id)
+    user_id, amount, purpose = captured
+    await _record(session, user_id, -amount, purpose, f"hold:{hold_id}:capture", hold_id=hold_id)
     return True
 
 
@@ -198,6 +211,15 @@ class Entry:
     amount: int
     kind: str
     created_at: datetime
+
+
+async def summary(session: AsyncSession, user_id: int, limit: int) -> tuple[Balance, list[Entry]]:
+    """The balance and recent history from one consistent snapshot, so they agree.
+
+    Call at the start of a transaction: it runs at REPEATABLE READ.
+    """
+    await session.connection(execution_options={"isolation_level": "REPEATABLE READ"})
+    return await balance(session, user_id), await history(session, user_id, limit)
 
 
 async def history(session: AsyncSession, user_id: int, limit: int) -> list[Entry]:

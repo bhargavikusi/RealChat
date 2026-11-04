@@ -84,7 +84,7 @@ An append-only record of administrative changes. Rows are never updated or delet
 | `id` | bigint identity | |
 | `actor_user_id` | bigint, nullable | References `users.id`. NULL means the server-side admin CLI. |
 | `action` | varchar(32) | `role_changed`, `setting_changed`, or `coins_adjusted` (an admin grant or correction; `new_value` is the amount). |
-| `target_user_id` | bigint, nullable | References `users.id`. The account whose role changed. |
+| `target_user_id` | bigint, nullable | References `users.id`. The account whose role or coins changed. |
 | `setting_key` | varchar(64), nullable | The setting that changed. |
 | `old_value`, `new_value` | varchar(64), nullable | |
 | `created_at` | timestamptz | |
@@ -207,14 +207,14 @@ The coin ledger (D-050). Every change to a user's coins is one row; a balance is
 |---|---|---|
 | `id` | bigint identity | |
 | `user_id` | bigint | References `users.id`. |
-| `amount` | integer | Positive adds coins, negative removes them; never 0. |
+| `amount` | integer | Positive adds coins, negative removes them; never 0. A constraint ties the sign to the kind: rewards and admin grants add, paid matches and admin corrections remove. |
 | `kind` | varchar(32) | `welcome_bonus`, `referral_reward`, `daily_reward`, `paid_match`, `admin_grant`, or `admin_correction`. |
 | `idempotency_key` | varchar(128), unique | One row per action: a retried or duplicated action records once. |
-| `hold_id` | bigint, nullable | References `coin_holds.id`: the hold this spending captured. |
-| `note` | text, nullable | The reason for an admin grant or correction. |
+| `hold_id` | bigint, nullable | References `coin_holds.id`: the hold this spending captured. Only `paid_match` rows may have one (constraint), and a partial unique index allows one row per hold. |
+| `note` | text, nullable | The reason for an admin grant or correction; required for those kinds (constraint). |
 | `created_at` | timestamptz | |
 
-The index on `(user_id, id)` serves balances and history. Spending and holding lock the user's `users` row (`FOR NO KEY UPDATE`) while available coins are counted, so simultaneous spends cannot overdraw; adding coins needs no lock.
+The index on `(user_id, id)` serves balances and history. A balance reads the ledger total and the held coins in one statement, so both come from the same snapshot. Spending and holding lock the user's `users` row (`FOR NO KEY UPDATE`) while available coins are counted, so simultaneous spends cannot overdraw; adding coins needs no lock. `/coins` reads the balance and history at `REPEATABLE READ`, so they agree. Admin adjustments can carry an operator key (`--key`), so a rerun records once.
 
 ### `coin_holds`
 
@@ -230,7 +230,7 @@ Coins set aside for something that may still fail, such as a paid search (D-050)
 | `status` | varchar(16) | `held` (default), `captured`, or `released`. |
 | `created_at`, `settled_at` | timestamptz | `settled_at` is set exactly when the status leaves `held` (constraint). |
 
-Available coins are the balance minus the user's `held` holds (a partial index serves this). Capturing changes the status only from `held` and adds a `paid_match` ledger row keyed to the hold; releasing changes the status only. So each hold is spent or released once, even when tried twice at the same moment.
+Available coins are the balance minus the user's `held` holds (a partial index serves this). Capturing changes the status only from `held` and adds a ledger row of the hold's purpose, keyed to the hold; releasing changes the status only. A trigger rejects any update or deletion of a hold once it is captured or released. So each hold is spent or released once, even when tried twice at the same moment. A hold's idempotency key is bound to its user, amount, and purpose: reusing it for anything else is refused.
 
 ## Where rules are enforced
 
