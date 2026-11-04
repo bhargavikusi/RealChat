@@ -29,6 +29,7 @@ class HelpAction(CallbackData, prefix="help"):
 COMMANDS = (
     ("start", "Set up your account, or continue where you left off"),
     ("profile", "View and edit your profile"),
+    ("coins", "Your coins and recent activity"),
     ("help", "How RealChat works, terms, and contacts"),
 )
 BOT_COMMANDS = [BotCommand(command=name, description=text) for name, text in COMMANDS]

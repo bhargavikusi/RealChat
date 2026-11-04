@@ -1,4 +1,5 @@
-"""Role and runtime-setting changes, each recorded in the admin audit log (D-034, D-035).
+"""Role, runtime-setting, and coin changes, each recorded in the admin audit log
+(D-034, D-035, D-050).
 
 Like the users service, these functions take an AsyncSession and leave committing
 to the caller. Roles are changed only by the server-side CLI (`apps/admin_cli.py`);
@@ -6,12 +7,15 @@ no bot handler calls `set_role`. The one other role change is account deletion,
 which can only lower a role to `user` (D-034).
 """
 
+import uuid
+
 from sqlalchemy import func, select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.modules.admin.models import AdminAuditEntry, AppSetting
 from backend.modules.admin.settings import SPECS, SettingKey, load_values
+from backend.modules.coins import service as coins
 from backend.modules.users.models import ROLES, User
 
 
@@ -69,6 +73,52 @@ async def set_role(session: AsyncSession, telegram_user_id: int, role: str) -> s
             )
         )
     return old
+
+
+async def adjust_coins(
+    session: AsyncSession, telegram_user_id: int, amount: int, reason: str
+) -> coins.Balance:
+    """Grant (positive) or correct (negative) an account's coins; returns the new balance.
+
+    Each adjustment is a ledger entry with the reason as its note, and an audit entry.
+    A correction cannot take the balance below what is available.
+    """
+    reason = reason.strip()
+    if not reason:
+        raise AdminError("Give a reason for the adjustment.")
+    if amount == 0:
+        raise AdminError("The amount must not be 0.")
+    user = (
+        await session.execute(select(User).where(User.telegram_user_id == telegram_user_id))
+    ).scalar_one_or_none()
+    if user is None:
+        raise AdminError("No account for that Telegram user ID. They must start the bot first.")
+    key = f"admin:{uuid.uuid4()}"
+    if amount > 0:
+        await coins.credit(session, user.id, amount, "admin_grant", key, note=reason)
+    else:
+        try:
+            await coins.debit(session, user.id, -amount, "admin_correction", key, note=reason)
+        except coins.InsufficientCoinsError as error:
+            raise AdminError(
+                f"Only {error.available} coins are available; a correction can't go below 0."
+            ) from error
+    session.add(
+        AdminAuditEntry(
+            actor_user_id=None,
+            action="coins_adjusted",
+            target_user_id=user.id,
+            new_value=str(amount),
+        )
+    )
+    return await coins.balance(session, user.id)
+
+
+async def coin_balance(session: AsyncSession, telegram_user_id: int) -> coins.Balance:
+    user_id = await session.scalar(select(User.id).where(User.telegram_user_id == telegram_user_id))
+    if user_id is None:
+        raise AdminError("No account for that Telegram user ID. They must start the bot first.")
+    return await coins.balance(session, user_id)
 
 
 async def list_staff(session: AsyncSession) -> list[tuple[int, str, str]]:

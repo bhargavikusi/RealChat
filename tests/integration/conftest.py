@@ -81,17 +81,23 @@ async def db_engine(migrated_database_url: str) -> AsyncIterator[AsyncEngine]:
     async with engine.begin() as connection:
         # Each test starts from empty tables. CASCADE covers tables that reference
         # users; app_settings and telegram_deletions reference nothing, so they are
-        # listed themselves. The audit
-        # log refuses TRUNCATE, so that guard is switched off for this transaction
-        # only. This runs only against the isolated test database (TEST_DATABASE_URL).
+        # listed themselves. The audit log and the coin ledger refuse TRUNCATE, so those
+        # guards are switched off for this transaction only. This runs only against the
+        # isolated test database (TEST_DATABASE_URL).
         await connection.execute(
             text("ALTER TABLE admin_audit_log DISABLE TRIGGER admin_audit_log_no_truncate")
+        )
+        await connection.execute(
+            text("ALTER TABLE coin_transactions DISABLE TRIGGER coin_transactions_no_truncate")
         )
         await connection.execute(
             text("TRUNCATE users, app_settings, telegram_deletions RESTART IDENTITY CASCADE")
         )
         await connection.execute(
             text("ALTER TABLE admin_audit_log ENABLE TRIGGER admin_audit_log_no_truncate")
+        )
+        await connection.execute(
+            text("ALTER TABLE coin_transactions ENABLE TRIGGER coin_transactions_no_truncate")
         )
     yield engine
     await engine.dispose()

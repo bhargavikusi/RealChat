@@ -4,7 +4,7 @@ RealChat is a Telegram-first anonymous chat and social discovery platform. Users
 
 ## Status
 
-Early development. The infrastructure runs locally: an API with health checks, PostgreSQL, Redis, and database migrations. The Telegram bot supports `/start`, terms acceptance, conversational profile creation, profile viewing and editing (`/profile`), account deletion, and `/help`. Suspended and banned accounts are limited to help and deletion. Users can search for a random partner, get matched by the worker, exchange messages and media (relayed anonymously, protected from forwarding and saving in Telegram apps that honour that setting), view their partner's profile, end the chat, turn on Private mode (messages sent while it is on are queued for deletion from both chats when it ends, usually gone within seconds; dice and games after about a day, as Telegram requires; photos, videos, voice messages, and video messages can be opened once and are deleted shortly after, unless the bot is interrupted at that moment; media sent within 30 seconds of your partner turning it off, or of its time limit, is held and you choose to send it or not), and block or report their partner. Contact cards, locations, links, phone numbers, and @usernames can't be sent in chats. Stored chat messages are deleted automatically after the retention period (7 days by default), except while a report about the chat is open.
+Early development. The infrastructure runs locally: an API with health checks, PostgreSQL, Redis, and database migrations. The Telegram bot supports `/start`, terms acceptance, conversational profile creation, profile viewing and editing (`/profile`), a coin balance with recent activity (`/coins`), account deletion, and `/help`. Suspended and banned accounts are limited to help and deletion. Users can search for a random partner, get matched by the worker, exchange messages and media (relayed anonymously, protected from forwarding and saving in Telegram apps that honour that setting), view their partner's profile, end the chat, turn on Private mode (messages sent while it is on are queued for deletion from both chats when it ends, usually gone within seconds; dice and games after about a day, as Telegram requires; photos, videos, voice messages, and video messages can be opened once and are deleted shortly after, unless the bot is interrupted at that moment; media sent within 30 seconds of your partner turning it off, or of its time limit, is held and you choose to send it or not), and block or report their partner. Contact cards, locations, links, phone numbers, and @usernames can't be sent in chats. Stored chat messages are deleted automatically after the retention period (7 days by default), except while a report about the chat is open.
 
 ## Prerequisites
 
@@ -87,6 +87,13 @@ Roles (`user`, `moderator`, `admin`) are changed only from the server, with the 
 uv run python -m apps.admin_cli set-role <telegram_user_id> admin
 uv run python -m apps.admin_cli revoke <telegram_user_id>
 uv run python -m apps.admin_cli list
+```
+
+The same tool grants or corrects coins, with a reason that is kept in the ledger, and shows an account's coins:
+
+```bash
+uv run python -m apps.admin_cli coins <telegram_user_id> <amount> --reason "<why>"
+uv run python -m apps.admin_cli balance <telegram_user_id>
 ```
 
 Admins then find **🛠 Admin settings** under `/profile` → ⚙️ Advanced settings, where runtime settings such as the search time limit and chat retention can be changed without a restart (D-035). Deleting an account resets its role to `user`.

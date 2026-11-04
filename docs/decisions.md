@@ -498,6 +498,26 @@ Work happens on short-lived issue branches, such as `feature/12-onboarding`, cre
 
 **Why:** Owner decision. A user who turned Private mode on may send a photo without noticing that their partner just turned it off, and would otherwise have it delivered as a normal photo.
 
+### D-050 — Coins and paid matching
+
+**Date:** 2026-11-04
+**Decision:**
+
+* **Ledger:** every change to a user's coins is an append-only ledger entry (database triggers reject updates, deletes, and truncation; corrections are compensating entries) with a unique idempotency key. A balance is the sum of the user's entries. No negative balances.
+* **Holds:** coins for a paid search are set aside when it starts, taken only when the match is committed, and released at once on cancel, time limit, or failure.
+* **Paid matching:** "Who do you want to meet?" offers men, women, or other genders for one price (admin runtime setting, default 2 coins). A paid searcher can be matched with anyone whose gender fits, including free random searchers, provided each fits the other's own choice. Only those who chose a gender pay; if both chose, both pay. The partner is never told who paid. Settles O-004.
+* **Earning, before purchases exist:**
+  * Welcome bonus: 10 coins on completing onboarding, once per Telegram account ever.
+  * Invite links: the inviter gets 10 coins when an invited person who has never used the bot completes onboarding. The new user gets 10 once, as their welcome bonus, never both. An inviter is rewarded for at most 10 invites per day.
+  * Daily reward: for promotional periods, off by default; admins switch it on or off and set the amount (default 1 coin). Claimed once per calendar day (UTC).
+  * Admin grants and corrections through the server-side admin CLI, with a reason, audit-logged.
+  * All amounts and caps are admin runtime settings.
+* **💰 /coins** in the command menu shows the balance, coins held for a search, and recent activity; the daily reward and invite link join it.
+* **Account deletion** keeps coins and the ledger; a returning user has the same balance, and bonuses are never given twice.
+* The draft terms say coins are virtual, with no cash value, and cannot be exchanged or transferred (terms version `draft-9`).
+
+**Why:** Owner decisions (requirements §9, §16). Holds keep coins from being spent twice once more paid features exist; keeping coins on deletion means nothing is lost by mistake and nothing is gained by rejoining.
+
 ## Open
 
 Each of these needs the owner's decision. Until then, the behavior stays configurable and is not presented to users as final.
@@ -508,7 +528,6 @@ Each of these needs the owner's decision. Until then, the behavior stays configu
 | O-007 | Final terms of service and privacy policy text | Public launch | Development uses a versioned draft (D-015). It needs legal review. |
 | O-002 | Retention period for conversation content | Public launch | Kept separate from the retention of payment, moderation, security, and audit records (requirements §20). Development default: 7 days, changeable by admins (D-028, D-035). |
 | O-003 | Terms of the 1-coin activity notification | Before that feature is built | What event triggers it, how long it lasts, and whether it is one alert or several (requirements §15). |
-| O-004 | Price of gender-specific matching | Before that feature is built | Must be configurable (requirements §9). |
 | O-005 | Coin package and VIP pricing in Telegram Stars | Before payments are built | Also covers what VIP includes and how many coins it grants (requirements §17). |
 | O-006 | Webhook or long polling for receiving Telegram updates in production | Before deployment | Development will use polling. Webhooks require a public HTTPS endpoint. |
 | O-008 | Which premium offer includes hiding the profile, and what happens when it ends | Before the VIP work | D-021. For example, whether the profile becomes visible again automatically. |

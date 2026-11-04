@@ -18,6 +18,7 @@ from apps.bot import (
     account,
     admin,
     chat,
+    coins,
     errors,
     menu,
     onboarding,
@@ -90,6 +91,8 @@ def create_dispatcher(
         errors.create_router(),
         menu.create_router(),
         account.create_router(),
+        # /coins (D-050).
+        coins.create_router(),
         # Chat before admin: the chat keyboard's buttons must never be taken as an
         # answer to a pending admin edit.
         chat.create_router(),
