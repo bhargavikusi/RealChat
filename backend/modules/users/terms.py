@@ -8,7 +8,7 @@ message retention, are not given as numbers, so the text stays true when they ch
 (D-046).
 """
 
-TERMS_VERSION = "draft-8"
+TERMS_VERSION = "draft-9"
 
 TERMS_TEXT = """\
 DRAFT - not for launch
@@ -33,6 +33,8 @@ scams, and sharing other people's private information are not allowed.
 Blocking or reporting someone you're chatting with ends the chat, and they are only \
 told that the chat ended. Reporting also blocks them. Blocking doesn't stop you being \
 matched again in a random chat.
+• Coins are a virtual in-app currency. They have no cash value and can't be exchanged \
+for money or transferred to other users.
 • Accounts that break these rules may be restricted or banned.
 • You can delete your account at any time from your profile (Advanced settings). \
 Your profile is erased immediately. A minimal record (your Telegram user ID, account \

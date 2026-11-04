@@ -5,6 +5,12 @@ Run on the server, with the same configuration as the bot:
     uv run python -m apps.admin_cli set-role <telegram_user_id> <user|moderator|admin>
     uv run python -m apps.admin_cli revoke <telegram_user_id>
     uv run python -m apps.admin_cli list
+    uv run python -m apps.admin_cli coins <telegram_user_id> <amount> --reason "<why>" [--key <id>]
+    uv run python -m apps.admin_cli balance <telegram_user_id>
+
+`coins` grants coins (a positive amount) or corrects a balance (a negative amount), for
+promotions or support (D-050); the reason is kept with the ledger entry. With --key,
+running the same adjustment again (for example after an unclear failure) changes nothing.
 
 The account must already exist, i.e. the person has started the bot. Every change is
 written to the admin audit log with no actor account, meaning "the server CLI".
@@ -25,7 +31,9 @@ from backend.modules.users.models import ROLES
 
 
 def _parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="admin_cli", description="Manage RealChat roles.")
+    parser = argparse.ArgumentParser(
+        prog="admin_cli", description="Manage RealChat roles and coins."
+    )
     commands = parser.add_subparsers(dest="command", required=True)
     set_role = commands.add_parser("set-role", help="give an account a role")
     set_role.add_argument("telegram_user_id", type=int)
@@ -33,6 +41,16 @@ def _parser() -> argparse.ArgumentParser:
     revoke = commands.add_parser("revoke", help="set an account back to the user role")
     revoke.add_argument("telegram_user_id", type=int)
     commands.add_parser("list", help="list moderators and admins")
+    adjust = commands.add_parser("coins", help="grant (+) or correct (-) an account's coins")
+    adjust.add_argument("telegram_user_id", type=int)
+    adjust.add_argument("amount", type=int)
+    adjust.add_argument("--reason", required=True, help="why, kept with the ledger entry")
+    adjust.add_argument(
+        "--key",
+        help="an id for this one adjustment; running it again with the same key does nothing",
+    )
+    show = commands.add_parser("balance", help="show an account's coins")
+    show.add_argument("telegram_user_id", type=int)
     return parser
 
 
@@ -46,6 +64,26 @@ async def run(argv: Sequence[str], sessions: async_sessionmaker[AsyncSession]) -
                 print(f"{telegram_user_id}\t{role}\t{status}")
             if not staff:
                 print("No moderators or admins.")
+            return 0
+        if args.command in ("coins", "balance"):
+            try:
+                applied = True
+                if args.command == "coins":
+                    balance, applied = await service.adjust_coins(
+                        session, args.telegram_user_id, args.amount, args.reason, args.key
+                    )
+                else:
+                    balance = await service.coin_balance(session, args.telegram_user_id)
+            except AdminError as error:
+                print(error.message, file=sys.stderr)
+                return 1
+            await session.commit()
+            if not applied:
+                print("That key was already used, so nothing changed.")
+            print(
+                f"{args.telegram_user_id}: {balance.total} coins "
+                f"({balance.held} held, {balance.available} available)"
+            )
             return 0
         role = "user" if args.command == "revoke" else args.role
         try:
