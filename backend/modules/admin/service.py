@@ -77,6 +77,8 @@ async def set_role(session: AsyncSession, telegram_user_id: int, role: str) -> s
 
 # Coin amounts are stored as 32-bit integers.
 MAX_COIN_ADJUSTMENT = 2_147_483_647
+# Ledger keys are at most 128 characters, and admin keys get an "admin:" prefix.
+MAX_ADMIN_KEY_LENGTH = 122
 
 
 async def adjust_coins(
@@ -85,7 +87,8 @@ async def adjust_coins(
     """Grant (positive) or correct (negative) an account's coins.
 
     Returns the new balance and whether this call applied it. With `key`, running the
-    same adjustment again (say, after an unclear failure) applies it once. Each
+    same adjustment again (say, after an unclear failure) applies it once; a key is for
+    one adjustment only, and reusing it for a different one is refused. Each
     adjustment is a ledger entry with the reason as its note, and an audit entry. A
     correction cannot take the balance below what is available.
     """
@@ -94,6 +97,10 @@ async def adjust_coins(
         raise AdminError("Give a reason for the adjustment.")
     if amount == 0:
         raise AdminError("The amount must not be 0.")
+    if key is not None:
+        key = key.strip()
+        if not 1 <= len(key) <= MAX_ADMIN_KEY_LENGTH:
+            raise AdminError(f"The key must be 1 to {MAX_ADMIN_KEY_LENGTH} characters.")
     if abs(amount) > MAX_COIN_ADJUSTMENT:
         raise AdminError(
             f"The amount must be between -{MAX_COIN_ADJUSTMENT} and {MAX_COIN_ADJUSTMENT}."
@@ -103,7 +110,7 @@ async def adjust_coins(
     ).scalar_one_or_none()
     if user is None:
         raise AdminError("No account for that Telegram user ID. They must start the bot first.")
-    ledger_key = f"admin:{key or uuid.uuid4()}"
+    ledger_key = f"admin:{uuid.uuid4() if key is None else key}"
     if amount > 0:
         applied = await coins.credit(
             session, user.id, amount, "admin_grant", ledger_key, note=reason
@@ -117,6 +124,11 @@ async def adjust_coins(
             raise AdminError(
                 f"Only {error.available} coins are available; a correction can't go below 0."
             ) from error
+    if not applied:
+        existing = await coins.recorded(session, ledger_key)
+        kind = "admin_grant" if amount > 0 else "admin_correction"
+        if existing != coins.Recorded(user.id, amount, kind, reason):
+            raise AdminError("That key was already used for a different adjustment.")
     if applied:
         session.add(
             AdminAuditEntry(

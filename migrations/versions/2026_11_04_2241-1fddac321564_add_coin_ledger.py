@@ -21,11 +21,40 @@ branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
 
-SETTLED_FINAL_FUNCTION = """
-CREATE FUNCTION coin_holds_settled_final() RETURNS trigger LANGUAGE plpgsql AS $$
+HOLD_TRANSITION_FUNCTION = """
+CREATE FUNCTION coin_holds_transition() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
-    RAISE EXCEPTION 'a captured or released coin hold cannot change'
-        USING ERRCODE = 'restrict_violation';
+    IF TG_OP = 'DELETE' THEN
+        RAISE EXCEPTION 'coin holds cannot be deleted' USING ERRCODE = 'restrict_violation';
+    END IF;
+    IF OLD.status <> 'held'
+        OR NEW.status NOT IN ('captured', 'released')
+        OR (NEW.user_id, NEW.amount, NEW.purpose, NEW.idempotency_key, NEW.created_at)
+            IS DISTINCT FROM
+            (OLD.user_id, OLD.amount, OLD.purpose, OLD.idempotency_key, OLD.created_at)
+    THEN
+        RAISE EXCEPTION 'a coin hold can only go from held to captured or released'
+            USING ERRCODE = 'restrict_violation';
+    END IF;
+    RETURN NEW;
+END;
+$$
+"""
+
+HOLD_ENTRY_FUNCTION = """
+CREATE FUNCTION coin_transactions_hold_matches() RETURNS trigger LANGUAGE plpgsql AS $$
+DECLARE
+    hold RECORD;
+BEGIN
+    SELECT user_id, amount, status INTO hold FROM coin_holds WHERE id = NEW.hold_id;
+    IF hold.status IS DISTINCT FROM 'captured'
+        OR hold.user_id <> NEW.user_id
+        OR NEW.amount <> -hold.amount
+    THEN
+        RAISE EXCEPTION 'a ledger entry does not match its coin hold'
+            USING ERRCODE = 'restrict_violation';
+    END IF;
+    RETURN NEW;
 END;
 $$
 """
@@ -141,11 +170,19 @@ def upgrade() -> None:
         "CREATE TRIGGER coin_transactions_no_truncate BEFORE TRUNCATE ON coin_transactions "
         "FOR EACH STATEMENT EXECUTE FUNCTION coin_transactions_append_only()"
     )
-    # A hold is settled once: after capture or release its row cannot change.
-    op.execute(SETTLED_FINAL_FUNCTION)
+    # A hold is never deleted, and changes only once: from held to captured or
+    # released, with nothing else altered. A ledger entry for a hold must be the
+    # capture of that same hold: captured, the same user, and exactly its amount.
+    op.execute(HOLD_TRANSITION_FUNCTION)
     op.execute(
-        "CREATE TRIGGER coin_holds_settled_final BEFORE UPDATE OR DELETE ON coin_holds "
-        "FOR EACH ROW WHEN (OLD.status <> 'held') EXECUTE FUNCTION coin_holds_settled_final()"
+        "CREATE TRIGGER coin_holds_transition BEFORE UPDATE OR DELETE ON coin_holds "
+        "FOR EACH ROW EXECUTE FUNCTION coin_holds_transition()"
+    )
+    op.execute(HOLD_ENTRY_FUNCTION)
+    op.execute(
+        "CREATE TRIGGER coin_transactions_hold_matches BEFORE INSERT ON coin_transactions "
+        "FOR EACH ROW WHEN (NEW.hold_id IS NOT NULL) "
+        "EXECUTE FUNCTION coin_transactions_hold_matches()"
     )
     op.drop_constraint(op.f("ck_admin_audit_log_action"), "admin_audit_log", type_="check")
     op.create_check_constraint(
@@ -169,8 +206,10 @@ def downgrade() -> None:
         "admin_audit_log",
         "action IN ('role_changed', 'setting_changed')",
     )
-    op.execute("DROP TRIGGER coin_holds_settled_final ON coin_holds")
-    op.execute("DROP FUNCTION coin_holds_settled_final()")
+    op.execute("DROP TRIGGER coin_transactions_hold_matches ON coin_transactions")
+    op.execute("DROP FUNCTION coin_transactions_hold_matches()")
+    op.execute("DROP TRIGGER coin_holds_transition ON coin_holds")
+    op.execute("DROP FUNCTION coin_holds_transition()")
     op.execute("DROP TRIGGER coin_transactions_no_truncate ON coin_transactions")
     op.execute("DROP TRIGGER coin_transactions_append_only ON coin_transactions")
     op.execute("DROP FUNCTION coin_transactions_append_only()")

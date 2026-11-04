@@ -136,6 +136,29 @@ async def debit(
     return await _record(session, user_id, -amount, kind, key, note=note)
 
 
+@dataclass(frozen=True)
+class Recorded:
+    user_id: int
+    amount: int
+    kind: str
+    note: str | None
+
+
+async def recorded(session: AsyncSession, key: str) -> Recorded | None:
+    """The ledger entry recorded under `key`, if any."""
+    row = (
+        await session.execute(
+            select(
+                CoinTransaction.user_id,
+                CoinTransaction.amount,
+                CoinTransaction.kind,
+                CoinTransaction.note,
+            ).where(CoinTransaction.idempotency_key == key)
+        )
+    ).first()
+    return None if row is None else Recorded(int(row[0]), int(row[1]), row[2], row[3])
+
+
 async def _key_recorded(session: AsyncSession, key: str) -> bool:
     found = await session.scalar(
         select(CoinTransaction.id).where(CoinTransaction.idempotency_key == key)

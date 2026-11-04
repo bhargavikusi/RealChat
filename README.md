@@ -89,7 +89,7 @@ uv run python -m apps.admin_cli revoke <telegram_user_id>
 uv run python -m apps.admin_cli list
 ```
 
-The same tool grants or corrects coins, with a reason that is kept in the ledger, and shows an account's coins. With `--key`, running the same adjustment again changes nothing:
+The same tool grants or corrects coins, with a reason that is kept in the ledger, and shows an account's coins. With `--key`, running the same adjustment again changes nothing; each key is for one adjustment only, and reusing it for a different one is refused:
 
 ```bash
 uv run python -m apps.admin_cli coins <telegram_user_id> <amount> --reason "<why>" [--key <id>]

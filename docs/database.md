@@ -210,11 +210,11 @@ The coin ledger (D-050). Every change to a user's coins is one row; a balance is
 | `amount` | integer | Positive adds coins, negative removes them; never 0. A constraint ties the sign to the kind: rewards and admin grants add, paid matches and admin corrections remove. |
 | `kind` | varchar(32) | `welcome_bonus`, `referral_reward`, `daily_reward`, `paid_match`, `admin_grant`, or `admin_correction`. |
 | `idempotency_key` | varchar(128), unique | One row per action: a retried or duplicated action records once. |
-| `hold_id` | bigint, nullable | References `coin_holds.id`: the hold this spending captured. Only `paid_match` rows may have one (constraint), and a partial unique index allows one row per hold. |
+| `hold_id` | bigint, nullable | References `coin_holds.id`: the hold this spending captured. Only `paid_match` rows may have one (constraint), and a partial unique index allows one row per hold. A trigger checks that the hold is captured, belongs to the same user, and that the amount is exactly minus the hold's amount. |
 | `note` | text, nullable | The reason for an admin grant or correction; required for those kinds (constraint). |
 | `created_at` | timestamptz | |
 
-The index on `(user_id, id)` serves balances and history. A balance reads the ledger total and the held coins in one statement, so both come from the same snapshot. Spending and holding lock the user's `users` row (`FOR NO KEY UPDATE`) while available coins are counted, so simultaneous spends cannot overdraw; adding coins needs no lock. `/coins` reads the balance and history at `REPEATABLE READ`, so they agree. Admin adjustments can carry an operator key (`--key`), so a rerun records once.
+The index on `(user_id, id)` serves balances and history. A balance reads the ledger total and the held coins in one statement, so both come from the same snapshot. Spending and holding lock the user's `users` row (`FOR NO KEY UPDATE`) while available coins are counted, so simultaneous spends cannot overdraw; adding coins needs no lock. `/coins` reads the balance and history at `REPEATABLE READ`, so they agree. Admin adjustments can carry an operator key (`--key`, 1 to 122 characters), so a rerun records once; reusing a key for a different account, amount, or reason is refused.
 
 ### `coin_holds`
 
@@ -230,7 +230,7 @@ Coins set aside for something that may still fail, such as a paid search (D-050)
 | `status` | varchar(16) | `held` (default), `captured`, or `released`. |
 | `created_at`, `settled_at` | timestamptz | `settled_at` is set exactly when the status leaves `held` (constraint). |
 
-Available coins are the balance minus the user's `held` holds (a partial index serves this). Capturing changes the status only from `held` and adds a ledger row of the hold's purpose, keyed to the hold; releasing changes the status only. A trigger rejects any update or deletion of a hold once it is captured or released. So each hold is spent or released once, even when tried twice at the same moment. A hold's idempotency key is bound to its user, amount, and purpose: reusing it for anything else is refused.
+Available coins are the balance minus the user's `held` holds (a partial index serves this). Capturing changes the status only from `held` and adds a ledger row of the hold's purpose, keyed to the hold; releasing changes the status only. A trigger rejects deleting any hold, and allows only one change: from `held` to `captured` or `released`, with its user, amount, purpose, key, and creation time unchanged. So each hold is spent or released once, even when tried twice at the same moment. A hold's idempotency key is bound to its user, amount, and purpose: reusing it for anything else is refused.
 
 ## Where rules are enforced
 

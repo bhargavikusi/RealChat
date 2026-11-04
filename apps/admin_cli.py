@@ -46,7 +46,8 @@ def _parser() -> argparse.ArgumentParser:
     adjust.add_argument("amount", type=int)
     adjust.add_argument("--reason", required=True, help="why, kept with the ledger entry")
     adjust.add_argument(
-        "--key", help="an id for this adjustment; running it again with the same key does nothing"
+        "--key",
+        help="an id for this one adjustment; running it again with the same key does nothing",
     )
     show = commands.add_parser("balance", help="show an account's coins")
     show.add_argument("telegram_user_id", type=int)

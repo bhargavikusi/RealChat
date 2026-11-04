@@ -24,6 +24,16 @@ from tests.support.chat import TERMS, USER_ID, Chat, complete_onboarding
 from tests.support.db import wait_until_blocked
 
 Sessions = async_sessionmaker[AsyncSession]
+# PostgreSQL error codes, so a test cannot pass on the wrong database failure.
+CHECK_VIOLATION = "23514"
+UNIQUE_VIOLATION = "23505"
+RESTRICT_VIOLATION = "23001"
+
+
+def sqlstate(raised: pytest.ExceptionInfo[DBAPIError]) -> str:
+    return str(raised.value.orig.sqlstate)  # type: ignore[union-attr]
+
+
 NOW = datetime(2026, 11, 5, 12, 0, tzinfo=UTC)
 
 
@@ -104,7 +114,7 @@ async def test_the_ledger_is_append_only(
         with pytest.raises(DBAPIError, match="append-only") as raised:
             await session.execute(text(statement))
     # restrict_violation: the trigger, not some other error.
-    assert raised.value.orig.sqlstate == "23001"  # type: ignore[union-attr]
+    assert sqlstate(raised) == RESTRICT_VIOLATION
 
 
 async def test_history_is_newest_first(session_factory: Sessions, user_id: int) -> None:
@@ -349,9 +359,10 @@ _INSERT = "INSERT INTO coin_transactions (user_id, amount, kind, idempotency_key
             _INSERT + "VALUES (:u, 5, 'admin_grant', 'k3', NULL, NULL)",
             "ck_coin_transactions_admin_note",
         ),
+        # The hold trigger runs before the CHECK, and refuses it first.
         (
             _INSERT + "VALUES (:u, 5, 'welcome_bonus', 'k4', :h, NULL)",
-            "ck_coin_transactions_hold_kind",
+            "ck_coin_transactions_hold_kind|does not match its coin hold",
         ),
     ],
 )
@@ -363,8 +374,9 @@ async def test_the_database_enforces_ledger_rules(
         hold_id = await coins.hold(session, user_id, 1, "paid_match", "h")
         await session.commit()
     async with session_factory() as session:
-        with pytest.raises(DBAPIError, match=constraint):
+        with pytest.raises(DBAPIError, match=constraint) as raised:
             await session.execute(text(statement), {"u": user_id, "h": hold_id})
+    assert sqlstate(raised) in (CHECK_VIOLATION, RESTRICT_VIOLATION)
 
 
 async def test_the_database_settles_a_hold_once(session_factory: Sessions, user_id: int) -> None:
@@ -374,13 +386,14 @@ async def test_the_database_settles_a_hold_once(session_factory: Sessions, user_
         assert await coins.capture(session, hold_id, NOW)
         await session.commit()
     async with session_factory() as session:
-        with pytest.raises(DBAPIError, match="cannot change"):
+        with pytest.raises(DBAPIError, match="only go from held") as raised:
             await session.execute(
                 text("UPDATE coin_holds SET status = 'held', settled_at = NULL WHERE id = :h"),
                 {"h": hold_id},
             )
+    assert sqlstate(raised) == RESTRICT_VIOLATION
     async with session_factory() as session:
-        with pytest.raises(DBAPIError, match="uq_coin_transactions_hold_id"):
+        with pytest.raises(DBAPIError, match="uq_coin_transactions_hold_id") as raised:
             await session.execute(
                 text(
                     "INSERT INTO coin_transactions (user_id, amount, kind, idempotency_key, "
@@ -388,6 +401,62 @@ async def test_the_database_settles_a_hold_once(session_factory: Sessions, user_
                 ),
                 {"u": user_id, "h": hold_id},
             )
+    assert sqlstate(raised) == UNIQUE_VIOLATION
+
+
+@pytest.mark.parametrize(
+    "statement",
+    [
+        "DELETE FROM coin_holds WHERE id = :h",
+        "UPDATE coin_holds SET amount = 1 WHERE id = :h",
+        "UPDATE coin_holds SET user_id = :o WHERE id = :h",
+        "UPDATE coin_holds SET status = 'captured', settled_at = now(), amount = 1 WHERE id = :h",
+    ],
+)
+async def test_a_held_hold_cannot_be_deleted_or_altered(
+    session_factory: Sessions, user_id: int, statement: str
+) -> None:
+    await _credit(session_factory, user_id, 10, "a")
+    async with session_factory() as session:
+        other = await users.get_or_create_user(session, 5353)
+        hold_id = await coins.hold(session, user_id, 2, "paid_match", "search")
+        await session.commit()
+    async with session_factory() as session:
+        with pytest.raises(DBAPIError, match="hold") as raised:
+            await session.execute(text(statement), {"h": hold_id, "o": other.id})
+    assert sqlstate(raised) == RESTRICT_VIOLATION
+
+
+@pytest.mark.parametrize(
+    ("amount", "owner", "captured"),
+    [(-2, "same", False), (-2, "other", True), (-1, "same", True)],
+    ids=["hold-not-captured", "another-users-hold", "wrong-amount"],
+)
+async def test_a_hold_entry_must_match_its_hold(
+    session_factory: Sessions, user_id: int, amount: int, owner: str, captured: bool
+) -> None:
+    await _credit(session_factory, user_id, 10, "a")
+    async with session_factory() as session:
+        other = await users.get_or_create_user(session, 5353)
+        hold_id = await coins.hold(session, user_id, 2, "paid_match", "search")
+        if captured:
+            # Captured without its entry, as if a bug had skipped it.
+            await session.execute(
+                text("UPDATE coin_holds SET status = 'captured', settled_at = now() WHERE id = :h"),
+                {"h": hold_id},
+            )
+        await session.commit()
+    entry_user = user_id if owner == "same" else other.id
+    async with session_factory() as session:
+        with pytest.raises(DBAPIError, match="does not match its coin hold") as raised:
+            await session.execute(
+                text(
+                    "INSERT INTO coin_transactions (user_id, amount, kind, idempotency_key, "
+                    "hold_id) VALUES (:u, :a, 'paid_match', 'entry', :h)"
+                ),
+                {"u": entry_user, "a": amount, "h": hold_id},
+            )
+    assert sqlstate(raised) == RESTRICT_VIOLATION
 
 
 async def test_an_admin_key_makes_a_rerun_harmless(
@@ -427,3 +496,31 @@ async def test_coins_abandons_a_pending_profile_edit(
             session, (await users.get_or_create_user(session, USER_ID)).id
         )
         assert profile.nickname == "Night Owl"
+
+
+@pytest.mark.parametrize(
+    ("command", "error"),
+    [
+        (["coins", str(USER_ID), "6", "--reason", "promo", "--key", "k"], "different adjustment"),
+        (["coins", str(USER_ID), "5", "--reason", "other", "--key", "k"], "different adjustment"),
+        (["coins", "5353", "5", "--reason", "promo", "--key", "k"], "different adjustment"),
+        (["coins", str(USER_ID), "5", "--reason", "promo", "--key", "  "], "1 to 122"),
+        (["coins", str(USER_ID), "5", "--reason", "promo", "--key", "x" * 123], "1 to 122"),
+    ],
+)
+async def test_an_admin_key_is_for_one_adjustment(
+    session_factory: Sessions,
+    user_id: int,
+    capsys: pytest.CaptureFixture[str],
+    command: list[str],
+    error: str,
+) -> None:
+    async with session_factory() as session:
+        await users.get_or_create_user(session, 5353)
+        await session.commit()
+    first = ["coins", str(USER_ID), "5", "--reason", "promo", "--key", "k"]
+    assert await admin_cli.run(first, session_factory) == 0
+    capsys.readouterr()
+    assert await admin_cli.run(command, session_factory) == 1
+    assert error in capsys.readouterr().err
+    assert (await _balance(session_factory, user_id)).total == 5
