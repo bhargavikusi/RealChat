@@ -229,7 +229,7 @@ async def test_undoing_activity_keeps_a_later_message(
         assert await chat.claim_message(session, active, alice, 12, "text", "b", None)
         await session.commit()
         later = (await _conversation(session_factory)).last_activity_at
-    assert first is not None
+    assert isinstance(first, chat.Claim)
     async with session_factory() as session:
         await chat.discard_message(session, first)  # the first failed after the second
         await session.commit()

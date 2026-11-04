@@ -29,6 +29,7 @@ class SettingKey(StrEnum):
     REPORTS_PER_DAY = "reports_per_day"
     PRIVATE_MODE_HOURS = "private_mode_hours"
     VIEW_ONCE_SECONDS = "view_once_seconds"
+    PRIVATE_ENDED_ASK_SECONDS = "private_ended_ask_seconds"
 
 
 @dataclass(frozen=True)
@@ -114,6 +115,15 @@ SPECS: dict[SettingKey, SettingSpec] = {
             minimum=10,
             maximum=300,
             note="added to the length of videos and voice messages",
+        ),
+        SettingSpec(
+            SettingKey.PRIVATE_ENDED_ASK_SECONDS,
+            "Ask before sending media after Private mode ends",
+            "seconds",
+            default=30,
+            minimum=0,
+            maximum=300,
+            note="0 turns it off",
         ),
     )
 }

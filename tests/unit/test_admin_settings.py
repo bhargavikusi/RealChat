@@ -23,6 +23,7 @@ def test_approved_defaults() -> None:
         SettingKey.REPORTS_PER_DAY: 10,
         SettingKey.PRIVATE_MODE_HOURS: 24,
         SettingKey.VIEW_ONCE_SECONDS: 20,
+        SettingKey.PRIVATE_ENDED_ASK_SECONDS: 30,
     }
 
 
