@@ -27,6 +27,8 @@ def test_approved_defaults() -> None:
         SettingKey.WELCOME_BONUS_COINS: 10,
         SettingKey.INVITE_REWARD_COINS: 10,
         SettingKey.INVITE_REWARDS_PER_DAY: 10,
+        SettingKey.DAILY_REWARD_ON: 0,
+        SettingKey.DAILY_REWARD_COINS: 1,
     }
 
 
