@@ -244,10 +244,10 @@ Who invited a user (D-050).
 |---|---|---|
 | `invitee_user_id` | bigint, primary key | References `users.id`. At most one inviter per user; the first stays. |
 | `inviter_user_id` | bigint | References `users.id`. Never the invitee (constraint). |
-| `status` | varchar(16) | `pending` until the invitee completes their profile, then `rewarded` or `not_rewarded` (daily cap reached, reward off, or the inviter restricted). |
+| `status` | varchar(16) | `pending` until the invitee completes their profile, then `rewarded` or `not_rewarded` (daily cap reached, reward off, the inviter's account not active, or the invitee ever deleted an account). A trigger allows only that one change and rejects deletion, so the history the daily cap counts cannot be rewritten. |
 | `created_at`, `settled_at` | timestamptz | `settled_at` is set exactly when the status leaves `pending` (constraint). |
 
-A referral is recorded only for an invitee who has never completed a profile and never deleted an account. On completion, the pending row is locked, and the inviter's `users` row is locked (`FOR NO KEY UPDATE`) while their rewards for the day are counted, so simultaneous completions cannot pass the cap. The welcome bonus and the invite reward are ledger entries keyed `welcome:<user id>` and `referral:<invitee id>`, so each is granted once.
+A referral is recorded only for an invitee who has never completed a profile and never deleted an account, checked with the invitee's `users` row locked (`FOR NO KEY UPDATE`), which account deletion and profile completion also lock. On completion, the pending row is locked, and the inviter's `users` row is locked (`FOR NO KEY UPDATE`) while their rewards for the day are counted, so simultaneous completions cannot pass the cap. The welcome bonus and the invite reward are ledger entries keyed `welcome:<user id>` and `referral:<invitee id>`, so each is granted once.
 
 ## Where rules are enforced
 

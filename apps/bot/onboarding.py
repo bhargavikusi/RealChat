@@ -98,7 +98,7 @@ WELCOME_COINS = "🎁 You got {amount} welcome coins. See /coins."
 INVITE_JOINED = "👋 Someone joined RealChat through your invite link."
 INVITE_JOINED_REWARD = (
     "👋 Someone joined RealChat through your invite link. You'll get {amount} coins once "
-    "they finish creating their profile."
+    "they finish creating their profile (up to {cap} invite rewards a day)."
 )
 INVITE_REWARDED = (
     "🎉 Someone you invited finished creating their profile. You earned {amount} coins."
@@ -275,10 +275,18 @@ async def start(
         # Started through an invite link (D-050): the inviter is told, without names.
         inviter_id = await rewards.attach_invite(session, ctx.user.id, command.args)
         inviter = None if inviter_id is None else await service.get_user(session, inviter_id)
-        reward = (await load_values(session))[SettingKey.INVITE_REWARD_COINS]
+        values = await load_values(session)
+        reward, cap = (
+            values[SettingKey.INVITE_REWARD_COINS],
+            values[SettingKey.INVITE_REWARDS_PER_DAY],
+        )
         await session.commit()
         if inviter is not None:
-            text = INVITE_JOINED_REWARD.format(amount=reward) if reward else INVITE_JOINED
+            text = (
+                INVITE_JOINED_REWARD.format(amount=reward, cap=cap)
+                if reward and cap
+                else INVITE_JOINED
+            )
             await _tell(bot, inviter.telegram_user_id, text)
     await prompt_next(bot, message.chat.id, session, ctx, state, settings)
 

@@ -1,11 +1,12 @@
 """The welcome bonus and invite rewards (D-050)."""
 
 import asyncio
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 import pytest
 from redis.asyncio import Redis
-from sqlalchemy import select, update
+from sqlalchemy import select, text, update
+from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from apps.bot import onboarding as ob
@@ -114,7 +115,9 @@ async def test_an_invite_rewards_the_inviter_once_the_profile_is_complete(
     code = await _code(session_factory, USER_ID)
     assert await bob.send(f"/start {rewards.INVITE_PREFIX}{code}") == TERMS
     # Alice is told someone joined, but not who; no coins yet.
-    assert text_of(bob.session.sent_to(USER_ID)[-1]) == ob.INVITE_JOINED_REWARD.format(amount=10)
+    assert text_of(bob.session.sent_to(USER_ID)[-1]) == ob.INVITE_JOINED_REWARD.format(
+        amount=10, cap=10
+    )
     assert await _total(session_factory, USER_ID) == 10  # just her welcome bonus
     await complete_onboarding(bob)
     assert text_of(bob.session.sent_to(USER_ID)[-1]) == ob.INVITE_REWARDED.format(amount=10)
@@ -270,3 +273,78 @@ async def test_two_invitees_at_once_cannot_pass_the_cap(session_factory: Session
         await first.commit()
         assert (await second).invite_reward == 0  # counted after Bob's, so over the cap
     assert await _total(session_factory, USER_ID) == 10
+
+
+# --- Review follow-ups -----------------------------------------------------------------
+
+
+async def test_the_daily_cap_starts_again_each_day(session_factory: Sessions) -> None:
+    alice = await _user_id(session_factory, USER_ID)
+    bob = await _invite(session_factory, alice, BOB_ID)
+    carol = await _invite(session_factory, alice, CAROL_ID)
+    async with session_factory() as session:  # Bob finished yesterday, at the cap of 1
+        await rewards.on_profile_complete(
+            session, bob, NOW - timedelta(days=1), welcome=10, invite_reward=10, invites_per_day=1
+        )
+        await session.commit()
+    assert (await _complete(session_factory, carol, per_day=1)).invite_reward == 10
+    assert await _total(session_factory, USER_ID) == 20
+
+
+async def test_an_invitee_who_deleted_their_account_earns_nothing(
+    alice: Chat, bot_settings: BotSettings, redis: Redis, session_factory: Sessions
+) -> None:
+    bob = chat_for(bot_settings, redis, session_factory, BOB_ID)
+    await bob.send(f"/start {rewards.INVITE_PREFIX}{await _code(session_factory, USER_ID)}")
+    bob_id = await _user_id(session_factory, BOB_ID)
+    async with session_factory() as session:  # deleted before finishing, then back
+        await users.delete_account(session, bob_id, NOW)
+        await session.commit()
+    await complete_onboarding(bob)
+    assert await _total(session_factory, USER_ID) == 10  # Alice's welcome bonus only
+    async with session_factory() as session:
+        assert (await session.execute(select(Referral.status))).scalar_one() == "not_rewarded"
+
+
+@pytest.mark.parametrize(
+    "statement",
+    [
+        "UPDATE referrals SET status = 'pending', settled_at = NULL",
+        "UPDATE referrals SET settled_at = now() - interval '1 day'",
+        "DELETE FROM referrals",
+    ],
+)
+async def test_a_settled_referral_cannot_be_rewritten(
+    session_factory: Sessions, statement: str
+) -> None:
+    alice = await _user_id(session_factory, USER_ID)
+    bob = await _invite(session_factory, alice, BOB_ID)
+    await _complete(session_factory, bob)
+    async with session_factory() as session:
+        with pytest.raises(DBAPIError, match="referral") as raised:
+            await session.execute(text(statement))
+    assert raised.value.orig.sqlstate == "23001"  # type: ignore[union-attr]
+
+
+async def test_an_invite_waits_for_an_account_deletion_in_progress(
+    session_factory: Sessions,
+) -> None:
+    alice = await _user_id(session_factory, USER_ID)
+    bob = await _user_id(session_factory, BOB_ID)
+    async with session_factory() as session:
+        code = await rewards.invite_code(session, alice)
+        await session.commit()
+    async with session_factory() as deleting:
+        await users.lock_user(deleting, bob)  # as account deletion does first
+        await users.delete_account(deleting, bob, NOW)
+
+        async def attach() -> int | None:
+            async with session_factory() as session:
+                found = await rewards.attach_invite(session, bob, rewards.INVITE_PREFIX + code)
+                await session.commit()
+                return found
+
+        task = asyncio.create_task(attach())
+        await wait_until_blocked(session_factory)
+        await deleting.commit()
+        assert await task is None  # saw the deletion, so recorded nothing

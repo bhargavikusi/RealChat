@@ -58,6 +58,9 @@ async def attach_invite(session: AsyncSession, invitee_id: int, payload: str) ->
     )
     if inviter_id is None or inviter_id == invitee_id:
         return None
+    # Locked and checked together, so completing the profile or deleting the account
+    # (which lock the same row) cannot slip in between.
+    await _lock_user(session, invitee_id)
     is_new = await session.scalar(
         select(User.id)
         .join(Profile, Profile.user_id == User.id)
@@ -78,6 +81,17 @@ async def attach_invite(session: AsyncSession, invitee_id: int, payload: str) ->
     return None if recorded is None else int(recorded)
 
 
+async def _lock_user(session: AsyncSession, user_id: int) -> bool:
+    """Lock the user's row (FOR NO KEY UPDATE, as spending does); returns whether the
+    account was ever deleted."""
+    deleted_at = (
+        await session.execute(
+            select(User.deleted_at).where(User.id == user_id).with_for_update(key_share=True)
+        )
+    ).scalar_one()
+    return deleted_at is not None
+
+
 @dataclass(frozen=True)
 class Granted:
     welcome: int  # coins the new user got (0 if none)
@@ -94,7 +108,12 @@ async def on_profile_complete(
     invite_reward: int,
     invites_per_day: int,
 ) -> Granted:
-    """Grant the welcome bonus and settle any invite, once (D-050)."""
+    """Grant the welcome bonus and settle any invite, once (D-050).
+
+    An invite is not rewarded if the invited user has ever deleted an account, even if
+    they were invited before deleting it.
+    """
+    invitee_deleted = await _lock_user(session, user_id)
     welcomed = welcome > 0 and await coins.credit(
         session, user_id, welcome, "welcome_bonus", f"welcome:{user_id}"
     )
@@ -127,6 +146,7 @@ async def on_profile_complete(
     )
     rewarded = (
         invite_reward > 0
+        and not invitee_deleted
         and inviter_status == "active"
         and (rewarded_today or 0) < invites_per_day
         and await coins.credit(

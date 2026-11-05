@@ -21,6 +21,26 @@ branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
 
+REFERRAL_TRANSITION_FUNCTION = """
+CREATE FUNCTION referrals_transition() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+    IF TG_OP = 'DELETE' THEN
+        RAISE EXCEPTION 'referrals cannot be deleted' USING ERRCODE = 'restrict_violation';
+    END IF;
+    IF OLD.status <> 'pending'
+        OR NEW.status NOT IN ('rewarded', 'not_rewarded')
+        OR (NEW.invitee_user_id, NEW.inviter_user_id, NEW.created_at)
+            IS DISTINCT FROM (OLD.invitee_user_id, OLD.inviter_user_id, OLD.created_at)
+    THEN
+        RAISE EXCEPTION 'a referral can only go from pending to rewarded or not_rewarded'
+            USING ERRCODE = 'restrict_violation';
+    END IF;
+    RETURN NEW;
+END;
+$$
+"""
+
+
 def upgrade() -> None:
     op.create_table(
         "invite_codes",
@@ -74,8 +94,18 @@ def upgrade() -> None:
         unique=False,
     )
 
+    # A referral is settled once (pending to rewarded or not_rewarded) and never
+    # deleted, so the daily cap counts from a history that cannot be rewritten.
+    op.execute(REFERRAL_TRANSITION_FUNCTION)
+    op.execute(
+        "CREATE TRIGGER referrals_transition BEFORE UPDATE OR DELETE ON referrals "
+        "FOR EACH ROW EXECUTE FUNCTION referrals_transition()"
+    )
+
 
 def downgrade() -> None:
+    op.execute("DROP TRIGGER referrals_transition ON referrals")
+    op.execute("DROP FUNCTION referrals_transition()")
     op.drop_index("ix_referrals_inviter_settled_at", table_name="referrals")
     op.drop_table("referrals")
     op.drop_table("invite_codes")
