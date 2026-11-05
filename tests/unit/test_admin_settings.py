@@ -24,6 +24,9 @@ def test_approved_defaults() -> None:
         SettingKey.PRIVATE_MODE_HOURS: 24,
         SettingKey.VIEW_ONCE_SECONDS: 20,
         SettingKey.PRIVATE_ENDED_ASK_SECONDS: 30,
+        SettingKey.WELCOME_BONUS_COINS: 10,
+        SettingKey.INVITE_REWARD_COINS: 10,
+        SettingKey.INVITE_REWARDS_PER_DAY: 10,
     }
 
 

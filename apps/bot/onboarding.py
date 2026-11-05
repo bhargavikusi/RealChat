@@ -14,11 +14,13 @@ Rules every handler follows:
   or pooled connection is held across network latency.
 """
 
+import logging
 from datetime import UTC, datetime
 
 from aiogram import Bot, F, Router
 from aiogram.enums import ChatType
-from aiogram.filters import CommandStart
+from aiogram.exceptions import TelegramAPIError
+from aiogram.filters import CommandObject, CommandStart
 from aiogram.filters.callback_data import CallbackData
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
@@ -28,6 +30,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from apps.bot.keyboards import NEW_CHAT, current_keyboard, main_keyboard
 from backend.config.settings import BotSettings
+from backend.core.logging import exception_summary
+from backend.modules.admin.settings import SettingKey, load_values
+from backend.modules.coins import rewards
 from backend.modules.users import service
 from backend.modules.users.countries import match_country
 from backend.modules.users.models import Profile, User
@@ -88,6 +93,18 @@ MENU_HINT = "Open the menu any time: /profile to view or edit your profile, /hel
 ONBOARDING_COMPLETE = f"You're all set! Tap {NEW_CHAT} to meet someone. {MENU_HINT}"
 # Shown in or out of a chat, so it does not name a button only one keyboard has.
 WELCOME_BACK = f"Welcome back! {MENU_HINT}"
+WELCOME_COINS = "🎁 You got {amount} welcome coins. See /coins."
+# To the inviter (D-050). Neither says who joined.
+INVITE_JOINED = "👋 Someone joined RealChat through your invite link."
+INVITE_JOINED_REWARD = (
+    "👋 Someone joined RealChat through your invite link. You'll get {amount} coins once "
+    "they finish creating their profile (up to {cap} invite rewards a day)."
+)
+INVITE_REWARDED = (
+    "🎉 Someone you invited finished creating their profile. You earned {amount} coins."
+)
+
+logger = logging.getLogger(__name__)
 
 REQUIRED_STEPS = {
     "nickname": Onboarding.nickname,
@@ -197,9 +214,32 @@ async def prompt_next(
         await state.set_state(Onboarding.photo)
         await bot.send_message(chat_id, PROMPTS["photo"], reply_markup=_skip_keyboard("photo"))
     else:
-        ctx.profile.onboarding_completed_at = _now()
+        now = _now()
+        ctx.profile.onboarding_completed_at = now
+        values = await load_values(session)
+        granted = await rewards.on_profile_complete(
+            session,
+            ctx.user.id,
+            now,
+            welcome=values[SettingKey.WELCOME_BONUS_COINS],
+            invite_reward=values[SettingKey.INVITE_REWARD_COINS],
+            invites_per_day=values[SettingKey.INVITE_REWARDS_PER_DAY],
+        )
+        inviter = (
+            None
+            if granted.inviter_id is None
+            else await service.get_user(session, granted.inviter_id)
+        )
         await session.commit()
         await state.clear()
+        if inviter is not None:
+            await _tell(
+                bot,
+                inviter.telegram_user_id,
+                INVITE_REWARDED.format(amount=granted.invite_reward),
+            )
+        if granted.welcome:
+            await bot.send_message(chat_id, WELCOME_COINS.format(amount=granted.welcome))
         await bot.send_message(chat_id, ONBOARDING_COMPLETE, reply_markup=main_keyboard())
 
 
@@ -221,12 +261,42 @@ async def _retry(message: Message, error: ProfileValidationError, step: str) -> 
 
 
 async def start(
-    message: Message, bot: Bot, session: AsyncSession, state: FSMContext, settings: BotSettings
+    message: Message,
+    bot: Bot,
+    session: AsyncSession,
+    state: FSMContext,
+    settings: BotSettings,
+    command: CommandObject,
 ) -> None:
     if message.from_user is None:
         return
     ctx = await load_context(session, message.from_user)
+    if command.args:
+        # Started through an invite link (D-050): the inviter is told, without names.
+        inviter_id = await rewards.attach_invite(session, ctx.user.id, command.args)
+        inviter = None if inviter_id is None else await service.get_user(session, inviter_id)
+        values = await load_values(session)
+        reward, cap = (
+            values[SettingKey.INVITE_REWARD_COINS],
+            values[SettingKey.INVITE_REWARDS_PER_DAY],
+        )
+        await session.commit()
+        if inviter is not None:
+            text = (
+                INVITE_JOINED_REWARD.format(amount=reward, cap=cap)
+                if reward and cap
+                else INVITE_JOINED
+            )
+            await _tell(bot, inviter.telegram_user_id, text)
     await prompt_next(bot, message.chat.id, session, ctx, state, settings)
+
+
+async def _tell(bot: Bot, chat_id: int, text: str) -> None:
+    """A message to someone else, who may have blocked the bot: never raises."""
+    try:
+        await bot.send_message(chat_id, text)
+    except TelegramAPIError as exc:
+        logger.warning("could not send an invite notice", extra=exception_summary(exc))
 
 
 async def resume(

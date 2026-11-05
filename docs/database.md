@@ -232,6 +232,23 @@ Coins set aside for something that may still fail, such as a paid search (D-050)
 
 Available coins are the balance minus the user's `held` holds (a partial index serves this). Capturing changes the status only from `held` and adds a ledger row of the hold's purpose, keyed to the hold; releasing changes the status only. A trigger rejects deleting any hold, and allows only one change: from `held` to `captured` or `released`, with its user, amount, purpose, key, and creation time unchanged. A new hold must start as `held`, and a deferred constraint trigger refuses to commit a captured hold without its ledger row, so held coins are never marked spent without being charged. So each hold is spent or released once, even when tried twice at the same moment. A hold's idempotency key is bound to its user, amount, and purpose: reusing it for anything else is refused.
 
+### `invite_codes`
+
+Each user's personal invite code, used in their invite link `https://t.me/<bot>?start=inv_<code>` (D-050). The primary key is `user_id` (references `users.id`); `code` is 8 random URL-safe characters, unique, and carries nothing about the user. Created the first time the user opens /coins.
+
+### `referrals`
+
+Who invited a user (D-050).
+
+| Column | Type | Notes |
+|---|---|---|
+| `invitee_user_id` | bigint, primary key | References `users.id`. At most one inviter per user; the first stays. |
+| `inviter_user_id` | bigint | References `users.id`. Never the invitee (constraint). |
+| `status` | varchar(16) | `pending` until the invitee completes their profile, then `rewarded` or `not_rewarded` (daily cap reached, reward off, the inviter's account not active, or the invitee ever deleted an account). A trigger allows only that one change and rejects deletion, so the history the daily cap counts cannot be rewritten. |
+| `created_at`, `settled_at` | timestamptz | `settled_at` is set exactly when the status leaves `pending` (constraint). |
+
+A referral is recorded only for an invitee who has never completed a profile and never deleted an account, checked with the invitee's `users` row locked (`FOR NO KEY UPDATE`), which account deletion and profile completion also lock. On completion, the pending row is locked, and the inviter's `users` row is locked (`FOR NO KEY UPDATE`) while their rewards for the day are counted, so simultaneous completions cannot pass the cap. The welcome bonus and the invite reward are ledger entries keyed `welcome:<user id>` and `referral:<invitee id>`, so each is granted once.
+
 ## Where rules are enforced
 
 Profile rules are enforced twice:
