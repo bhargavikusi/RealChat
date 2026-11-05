@@ -48,3 +48,20 @@ def test_swaps_never_add_a_repeat() -> None:
     repeats = [pair for pair in pairs if frozenset(pair) in recent((3, 4), (1, 3), (2, 4))]
     assert len(pairs) == 2
     assert len(repeats) == 0  # 1-4 and 2-3 are both fresh
+
+
+def test_only_allowed_pairs_are_made() -> None:
+    # 1 may only meet 4 (as a paid search would); the rest pair as usual.
+    def can_pair(first: int, second: int) -> bool:
+        return 1 not in (first, second) or 4 in (first, second)
+
+    assert pair_users([1, 2, 3, 4], set(), can_pair) == [(1, 4), (2, 3)]
+
+
+def test_avoiding_a_repeat_never_makes_a_disallowed_pair() -> None:
+    # 3-4 met recently. Swapping to 1-3 and 2-4 would avoid the repeat, but 1 may only
+    # meet 2, so the repeat stands rather than an unwanted match.
+    def can_pair(first: int, second: int) -> bool:
+        return 1 not in (first, second) or 2 in (first, second)
+
+    assert pair_users([1, 2, 3, 4], recent((3, 4)), can_pair) == [(1, 2), (3, 4)]

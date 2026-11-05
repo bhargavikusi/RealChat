@@ -27,7 +27,13 @@ from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMar
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from apps.bot.chat import tell_partner_ended
-from apps.bot.endings import SafetyAction, safety_keyboard, send_chat_ended, send_menu
+from apps.bot.endings import (
+    SafetyAction,
+    menu_price,
+    safety_keyboard,
+    send_chat_ended,
+    send_menu,
+)
 from apps.bot.keyboards import main_keyboard
 from backend.core.logging import exception_summary
 from backend.modules.admin.settings import RuntimeSettings, SettingKey
@@ -200,12 +206,15 @@ async def _block(
         await query.answer(BLOCKED if blocked.added else ALREADY_BLOCKED)
         await _set_buttons(bot, query, buttons)
         return
+    price = await menu_price(session)
     await tell_partner_ended(
         session, bot, user_id, chat.ActiveChat(conversation_id, blocked.partner_id)
     )
     await query.answer()
     await _set_buttons(bot, query, buttons)
-    await send_chat_ended(bot, query.from_user.id, YOU_BLOCKED, conversation_id, blocked=True)
+    await send_chat_ended(
+        bot, query.from_user.id, YOU_BLOCKED, conversation_id, blocked=True, price=price
+    )
 
 
 async def on_cancel_block(query: CallbackQuery, bot: Bot) -> None:
@@ -310,11 +319,15 @@ async def on_reason(
     )
 
 
-async def _finish_details(bot: Bot, chat_id: int, state: FSMContext, text: str) -> None:
+async def _finish_details(
+    bot: Bot, chat_id: int, session: AsyncSession, state: FSMContext, text: str
+) -> None:
     data = await state.get_data()
     await state.clear()
     if data.get("ended"):
-        await send_menu(bot, chat_id, text)
+        price = await menu_price(session)
+        await session.commit()
+        await send_menu(bot, chat_id, price, text)
     else:
         await bot.send_message(chat_id, text)
 
@@ -335,7 +348,9 @@ async def on_details(message: Message, bot: Bot, session: AsyncSession, state: F
         session, user.id, report_id, raw
     )
     await session.commit()
-    await _finish_details(bot, message.chat.id, state, DETAILS_ADDED if added else DETAILS_DONE)
+    await _finish_details(
+        bot, message.chat.id, session, state, DETAILS_ADDED if added else DETAILS_DONE
+    )
 
 
 async def on_details_other(message: Message) -> None:
@@ -343,7 +358,11 @@ async def on_details_other(message: Message) -> None:
 
 
 async def on_skip(
-    query: CallbackQuery, bot: Bot, callback_data: SafetyAction, state: FSMContext
+    query: CallbackQuery,
+    bot: Bot,
+    callback_data: SafetyAction,
+    session: AsyncSession,
+    state: FSMContext,
 ) -> None:
     data = await state.get_data()
     if await state.get_state() != ReportDetails.text or data.get("report") != callback_data.report:
@@ -352,7 +371,7 @@ async def on_skip(
         return
     await query.answer()
     await _set_buttons(bot, query, None)
-    await _finish_details(bot, query.from_user.id, state, DETAILS_SKIPPED)
+    await _finish_details(bot, query.from_user.id, session, state, DETAILS_SKIPPED)
 
 
 def create_router() -> Router:

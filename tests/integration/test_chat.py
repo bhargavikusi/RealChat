@@ -31,6 +31,7 @@ from tests.support.world import (
     BOB_ID,
     CHAT_KEYS,
     MAIN_KEYS,
+    MENU_BUTTONS,
     World,
     assert_chat_ended,
     keys,
@@ -80,7 +81,7 @@ async def test_two_users_are_matched_and_see_each_other(world: World) -> None:
 
 async def test_new_chat_opens_the_menu(world: World) -> None:
     assert await world.alice.send(NEW_CHAT) == MEET_PROMPT
-    assert list(world.alice.session.last_buttons()) == [RANDOM_BUTTON]
+    assert list(world.alice.session.last_buttons()) == MENU_BUTTONS
     assert await world.alice.press(RANDOM_BUTTON) == ch.SEARCHING
 
 

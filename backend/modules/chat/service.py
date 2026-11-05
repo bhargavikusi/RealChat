@@ -158,6 +158,25 @@ async def eligible_for_matching(
     return set((await session.execute(query)).scalars())
 
 
+async def genders(
+    session: AsyncSession, user_ids: Collection[int], *, lock: bool = False
+) -> dict[int, str]:
+    """Each user's profile gender (all onboarded users have one).
+
+    With `lock`, the profiles are share-locked until the transaction ends, so a gender
+    change (which locks the profile for update) waits.
+    """
+    if not user_ids:
+        return {}
+    query = select(Profile.user_id, Profile.gender).where(
+        Profile.user_id.in_(user_ids), Profile.gender.is_not(None)
+    )
+    if lock:
+        query = query.with_for_update(read=True)
+    rows = await session.execute(query)
+    return {int(user_id): str(gender) for user_id, gender in rows}
+
+
 async def recent_pairs(
     session: AsyncSession, user_ids: Collection[int], since: datetime
 ) -> set[frozenset[int]]:

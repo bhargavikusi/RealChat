@@ -229,6 +229,42 @@ async def release(session: AsyncSession, hold_id: int, now: datetime) -> bool:
     return released is not None
 
 
+async def hold_status(session: AsyncSession, hold_id: int) -> str | None:
+    return await session.scalar(select(CoinHold.status).where(CoinHold.id == hold_id))
+
+
+async def hold_amount(session: AsyncSession, hold_id: int) -> int:
+    amount = await session.scalar(select(CoinHold.amount).where(CoinHold.id == hold_id))
+    return int(amount or 0)
+
+
+async def hold_id_for(session: AsyncSession, key: str) -> int | None:
+    """The hold made under `key`, if any."""
+    found = await session.scalar(select(CoinHold.id).where(CoinHold.idempotency_key == key))
+    return None if found is None else int(found)
+
+
+async def release_stale(
+    session: AsyncSession, purpose: str, before: datetime, now: datetime
+) -> int:
+    """Release holds for `purpose` still held since before `before`; returns how many.
+
+    A safety net: whatever made a hold normally settles it, but a crash at the wrong
+    moment could leave one held.
+    """
+    released = await session.execute(
+        update(CoinHold)
+        .where(
+            CoinHold.purpose == purpose,
+            CoinHold.status == "held",
+            CoinHold.created_at < before,
+        )
+        .values(status="released", settled_at=now)
+        .returning(CoinHold.id)
+    )
+    return len(released.all())
+
+
 @dataclass(frozen=True)
 class Entry:
     amount: int
