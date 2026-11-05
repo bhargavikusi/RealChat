@@ -33,6 +33,8 @@ class SettingKey(StrEnum):
     WELCOME_BONUS_COINS = "welcome_bonus_coins"
     INVITE_REWARD_COINS = "invite_reward_coins"
     INVITE_REWARDS_PER_DAY = "invite_rewards_per_day"
+    DAILY_REWARD_ON = "daily_reward_on"
+    DAILY_REWARD_COINS = "daily_reward_coins"
 
 
 @dataclass(frozen=True)
@@ -152,6 +154,23 @@ SPECS: dict[SettingKey, SettingSpec] = {
             "invites",
             default=10,
             minimum=0,
+            maximum=1_000,
+        ),
+        SettingSpec(
+            SettingKey.DAILY_REWARD_ON,
+            "Daily reward (promotions)",
+            "on/off",
+            default=0,
+            minimum=0,
+            maximum=1,
+            note="1 turns it on, 0 off",
+        ),
+        SettingSpec(
+            SettingKey.DAILY_REWARD_COINS,
+            "Daily reward amount",
+            "coins",
+            default=1,
+            minimum=1,
             maximum=1_000,
         ),
     )

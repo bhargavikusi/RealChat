@@ -2,6 +2,8 @@
 
 * Welcome bonus: granted when a user completes their profile, once per Telegram account
   ever. The account row is kept after deletion, so a returning user never gets it again.
+* Daily reward: for promotional periods, when admins switch it on; claimed once per
+  calendar day (UTC).
 * Invites: each user has a personal invite code. Starting the bot through someone's
   invite link records them as the inviter, if the new user has never completed a
   profile before (and never had an account deleted). When the invited user completes
@@ -15,7 +17,7 @@ concurrent completion rewards once.
 
 import secrets
 from dataclasses import dataclass
-from datetime import datetime, time
+from datetime import UTC, datetime, time
 
 from sqlalchemy import func, select, update
 from sqlalchemy.dialects.postgresql import insert
@@ -161,3 +163,20 @@ async def on_profile_complete(
     if not rewarded:
         return Granted(welcome if welcomed else 0)
     return Granted(welcome if welcomed else 0, inviter_id, invite_reward)
+
+
+def _day_key(user_id: int, now: datetime) -> str:
+    return f"daily:{user_id}:{now.astimezone(UTC).date().isoformat()}"
+
+
+async def claimed_today(session: AsyncSession, user_id: int, now: datetime) -> bool:
+    return await coins.recorded(session, _day_key(user_id, now)) is not None
+
+
+async def claim_daily(session: AsyncSession, user_id: int, now: datetime, amount: int) -> bool:
+    """Grant today's daily reward; returns False if it was already claimed today (UTC).
+
+    The ledger key is the user and the UTC date, so repeated or simultaneous claims
+    record once. Whether the reward is on is the caller's check.
+    """
+    return await coins.credit(session, user_id, amount, "daily_reward", _day_key(user_id, now))
