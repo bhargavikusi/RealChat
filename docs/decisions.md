@@ -508,7 +508,7 @@ Work happens on short-lived issue branches, such as `feature/12-onboarding`, cre
 * **Paid matching:** "Who do you want to meet?" offers men, women, or other genders for one price (admin runtime setting, default 2 coins). A paid searcher can be matched with anyone whose gender fits, including free random searchers, provided each fits the other's own choice. Only those who chose a gender pay; if both chose, both pay. The partner is never told who paid. Settles O-004.
 * **Earning, before purchases exist:**
   * Welcome bonus: 10 coins on completing onboarding, once per Telegram account ever.
-  * Invite links: the inviter gets 10 coins when an invited person who has never used the bot completes onboarding. The new user gets 10 once, as their welcome bonus, never both. An inviter is rewarded for at most 10 invites per day.
+  * Invite links: the inviter gets 10 coins when an invited person who has never used the bot completes onboarding. The new user gets 10 once, as their welcome bonus, never both. An inviter is rewarded for at most 10 invites per day. "Never used the bot" means never completed a profile and never deleted an account; someone who only opened the bot before still counts. The first inviter stays. The inviter is told, without names, when someone starts the bot through their link and again when they earn the reward. Restricted inviters are not rewarded.
   * Daily reward: for promotional periods, off by default; admins switch it on or off and set the amount (default 1 coin). Claimed once per calendar day (UTC).
   * Admin grants and corrections through the server-side admin CLI, with a reason, audit-logged.
   * All amounts and caps are admin runtime settings.

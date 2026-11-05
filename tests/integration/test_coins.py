@@ -14,8 +14,10 @@ from apps.bot import coins as bot_coins
 from apps.bot.menu import BOT_COMMANDS
 from backend.config.settings import BotSettings
 from backend.modules.admin import service as admin
-from backend.modules.admin.models import AdminAuditEntry
+from backend.modules.admin.models import AdminAuditEntry, AppSetting
 from backend.modules.admin.service import AdminError
+from backend.modules.admin.settings import SettingKey
+from backend.modules.coins import rewards
 from backend.modules.coins import service as coins
 from backend.modules.coins.models import CoinTransaction
 from backend.modules.coins.service import InsufficientCoinsError
@@ -293,27 +295,51 @@ async def test_coins_shows_balance_held_coins_and_history(
     bot_settings: BotSettings, redis: Redis, session_factory: Sessions
 ) -> None:
     chat = Chat(bot_settings, redis, session_factory)
-    await complete_onboarding(chat)
-    assert await chat.send("/coins") == "\n".join(
-        ["💰 Your coins", "", "Balance: 0", "", "Recent activity:", bot_coins.NO_ACTIVITY]
-    )
+    await complete_onboarding(chat)  # with the 10-coin welcome bonus
     async with session_factory() as session:
         user = await users.get_or_create_user(session, USER_ID)
-        await admin.adjust_coins(session, USER_ID, 10, "promo")
+        await admin.adjust_coins(session, USER_ID, 5, "promo")
         await coins.hold(session, user.id, 2, "paid_match", "search")
+        code = await rewards.invite_code(session, user.id)
         await session.commit()
     shown = await chat.send("/coins")
     today = datetime.now(UTC).strftime("%d %b")
     assert shown.splitlines() == [
         "💰 Your coins",
         "",
-        "Balance: 10",
+        "Balance: 15",
         "Held for a search: 2",
-        "Available: 8",
+        "Available: 13",
         "",
         "Recent activity:",
-        f"+10  Bonus from RealChat · {today}",
+        f"+5  Bonus from RealChat · {today}",
+        f"+10  Welcome bonus · {today}",
+        "",
+        f"👥 Invite friends: https://t.me/RealChatTestBot?start=inv_{code}",
+        bot_coins.INVITE_REWARD.format(amount=10, cap=10),
     ]
+
+
+async def test_coins_says_when_there_is_no_activity(
+    bot_settings: BotSettings, redis: Redis, session_factory: Sessions
+) -> None:
+    async with session_factory() as session:
+        session.add(AppSetting(key=SettingKey.WELCOME_BONUS_COINS.value, value=0))
+        session.add(AppSetting(key=SettingKey.INVITE_REWARD_COINS.value, value=0))
+        await session.commit()
+    chat = Chat(bot_settings, redis, session_factory)
+    await complete_onboarding(chat)
+    lines = (await chat.send("/coins")).splitlines()
+    assert lines[:6] == [
+        "💰 Your coins",
+        "",
+        "Balance: 0",
+        "",
+        "Recent activity:",
+        bot_coins.NO_ACTIVITY,
+    ]
+    assert lines[7].startswith("👥 Invite friends: ")
+    assert len(lines) == 8  # no reward line while invite rewards are off
 
 
 async def test_a_repeated_spend_reports_done_even_when_coins_ran_out(

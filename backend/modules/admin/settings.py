@@ -30,6 +30,9 @@ class SettingKey(StrEnum):
     PRIVATE_MODE_HOURS = "private_mode_hours"
     VIEW_ONCE_SECONDS = "view_once_seconds"
     PRIVATE_ENDED_ASK_SECONDS = "private_ended_ask_seconds"
+    WELCOME_BONUS_COINS = "welcome_bonus_coins"
+    INVITE_REWARD_COINS = "invite_reward_coins"
+    INVITE_REWARDS_PER_DAY = "invite_rewards_per_day"
 
 
 @dataclass(frozen=True)
@@ -124,6 +127,32 @@ SPECS: dict[SettingKey, SettingSpec] = {
             minimum=0,
             maximum=300,
             note="0 turns it off",
+        ),
+        SettingSpec(
+            SettingKey.WELCOME_BONUS_COINS,
+            "Welcome bonus",
+            "coins",
+            default=10,
+            minimum=0,
+            maximum=1_000,
+            note="0 turns it off",
+        ),
+        SettingSpec(
+            SettingKey.INVITE_REWARD_COINS,
+            "Invite reward",
+            "coins",
+            default=10,
+            minimum=0,
+            maximum=1_000,
+            note="0 turns it off",
+        ),
+        SettingSpec(
+            SettingKey.INVITE_REWARDS_PER_DAY,
+            "Invite rewards per inviter per day",
+            "invites",
+            default=10,
+            minimum=0,
+            maximum=1_000,
         ),
     )
 }

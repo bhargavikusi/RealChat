@@ -1,7 +1,8 @@
 """💰 /coins: the user's coin balance and recent activity (D-050).
 
 Reached from Telegram's command menu (D-022). Shows the balance, any coins held for a
-search that is still running, and the most recent ledger entries. As elsewhere, the
+search that is still running, the most recent ledger entries, and the user's invite
+link. As elsewhere, the
 database transaction is ended before any Telegram call.
 """
 
@@ -14,6 +15,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from apps.bot.onboarding import load_context, prompt_next
 from backend.config.settings import BotSettings
+from backend.modules.admin.settings import SettingKey, load_values
+from backend.modules.coins import rewards
 from backend.modules.coins import service as coins
 from backend.modules.coins.service import Entry
 
@@ -27,6 +30,18 @@ LABELS = {
     "admin_correction": "Correction",
 }
 NO_ACTIVITY = "No coin activity yet."
+INVITE = "👥 Invite friends: {link}"
+INVITE_REWARD = (
+    "You get {amount} coins when someone you invite finishes creating their profile "
+    "(up to {cap} a day)."
+)
+
+
+def invite_lines(link: str, amount: int, cap: int) -> list[str]:
+    lines = ["", INVITE.format(link=link)]
+    if amount and cap:
+        lines.append(INVITE_REWARD.format(amount=amount, cap=cap))
+    return lines
 
 
 def coins_text(balance: coins.Balance, entries: list[Entry]) -> str:
@@ -56,7 +71,15 @@ async def on_coins(
     # A fresh transaction, so the balance and history come from one snapshot.
     balance, entries = await coins.summary(session, ctx.user.id, HISTORY_LENGTH)
     await session.commit()
-    await message.answer(coins_text(balance, entries))
+    code = await rewards.invite_code(session, ctx.user.id)
+    values = await load_values(session)
+    await session.commit()
+    me = await bot.me()
+    link = f"https://t.me/{me.username}?start={rewards.INVITE_PREFIX}{code}"
+    invite = invite_lines(
+        link, values[SettingKey.INVITE_REWARD_COINS], values[SettingKey.INVITE_REWARDS_PER_DAY]
+    )
+    await message.answer("\n".join([coins_text(balance, entries), *invite]))
 
 
 def create_router() -> Router:

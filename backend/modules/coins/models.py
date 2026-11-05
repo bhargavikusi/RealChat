@@ -109,3 +109,42 @@ class CoinTransaction(Base):
     # Why an admin grant or correction was made. Never message content.
     note: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+REFERRAL_STATUSES = ("pending", "rewarded", "not_rewarded")
+
+
+class InviteCode(Base):
+    """A user's personal invite code, used in their invite link (D-050)."""
+
+    __tablename__ = "invite_codes"
+
+    user_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("users.id"), primary_key=True)
+    # Random and unguessable; carries nothing about the user.
+    code: Mapped[str] = mapped_column(String(16), unique=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class Referral(Base):
+    """Who invited a user: at most one inviter per invited user, set when they start the
+    bot through an invite link (D-050). The inviter is rewarded once the invited user
+    completes their profile, unless the daily cap was reached or they can't be."""
+
+    __tablename__ = "referrals"
+    __table_args__ = (
+        CheckConstraint("invitee_user_id <> inviter_user_id", name="not_self"),
+        CheckConstraint(
+            f"status IN ({', '.join(repr(s) for s in REFERRAL_STATUSES)})", name="status"
+        ),
+        CheckConstraint("(status = 'pending') = (settled_at IS NULL)", name="settled_pair"),
+        # Serves the inviter's rewards per day.
+        Index("ix_referrals_inviter_settled_at", "inviter_user_id", "settled_at"),
+    )
+
+    invitee_user_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("users.id"), primary_key=True
+    )
+    inviter_user_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("users.id"))
+    status: Mapped[str] = mapped_column(String(16), server_default="pending")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    settled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
