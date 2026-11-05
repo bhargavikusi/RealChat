@@ -31,6 +31,13 @@ Sessions = async_sessionmaker[AsyncSession]
 BOB_ID = 5353
 MAIN_KEYS = [[NEW_CHAT]]
 CHAT_KEYS = [[PARTNER_PROFILE, PRIVATE_ON], [END_CHAT]]
+# The new-chat menu at the default price of 2 coins (D-044, D-050).
+MENU_BUTTONS = [
+    RANDOM_BUTTON,
+    "👨 Men · 2 coins",
+    "👩 Women · 2 coins",
+    "🧑 Other genders · 2 coins",
+]
 PRIVATE_CHAT_KEYS = [[PARTNER_PROFILE, PRIVATE_OFF], [END_CHAT]]
 
 
@@ -80,7 +87,7 @@ def assert_chat_ended(
     assert (text_of(ended), keys(ended)) == (how, MAIN_KEYS)
     toggle = UNBLOCK_BUTTON if blocked else BLOCK_BUTTON
     assert (text_of(safety), buttons(safety)) == (SAFETY_PROMPT, [toggle, REPORT_BUTTON])
-    assert (text_of(menu), buttons(menu)) == (MEET_PROMPT, [RANDOM_BUTTON])
+    assert (text_of(menu), buttons(menu)) == (MEET_PROMPT, MENU_BUTTONS)
 
 
 def last_to(session: RecordingSession, chat_id: int) -> SendMessage | SendPhoto:

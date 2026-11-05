@@ -30,7 +30,7 @@ from aiogram.types import (
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from apps.bot.admin import admin_button
-from apps.bot.endings import PARTNER_LEFT, tell_chat_ended
+from apps.bot.endings import PARTNER_LEFT, menu_price, tell_chat_ended
 from apps.bot.menu import HelpAction
 from apps.bot.middlewares import Handler
 from apps.bot.onboarding import load_context, prompt_next
@@ -190,6 +190,7 @@ async def on_confirm(
         session, partner.id, user.id
     )
     await service.delete_account(session, user.id, now)
+    price = await menu_price(session)
     await session.commit()
     await state.clear()
     # The partner is told first, so a failure replying to this user cannot skip it.
@@ -200,6 +201,7 @@ async def on_confirm(
             PARTNER_LEFT,
             ended.conversation_id,
             blocked=partner_blocked,
+            price=price,
         )
     await query.answer()
     await bot.send_message(query.from_user.id, DELETED_RESTRICTED if restricted else DELETED)

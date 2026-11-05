@@ -17,6 +17,11 @@ Losing Redis loses the queue, never a match: matches are confirmed in PostgreSQL
 every user taken from the queue is re-checked there first. After a Redis restart,
 users who were searching are simply no longer searching and can start again.
 
+A paid search (D-050) carries the gender it is for in its id, as `<token>-<gender>`;
+a free random search is just `<token>`. (Not a colon: the id travels in button data,
+where colons separate fields.) The coins for a paid search are held in
+PostgreSQL under the key `search_hold_key(user, token)`.
+
 User ids are internal `users.id` values, never Telegram IDs.
 """
 
@@ -137,6 +142,30 @@ def _search_key(user_id: int) -> str:
     return f"match:search:{user_id}"
 
 
+def new_token() -> str:
+    return secrets.token_hex(4)
+
+
+def search_id_for(token: str, wants: str | None) -> str:
+    return token if wants is None else f"{token}-{wants}"
+
+
+@dataclass(frozen=True)
+class Search:
+    token: str
+    wants: str | None  # the gender a paid search is for; None for a free random search
+
+
+def parse_search(search_id: str) -> Search:
+    token, _, wants = search_id.partition("-")
+    return Search(token, wants or None)
+
+
+def search_hold_key(user_id: int, token: str) -> str:
+    """The idempotency key of the coins held for a paid search."""
+    return f"search:{user_id}:{token}"
+
+
 @dataclass(frozen=True)
 class Claimed:
     """A user taken from the queue by the matcher, with what is needed to put them back."""
@@ -154,19 +183,37 @@ class SearchQueue:
         # Script results are lists or integers; their shape is checked by each caller.
         return await self._redis.eval(script, numkeys, *args)
 
-    async def start(self, user_id: int, now: float) -> tuple[str, bool]:
-        """Start searching; returns (search id, True if new). A repeat returns the current id."""
-        created, search_id = await self._eval(
+    async def start(
+        self, user_id: int, now: float, search_id: str | None = None
+    ) -> tuple[str, bool]:
+        """Start searching; returns (search id, True if new). A repeat returns the current id.
+
+        `search_id` names the new search (see `search_id_for`); a random one is used if
+        not given.
+        """
+        created, current = await self._eval(
             _START,
             2,
             _search_key(user_id),
             QUEUE_KEY,
-            secrets.token_hex(4),
+            search_id or new_token(),
             now,
             SEARCH_TTL_SECONDS,
             user_id,
         )
-        return str(search_id), bool(created)
+        return str(current), bool(created)
+
+    async def searches(self, user_ids: list[int]) -> dict[int, Search]:
+        """The live search of each of these users (searching, not claimed or cancelled)."""
+        if not user_ids:
+            return {}
+        values = await self._redis.mget([_search_key(user_id) for user_id in user_ids])
+        found = {}
+        for user_id, value in zip(user_ids, values, strict=True):
+            if value is None or value == CANCELLED or str(value).startswith(CLAIMED):
+                continue
+            found[user_id] = parse_search(str(value))
+        return found
 
     async def current(self, user_id: int) -> str | None:
         value = await self._redis.get(_search_key(user_id))

@@ -158,6 +158,18 @@ async def eligible_for_matching(
     return set((await session.execute(query)).scalars())
 
 
+async def genders(session: AsyncSession, user_ids: Collection[int]) -> dict[int, str]:
+    """Each user's profile gender (all onboarded users have one)."""
+    if not user_ids:
+        return {}
+    rows = await session.execute(
+        select(Profile.user_id, Profile.gender).where(
+            Profile.user_id.in_(user_ids), Profile.gender.is_not(None)
+        )
+    )
+    return {int(user_id): str(gender) for user_id, gender in rows}
+
+
 async def recent_pairs(
     session: AsyncSession, user_ids: Collection[int], since: datetime
 ) -> set[frozenset[int]]:

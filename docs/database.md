@@ -225,12 +225,12 @@ Coins set aside for something that may still fail, such as a paid search (D-050)
 | `id` | bigint identity | |
 | `user_id` | bigint | References `users.id`. |
 | `amount` | integer | Positive. |
-| `purpose` | varchar(32) | `paid_match`. |
+| `purpose` | varchar(32) | `paid_match`: coins for a paid search, under the key `search:<user id>:<search token>`. |
 | `idempotency_key` | varchar(128), unique | One hold per action. |
 | `status` | varchar(16) | `held` (default), `captured`, or `released`. |
 | `created_at`, `settled_at` | timestamptz | `settled_at` is set exactly when the status leaves `held` (constraint). |
 
-Available coins are the balance minus the user's `held` holds (a partial index serves this). Capturing changes the status only from `held` and adds a ledger row of the hold's purpose, keyed to the hold; releasing changes the status only. A trigger rejects deleting any hold, and allows only one change: from `held` to `captured` or `released`, with its user, amount, purpose, key, and creation time unchanged. A new hold must start as `held`, and a deferred constraint trigger refuses to commit a captured hold without its ledger row, so held coins are never marked spent without being charged. So each hold is spent or released once, even when tried twice at the same moment. A hold's idempotency key is bound to its user, amount, and purpose: reusing it for anything else is refused.
+Available coins are the balance minus the user's `held` holds (a partial index serves this). A paid search's hold is captured in the same transaction that creates the match, and released when the search is cancelled, times out, or its user is no longer eligible; the matcher also releases any paid-search hold still held ten minutes after the search time limit, in case a crash left one behind. Capturing changes the status only from `held` and adds a ledger row of the hold's purpose, keyed to the hold; releasing changes the status only. A trigger rejects deleting any hold, and allows only one change: from `held` to `captured` or `released`, with its user, amount, purpose, key, and creation time unchanged. A new hold must start as `held`, and a deferred constraint trigger refuses to commit a captured hold without its ledger row, so held coins are never marked spent without being charged. So each hold is spent or released once, even when tried twice at the same moment. A hold's idempotency key is bound to its user, amount, and purpose: reusing it for anything else is refused.
 
 ### `invite_codes`
 

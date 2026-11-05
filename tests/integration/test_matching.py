@@ -30,12 +30,18 @@ class RecordingNotifier:
     def __init__(self) -> None:
         self.matches: list[tuple[int, int]] = []
         self.expired: list[int] = []
+        self.charged: list[dict[int, int]] = []
+        self.refunded: list[bool] = []
 
-    async def matched(self, conversation_id: int, first: int, second: int) -> None:
+    async def matched(
+        self, conversation_id: int, first: int, second: int, charged: dict[int, int]
+    ) -> None:
         self.matches.append((first, second))
+        self.charged.append(charged)
 
-    async def search_expired(self, user_id: int) -> None:
+    async def search_expired(self, user_id: int, refunded: bool) -> None:
         self.expired.append(user_id)
+        self.refunded.append(refunded)
 
 
 async def _eligible_user(sessions: Sessions, telegram_id: int) -> int:

@@ -35,6 +35,7 @@ class SettingKey(StrEnum):
     INVITE_REWARDS_PER_DAY = "invite_rewards_per_day"
     DAILY_REWARD_ON = "daily_reward_on"
     DAILY_REWARD_COINS = "daily_reward_coins"
+    PAID_MATCH_COINS = "paid_match_coins"
 
 
 @dataclass(frozen=True)
@@ -170,6 +171,14 @@ SPECS: dict[SettingKey, SettingSpec] = {
             "Daily reward amount",
             "coins",
             default=1,
+            minimum=1,
+            maximum=1_000,
+        ),
+        SettingSpec(
+            SettingKey.PAID_MATCH_COINS,
+            "Price of a chat with a chosen gender",
+            "coins",
+            default=2,
             minimum=1,
             maximum=1_000,
         ),

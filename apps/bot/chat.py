@@ -37,6 +37,8 @@ from apps.bot.endings import (
     PARTNER_ENDED,
     YOU_ENDED,
     SearchAction,
+    coins_label,
+    menu_price,
     safety_keyboard,
     send_chat_ended,
     send_menu,
@@ -55,7 +57,14 @@ from apps.bot.profile import profile_caption
 from backend.config.settings import BotSettings
 from backend.core.logging import exception_summary
 from backend.modules.chat import service as chat
-from backend.modules.matching.queue import SearchQueue
+from backend.modules.coins import service as coins
+from backend.modules.matching.queue import (
+    SearchQueue,
+    new_token,
+    parse_search,
+    search_hold_key,
+    search_id_for,
+)
 from backend.modules.moderation import service as moderation
 from backend.modules.users import service as users
 from backend.modules.users.models import Profile, User
@@ -68,6 +77,16 @@ SEARCHING = "🔎 Looking for someone to chat with…"
 ALREADY_SEARCHING = "🔎 Still looking for someone to chat with…"
 CANCEL_BUTTON = "Cancel search"
 SEARCH_CANCELLED = "Search cancelled."
+SEARCHING_FOR = (
+    "🔎 Looking for {who} to chat with… {price} are held and only taken if you're matched."
+)
+WHO = {"male": "a man", "female": "a woman", "other": "someone of another gender"}
+NOT_ENOUGH_COINS = (
+    "This chat costs {price}, and you have {available} available. See /coins for ways to "
+    "earn coins."
+)
+COINS_RETURNED = "Your held coins were returned."
+COINS_USED = "🪙 {coins} used for this chat."
 SEARCH_ENDED = "This search has already ended."
 NO_ONE_FOUND = "No one is available right now. Please try again in a little while."
 MATCHED = "🎭 You're connected! Say hi."
@@ -126,6 +145,7 @@ async def _start_search(
     state: FSMContext,
     settings: BotSettings,
     search_queue: SearchQueue,
+    wants: str | None = None,
 ) -> None:
     ctx = await load_context(session, telegram_user)
     if not (ctx.terms_accepted and ctx.profile.onboarding_completed_at is not None):
@@ -133,6 +153,7 @@ async def _start_search(
         return
     active = await chat.active_chat(session, ctx.user.id)
     keyboard = await current_keyboard(session, ctx.user.id)
+    price = await menu_price(session)
     await session.commit()
     if active is not None:
         await bot.send_message(chat_id, ALREADY_IN_CHAT, reply_markup=keyboard)
@@ -140,12 +161,55 @@ async def _start_search(
     # Any half-finished profile edit is abandoned, so its answers can't be mixed up
     # with what the user sends next.
     await state.clear()
-    search_id, created = await search_queue.start(ctx.user.id, time.time())
+    if wants is None:
+        search_id, created = await search_queue.start(ctx.user.id, time.time())
+        await bot.send_message(
+            chat_id,
+            SEARCHING if created else ALREADY_SEARCHING,
+            reply_markup=_cancel_keyboard(search_id),
+        )
+        return
+    # A paid search (D-050): the price is held first, and taken only on a match.
+    token = new_token()
+    try:
+        await coins.hold(
+            session, ctx.user.id, price, "paid_match", search_hold_key(ctx.user.id, token)
+        )
+        await session.commit()
+    except coins.InsufficientCoinsError as error:
+        await session.rollback()
+        await bot.send_message(
+            chat_id,
+            NOT_ENOUGH_COINS.format(
+                price=coins_label(price), available=coins_label(error.available)
+            ),
+        )
+        return
+    try:
+        search_id, created = await search_queue.start(
+            ctx.user.id, time.time(), search_id_for(token, wants)
+        )
+    except BaseException:
+        await _release_search_hold(session, ctx.user.id, token)
+        raise
+    if not created:
+        # Already searching: that search goes on, and this hold is given back.
+        await _release_search_hold(session, ctx.user.id, token)
+        await bot.send_message(chat_id, ALREADY_SEARCHING, reply_markup=_cancel_keyboard(search_id))
+        return
     await bot.send_message(
         chat_id,
-        SEARCHING if created else ALREADY_SEARCHING,
+        SEARCHING_FOR.format(who=WHO[wants], price=coins_label(price)),
         reply_markup=_cancel_keyboard(search_id),
     )
+
+
+async def _release_search_hold(session: AsyncSession, user_id: int, token: str) -> bool:
+    """Give back the coins held for a paid search; returns whether any were."""
+    hold_id = await coins.hold_id_for(session, search_hold_key(user_id, token))
+    released = hold_id is not None and await coins.release(session, hold_id, datetime.now(UTC))
+    await session.commit()
+    return released
 
 
 async def on_new_chat(
@@ -164,6 +228,7 @@ async def on_new_chat(
         return
     active = await chat.active_chat(session, ctx.user.id)
     keyboard = await current_keyboard(session, ctx.user.id)
+    price = await menu_price(session)
     await session.commit()
     # Any half-finished profile or admin edit is abandoned, so the next message is not
     # taken as its answer.
@@ -171,7 +236,7 @@ async def on_new_chat(
     if active is not None:
         await message.answer(ALREADY_IN_CHAT, reply_markup=keyboard)
         return
-    await send_menu(bot, message.chat.id)
+    await send_menu(bot, message.chat.id, price)
 
 
 async def on_random_chat(
@@ -181,10 +246,14 @@ async def on_random_chat(
     state: FSMContext,
     settings: BotSettings,
     search_queue: SearchQueue,
+    callback_data: SearchAction,
 ) -> None:
     await query.answer()
+    wants = callback_data.wants or None
+    if wants is not None and wants not in WHO:
+        return  # not a button the bot made
     await _start_search(
-        bot, query.from_user.id, query.from_user, session, state, settings, search_queue
+        bot, query.from_user.id, query.from_user, session, state, settings, search_queue, wants
     )
 
 
@@ -201,7 +270,12 @@ async def on_cancel_search(
         await query.answer(SEARCH_ENDED)
         return
     await query.answer()
-    await bot.send_message(query.from_user.id, SEARCH_CANCELLED, reply_markup=main_keyboard())
+    search = parse_search(callback_data.search)
+    refunded = search.wants is not None and await _release_search_hold(
+        session, user.id, search.token
+    )
+    text = f"{SEARCH_CANCELLED} {COINS_RETURNED}" if refunded else SEARCH_CANCELLED
+    await bot.send_message(query.from_user.id, text, reply_markup=main_keyboard())
 
 
 # --- In a chat -----------------------------------------------------------------------
@@ -241,9 +315,10 @@ async def tell_partner_ended(
     """
     partner_telegram_id = await _telegram_id(session, ended.partner_id)
     blocked = await moderation.is_blocked(session, ended.partner_id, user_id)
+    price = await menu_price(session)
     await session.commit()
     await tell_chat_ended(
-        bot, partner_telegram_id, PARTNER_ENDED, ended.conversation_id, blocked=blocked
+        bot, partner_telegram_id, PARTNER_ENDED, ended.conversation_id, blocked=blocked, price=price
     )
 
 
@@ -257,8 +332,11 @@ async def on_end_chat(message: Message, bot: Bot, session: AsyncSession) -> None
         await message.answer(NOT_IN_CHAT, reply_markup=main_keyboard())
         return
     blocked = await moderation.is_blocked(session, user.id, ended.partner_id)
+    price = await menu_price(session)
     await tell_partner_ended(session, bot, user.id, ended)
-    await send_chat_ended(bot, message.chat.id, YOU_ENDED, ended.conversation_id, blocked=blocked)
+    await send_chat_ended(
+        bot, message.chat.id, YOU_ENDED, ended.conversation_id, blocked=blocked, price=price
+    )
 
 
 # --- Notifications from the matcher --------------------------------------------------
@@ -283,7 +361,9 @@ class ChatNotifier:
         self._sessions = sessions
         self._avatars = avatars
 
-    async def matched(self, conversation_id: int, first: int, second: int) -> None:
+    async def matched(
+        self, conversation_id: int, first: int, second: int, charged: dict[int, int]
+    ) -> None:
         async with self._sessions() as session:
             people = {
                 user_id: (
@@ -296,9 +376,15 @@ class ChatNotifier:
         for user_id, partner_id in ((first, second), (second, first)):
             telegram_id, _ = people[user_id]
             _, partner = people[partner_id]
+            # Only the payer is told what they paid; the partner never learns of it.
+            header = (
+                f"{MATCHED}\n{COINS_USED.format(coins=coins_label(charged[user_id]))}"
+                if charged.get(user_id)
+                else MATCHED
+            )
             try:
                 await send_card(
-                    self._bot, self._avatars, telegram_id, partner, MATCHED, chat_keyboard()
+                    self._bot, self._avatars, telegram_id, partner, header, chat_keyboard()
                 )
             except TelegramAPIError as exc:
                 logger.warning("could not announce a match", extra=exception_summary(exc))
@@ -321,10 +407,11 @@ class ChatNotifier:
                 )
                 for user_id, partner_id in ((first, second), (second, first))
             ]
+            price = await menu_price(session)
             await session.commit()
         for telegram_id, blocked in people:
             await tell_chat_ended(
-                self._bot, telegram_id, IDLE_ENDED, conversation_id, blocked=blocked
+                self._bot, telegram_id, IDLE_ENDED, conversation_id, blocked=blocked, price=price
             )
 
     async def _telegram_ids(self, user_ids: tuple[int, int]) -> list[int]:
@@ -333,11 +420,13 @@ class ChatNotifier:
             await session.commit()
         return telegram_ids
 
-    async def search_expired(self, user_id: int) -> None:
+    async def search_expired(self, user_id: int, refunded: bool) -> None:
         async with self._sessions() as session:
             telegram_id = await _telegram_id(session, user_id)
+            price = await menu_price(session)
             await session.commit()
-        await send_menu(self._bot, telegram_id, NO_ONE_FOUND)
+        text = f"{NO_ONE_FOUND} {COINS_RETURNED}" if refunded else NO_ONE_FOUND
+        await send_menu(self._bot, telegram_id, price, text)
 
 
 def create_router() -> Router:

@@ -16,16 +16,19 @@ from aiogram import Bot
 from aiogram.exceptions import TelegramAPIError
 from aiogram.filters.callback_data import CallbackData
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from apps.bot.keyboards import main_keyboard
 from backend.core.logging import exception_summary
+from backend.modules.admin.settings import SettingKey, load_values
 
 logger = logging.getLogger(__name__)
 
 
 class SearchAction(CallbackData, prefix="search"):
-    action: str  # "start" (a random chat) or "cancel"
+    action: str  # "start" (a random chat, or with `wants`) or "cancel"
     search: str = ""  # the search a "cancel" button belongs to
+    wants: str = ""  # a paid search: the gender to meet (D-050)
 
 
 class SafetyAction(CallbackData, prefix="safety"):
@@ -39,6 +42,23 @@ class SafetyAction(CallbackData, prefix="safety"):
 
 MEET_PROMPT = "Who do you want to meet?"
 RANDOM_BUTTON = "🎲 Random chat · Free"
+# Paid chats with a chosen gender (D-050); the price is an admin setting.
+PAID_BUTTONS = {
+    "male": "👨 Men · {price}",
+    "female": "👩 Women · {price}",
+    "other": "🧑 Other genders · {price}",
+}
+
+
+def coins_label(amount: int) -> str:
+    return f"{amount} coin{'s' if amount != 1 else ''}"
+
+
+async def menu_price(session: AsyncSession) -> int:
+    """The price of a paid chat, to show in the menu. Reads the database; the caller
+    commits before any Telegram call."""
+    return (await load_values(session))[SettingKey.PAID_MATCH_COINS]
+
 
 YOU_ENDED = "You ended the chat."
 PARTNER_ENDED = "Your chat partner ended the chat."
@@ -73,26 +93,35 @@ def safety_keyboard(conversation_id: int, blocked: bool) -> InlineKeyboardMarkup
     )
 
 
-def new_chat_menu() -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
-            [
-                InlineKeyboardButton(
-                    text=RANDOM_BUTTON, callback_data=SearchAction(action="start").pack()
-                )
-            ]
+def new_chat_menu(price: int) -> InlineKeyboardMarkup:
+    """The free random chat, then a paid chat per gender at `price` coins."""
+    rows = [
+        [
+            InlineKeyboardButton(
+                text=RANDOM_BUTTON, callback_data=SearchAction(action="start").pack()
+            )
         ]
-    )
+    ]
+    rows += [
+        [
+            InlineKeyboardButton(
+                text=label.format(price=coins_label(price)),
+                callback_data=SearchAction(action="start", wants=wants).pack(),
+            )
+        ]
+        for wants, label in PAID_BUTTONS.items()
+    ]
+    return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
-async def send_menu(bot: Bot, chat_id: int, intro: str | None = None) -> None:
+async def send_menu(bot: Bot, chat_id: int, price: int, intro: str | None = None) -> None:
     """The "Who do you want to meet?" message, optionally after a line of context."""
     text = MEET_PROMPT if intro is None else f"{intro}\n\n{MEET_PROMPT}"
-    await bot.send_message(chat_id, text, reply_markup=new_chat_menu())
+    await bot.send_message(chat_id, text, reply_markup=new_chat_menu(price))
 
 
 async def send_chat_ended(
-    bot: Bot, chat_id: int, how: str, conversation_id: int, *, blocked: bool
+    bot: Bot, chat_id: int, how: str, conversation_id: int, *, blocked: bool, price: int
 ) -> None:
     """Say how the chat ended and bring back the main keyboard, then offer Block and
     Report for the partner (`blocked`: whether this user has blocked them) and a new chat.
@@ -108,14 +137,14 @@ async def send_chat_ended(
     except TelegramAPIError as exc:
         # Block and Report stay on the partner's card; the menu must still follow.
         logger.warning("could not offer block and report", extra=exception_summary(exc))
-    await send_menu(bot, chat_id)
+    await send_menu(bot, chat_id, price)
 
 
 async def tell_chat_ended(
-    bot: Bot, chat_id: int, how: str, conversation_id: int, *, blocked: bool
+    bot: Bot, chat_id: int, how: str, conversation_id: int, *, blocked: bool, price: int
 ) -> None:
     """`send_chat_ended` for the other user, who may have blocked the bot: never raises."""
     try:
-        await send_chat_ended(bot, chat_id, how, conversation_id, blocked=blocked)
+        await send_chat_ended(bot, chat_id, how, conversation_id, blocked=blocked, price=price)
     except TelegramAPIError as exc:
         logger.warning("could not tell a user the chat ended", extra=exception_summary(exc))

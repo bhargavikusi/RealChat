@@ -16,7 +16,7 @@ unique index on open conversations still guards against any double match.
 
 import logging
 import secrets
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Protocol
@@ -29,7 +29,14 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from backend.core.logging import exception_summary
 from backend.modules.admin.settings import RuntimeSettings, SettingKey
 from backend.modules.chat import service as chat
-from backend.modules.matching.queue import Claimed, SearchQueue
+from backend.modules.coins import service as coins
+from backend.modules.matching.queue import (
+    Claimed,
+    Search,
+    SearchQueue,
+    parse_search,
+    search_hold_key,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -48,16 +55,34 @@ return 0
 class MatchNotifier(Protocol):
     """Tells users about matches and ended searches. Implemented by the bot layer."""
 
-    async def matched(self, conversation_id: int, first: int, second: int) -> None: ...
+    async def matched(
+        self, conversation_id: int, first: int, second: int, charged: dict[int, int]
+    ) -> None:
+        """`charged`: the coins each paying user was charged for this match (D-050)."""
 
-    async def search_expired(self, user_id: int) -> None: ...
+    async def search_expired(self, user_id: int, refunded: bool) -> None:
+        """`refunded`: whether coins held for the search were given back."""
 
 
-def pair_users(waiting: Sequence[int], recent: set[frozenset[int]]) -> list[tuple[int, int]]:
-    """Pair users in waiting order (oldest first).
+# Held coins of a paid search still held this long after its time limit are released.
+STALE_HOLD_MARGIN = timedelta(minutes=10)
+
+
+def fits(wants: str | None, gender: str | None) -> bool:
+    """Whether someone of `gender` fits a search for `wants` (None: anyone)."""
+    return wants is None or wants == gender
+
+
+def pair_users(
+    waiting: Sequence[int],
+    recent: set[frozenset[int]],
+    can_pair: Callable[[int, int], bool] = lambda first, second: True,
+) -> list[tuple[int, int]]:
+    """Pair users in waiting order (oldest first), only where `can_pair` allows.
 
     The first pass never pairs recent partners. The second pass pairs whoever is left,
     so recent partners are matched again only when nobody else is available (D-033).
+    `can_pair` is how paid searches limit who they meet (D-050).
     """
     unmatched = list(waiting)
     pairs: list[tuple[int, int]] = []
@@ -69,7 +94,8 @@ def pair_users(waiting: Sequence[int], recent: set[frozenset[int]]) -> list[tupl
                 (
                     second
                     for second in unmatched[index + 1 :]
-                    if allow_recent or frozenset((first, second)) not in recent
+                    if can_pair(first, second)
+                    and (allow_recent or frozenset((first, second)) not in recent)
                 ),
                 None,
             )
@@ -83,13 +109,16 @@ def pair_users(waiting: Sequence[int], recent: set[frozenset[int]]) -> list[tupl
     # to the longest-waiting users first.
     position = {user_id: index for index, user_id in enumerate(waiting)}
     ordered = [
-        tuple(sorted(pair, key=position.__getitem__)) for pair in _swap_out_repeats(pairs, recent)
+        tuple(sorted(pair, key=position.__getitem__))
+        for pair in _swap_out_repeats(pairs, recent, can_pair)
     ]
     return sorted(((a, b) for a, b in ordered), key=lambda pair: position[pair[0]])
 
 
 def _swap_out_repeats(
-    pairs: list[tuple[int, int]], recent: set[frozenset[int]]
+    pairs: list[tuple[int, int]],
+    recent: set[frozenset[int]],
+    can_pair: Callable[[int, int], bool],
 ) -> list[tuple[int, int]]:
     """Exchange partners between two pairs when that turns a repeat into fresh pairs.
 
@@ -113,6 +142,8 @@ def _swap_out_repeats(
                 if i == j:
                     continue
                 for new in (((a, c), (b, d)), ((a, d), (b, c))):
+                    if not all(can_pair(*pair) for pair in new):
+                        continue  # a swap never makes an unwanted match
                     before = fresh(a, b) + fresh(c, d)
                     if sum(fresh(*pair) for pair in new) > before:
                         pairs[i], pairs[j] = new
@@ -165,14 +196,21 @@ class Matcher:
             await session.commit()
 
         cutoff = now.timestamp() - timeout
-        expired = await self._expire(cutoff)
+        expired = await self._expire(cutoff, now)
+        async with self._sessions() as session:
+            await coins.release_stale(
+                session, "paid_match", now - timedelta(seconds=timeout) - STALE_HOLD_MARGIN, now
+            )
+            await session.commit()
 
         # Only searches still within the time limit, even if more were left to expire.
         searches = await self._queue.waiting(BATCH_SIZE, started_after=cutoff)
         waiting = [user_id for user_id, _ in searches]
+        choices = await self._queue.searches(waiting)
         async with self._sessions() as session:
             eligible = await chat.eligible_for_matching(session, waiting, self._terms_version)
-            ordered = [user_id for user_id in waiting if user_id in eligible]
+            ordered = [user_id for user_id in waiting if user_id in eligible and user_id in choices]
+            genders = await chat.genders(session, ordered)
             recent = (
                 await chat.recent_pairs(session, ordered, now - timedelta(seconds=window))
                 if window > 0
@@ -182,33 +220,54 @@ class Matcher:
 
         dropped = [(user_id, started) for user_id, started in searches if user_id not in eligible]
         for user_id, started in dropped:
-            await self._queue.remove(user_id, started)
+            if await self._queue.remove(user_id, started) and user_id in choices:
+                await self._release_hold(user_id, choices[user_id], now)
+
+        def can_pair(first: int, second: int) -> bool:
+            # Each must fit the other's choice: a free search fits anyone (D-050).
+            return fits(choices[first].wants, genders.get(second)) and fits(
+                choices[second].wants, genders.get(first)
+            )
 
         matched = 0
-        for first, second in pair_users(ordered, recent):
-            if await self._match(first, second):
+        for first, second in pair_users(ordered, recent, can_pair):
+            if await self._match(first, second, now):
                 matched += 1
         return TickResult(matched=matched, expired=expired, dropped=len(dropped))
 
-    async def _expire(self, started_before: float) -> int:
+    async def _expire(self, started_before: float, now: datetime) -> int:
         expired = 0
-        for user_id in await self._queue.started_before(started_before, BATCH_SIZE):
+        candidates = await self._queue.started_before(started_before, BATCH_SIZE)
+        choices = await self._queue.searches(candidates)
+        for user_id in candidates:
             # The script re-checks the start time, so a search restarted meanwhile stays.
             if not await self._queue.expire(user_id, started_before):
                 continue
             expired += 1
+            search = choices.get(user_id)
+            refunded = search is not None and await self._release_hold(user_id, search, now)
             try:
-                await self._notifier.search_expired(user_id)
+                await self._notifier.search_expired(user_id, refunded)
             except Exception as exc:
                 logger.warning("could not notify an expired search", extra=exception_summary(exc))
         return expired
 
-    async def _match(self, first: int, second: int) -> bool:
+    async def _release_hold(self, user_id: int, search: Search, now: datetime) -> bool:
+        """Give back the coins held for a paid search that ended without a match."""
+        if search.wants is None:
+            return False
+        async with self._sessions() as session:
+            hold_id = await coins.hold_id_for(session, search_hold_key(user_id, search.token))
+            released = hold_id is not None and await coins.release(session, hold_id, now)
+            await session.commit()
+        return released
+
+    async def _match(self, first: int, second: int, now: datetime) -> bool:
         claimed = await self._queue.claim_pair(first, second)
         if claimed is None:
             return False  # one of them cancelled or their search ended meanwhile
         try:
-            conversation_id, eligible = await self._create(first, second)
+            conversation_id, eligible, charged = await self._create(claimed, now)
         except BaseException:
             # A database failure must not lose the searches: put both back, then fail.
             for user in claimed:
@@ -221,12 +280,13 @@ class Matcher:
                     await self._queue.requeue(user)
                 else:
                     await self._release(user)
+                    await self._release_hold(user.user_id, parse_search(user.search_id), now)
             return False
         # The match is committed: releasing the searches must not stop the announcement.
         for user in claimed:
             await self._release(user)
         try:
-            await self._notifier.matched(conversation_id, first, second)
+            await self._notifier.matched(conversation_id, first, second, charged)
         except Exception as exc:
             # The match stands; a user who cannot be reached is handled with chat endings.
             logger.warning("could not notify a match", extra=exception_summary(exc))
@@ -239,25 +299,43 @@ class Matcher:
         except RedisError as exc:
             logger.warning("could not release a claimed search", extra=exception_summary(exc))
 
-    async def _create(self, first: int, second: int) -> tuple[int | None, set[int]]:
-        """Re-check both users and create their conversation in one transaction.
+    async def _create(
+        self, claimed: tuple[Claimed, Claimed], now: datetime
+    ) -> tuple[int | None, set[int], dict[int, int]]:
+        """Re-check both users, create their conversation, and charge paid searches, all
+        in one transaction (D-050).
 
-        Returns the conversation id (None if not created) and who was eligible. Both
-        users' rows are share-locked by the check, so account deletion, which locks the
-        user row first, either finishes before (and the user is not eligible) or waits
-        until this match is committed (and then ends the new chat).
+        Returns the conversation id (None if not created), who was eligible, and the coins
+        charged to each paying user. Both users' rows are share-locked by the check, so
+        account deletion, which locks the user row first, either finishes before (and the
+        user is not eligible) or waits until this match is committed (and then ends the
+        new chat). Coins are taken only here, with the match itself: if their hold can't
+        be captured, the match is not made and that user is not put back.
         """
+        first, second = claimed[0].user_id, claimed[1].user_id
         async with self._sessions() as session:
             eligible = await chat.eligible_for_matching(
                 session, (first, second), self._terms_version, lock=True
             )
             if eligible != {first, second}:
                 await session.rollback()
-                return None, eligible
+                return None, eligible, {}
             try:
                 conversation_id = await chat.start_conversation(session, first, second)
-                await session.commit()
             except IntegrityError:
                 await session.rollback()
-                return None, eligible
-            return conversation_id, eligible
+                return None, eligible, {}
+            charged: dict[int, int] = {}
+            for user in claimed:
+                search = parse_search(user.search_id)
+                if search.wants is None:
+                    continue
+                hold_id = await coins.hold_id_for(
+                    session, search_hold_key(user.user_id, search.token)
+                )
+                if hold_id is None or not await coins.capture(session, hold_id, now):
+                    await session.rollback()
+                    return None, eligible - {user.user_id}, {}
+                charged[user.user_id] = await coins.hold_amount(session, hold_id)
+            await session.commit()
+            return conversation_id, eligible, charged

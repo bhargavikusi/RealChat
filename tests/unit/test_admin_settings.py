@@ -29,6 +29,7 @@ def test_approved_defaults() -> None:
         SettingKey.INVITE_REWARDS_PER_DAY: 10,
         SettingKey.DAILY_REWARD_ON: 0,
         SettingKey.DAILY_REWARD_COINS: 1,
+        SettingKey.PAID_MATCH_COINS: 2,
     }
 
 

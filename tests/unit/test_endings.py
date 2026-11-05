@@ -24,5 +24,5 @@ class FailingSafetyPrompt:
 
 async def test_the_menu_follows_even_if_block_and_report_cannot_be_offered() -> None:
     bot = FailingSafetyPrompt()
-    await send_chat_ended(cast(Bot, bot), 1, YOU_ENDED, 7, blocked=False)
+    await send_chat_ended(cast(Bot, bot), 1, YOU_ENDED, 7, blocked=False, price=2)
     assert bot.sent == [YOU_ENDED, MEET_PROMPT]

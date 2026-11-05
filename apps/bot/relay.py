@@ -49,7 +49,7 @@ from aiogram.types import (
 from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from apps.bot.endings import PARTNER_UNREACHABLE, send_chat_ended
+from apps.bot.endings import PARTNER_UNREACHABLE, menu_price, send_chat_ended
 from apps.bot.onboarding import load_context, prompt_next
 from apps.bot.private import view_once_placeholder
 from backend.config.settings import BotSettings
@@ -177,9 +177,10 @@ async def _end_unreachable(
         await session.commit()
         return
     blocked = await moderation.is_blocked(session, user_id, active.partner_id)
+    price = await menu_price(session)
     await session.commit()
     await send_chat_ended(
-        bot, chat_id, PARTNER_UNREACHABLE, active.conversation_id, blocked=blocked
+        bot, chat_id, PARTNER_UNREACHABLE, active.conversation_id, blocked=blocked, price=price
     )
 
 
