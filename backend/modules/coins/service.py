@@ -229,6 +229,10 @@ async def release(session: AsyncSession, hold_id: int, now: datetime) -> bool:
     return released is not None
 
 
+async def hold_status(session: AsyncSession, hold_id: int) -> str | None:
+    return await session.scalar(select(CoinHold.status).where(CoinHold.id == hold_id))
+
+
 async def hold_amount(session: AsyncSession, hold_id: int) -> int:
     amount = await session.scalar(select(CoinHold.amount).where(CoinHold.id == hold_id))
     return int(amount or 0)

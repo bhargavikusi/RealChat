@@ -36,6 +36,7 @@ from apps.bot.endings import (
     IDLE_ENDED,
     PARTNER_ENDED,
     YOU_ENDED,
+    PaidSearchAction,
     SearchAction,
     coins_label,
     menu_price,
@@ -78,7 +79,10 @@ ALREADY_SEARCHING = "🔎 Still looking for someone to chat with…"
 CANCEL_BUTTON = "Cancel search"
 SEARCH_CANCELLED = "Search cancelled."
 SEARCHING_FOR = (
-    "🔎 Looking for {who} to chat with… {price} are held and only taken if you're matched."
+    "🔎 Looking for {who} to chat with… {price} will be held and only taken if you're matched."
+)
+ALREADY_SEARCHING_FREE = (
+    "You're already searching for a random chat. Cancel it first to choose who to meet."
 )
 WHO = {"male": "a man", "female": "a woman", "other": "someone of another gender"}
 NOT_ENOUGH_COINS = (
@@ -153,7 +157,6 @@ async def _start_search(
         return
     active = await chat.active_chat(session, ctx.user.id)
     keyboard = await current_keyboard(session, ctx.user.id)
-    price = await menu_price(session)
     await session.commit()
     if active is not None:
         await bot.send_message(chat_id, ALREADY_IN_CHAT, reply_markup=keyboard)
@@ -169,7 +172,14 @@ async def _start_search(
             reply_markup=_cancel_keyboard(search_id),
         )
         return
-    # A paid search (D-050): the price is held first, and taken only on a match.
+    # A paid search (D-050). Someone already searching is told so before any coins are
+    # held; the queue still settles a race below.
+    current = await search_queue.current_search(ctx.user.id)
+    if current is not None:
+        await _tell_already_searching(bot, chat_id, current)
+        return
+    # The price is held first, and taken only on a match.
+    price = await menu_price(session)
     token = new_token()
     try:
         await coins.hold(
@@ -195,11 +205,21 @@ async def _start_search(
     if not created:
         # Already searching: that search goes on, and this hold is given back.
         await _release_search_hold(session, ctx.user.id, token)
-        await bot.send_message(chat_id, ALREADY_SEARCHING, reply_markup=_cancel_keyboard(search_id))
+        await _tell_already_searching(bot, chat_id, search_id)
         return
     await bot.send_message(
         chat_id,
         SEARCHING_FOR.format(who=WHO[wants], price=coins_label(price)),
+        reply_markup=_cancel_keyboard(search_id),
+    )
+
+
+async def _tell_already_searching(bot: Bot, chat_id: int, search_id: str) -> None:
+    """A paid tap while a search runs: say which kind is running, with its Cancel button."""
+    free = parse_search(search_id).wants is None
+    await bot.send_message(
+        chat_id,
+        ALREADY_SEARCHING_FREE if free else ALREADY_SEARCHING,
         reply_markup=_cancel_keyboard(search_id),
     )
 
@@ -246,14 +266,34 @@ async def on_random_chat(
     state: FSMContext,
     settings: BotSettings,
     search_queue: SearchQueue,
-    callback_data: SearchAction,
 ) -> None:
     await query.answer()
-    wants = callback_data.wants or None
-    if wants is not None and wants not in WHO:
+    await _start_search(
+        bot, query.from_user.id, query.from_user, session, state, settings, search_queue
+    )
+
+
+async def on_paid_chat(
+    query: CallbackQuery,
+    bot: Bot,
+    callback_data: PaidSearchAction,
+    session: AsyncSession,
+    state: FSMContext,
+    settings: BotSettings,
+    search_queue: SearchQueue,
+) -> None:
+    await query.answer()
+    if callback_data.wants not in WHO:
         return  # not a button the bot made
     await _start_search(
-        bot, query.from_user.id, query.from_user, session, state, settings, search_queue, wants
+        bot,
+        query.from_user.id,
+        query.from_user,
+        session,
+        state,
+        settings,
+        search_queue,
+        callback_data.wants,
     )
 
 
@@ -438,5 +478,6 @@ def create_router() -> Router:
     router.message.register(on_partner_profile, F.text == PARTNER_PROFILE)
     router.message.register(on_end_chat, F.text == END_CHAT)
     router.callback_query.register(on_random_chat, SearchAction.filter(F.action == "start"))
+    router.callback_query.register(on_paid_chat, PaidSearchAction.filter())
     router.callback_query.register(on_cancel_search, SearchAction.filter(F.action == "cancel"))
     return router

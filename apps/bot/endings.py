@@ -1,13 +1,13 @@
 """The new-chat menu, and telling users how a chat ended (D-044).
 
 🎭 New Anonymous Chat opens a "Who do you want to meet?" message with one button per
-kind of chat. Only the free random chat exists so far; paid choices join it with the
-coin work. Whenever a chat ends, however it ends, each user is told how, the main
-keyboard comes back, Block and Report are offered for that chat (D-045), and the same
-menu is shown, so the next chat is one tap away.
+kind of chat: the free random chat, and a paid chat with men, women, or other genders,
+each showing its price in coins (D-050). Whenever a chat ends, however it ends, each
+user is told how, the main keyboard comes back, Block and Report are offered for that
+chat (D-045), and the same menu is shown, so the next chat is one tap away.
 
-This module depends only on the keyboards, so the chat, relay, account, and worker
-code can all use it.
+This module depends on the keyboards and on the admin settings (`menu_price` reads the
+price from the database), so the chat, relay, account, and worker code can all use it.
 """
 
 import logging
@@ -26,9 +26,15 @@ logger = logging.getLogger(__name__)
 
 
 class SearchAction(CallbackData, prefix="search"):
-    action: str  # "start" (a random chat, or with `wants`) or "cancel"
+    action: str  # "start" (a random chat) or "cancel"
     search: str = ""  # the search a "cancel" button belongs to
-    wants: str = ""  # a paid search: the gender to meet (D-050)
+
+
+class PaidSearchAction(CallbackData, prefix="paid"):
+    """A paid search (D-050). Its own type, so buttons sent before paid chats existed keep
+    their format and still work."""
+
+    wants: str  # the gender to meet
 
 
 class SafetyAction(CallbackData, prefix="safety"):
@@ -106,7 +112,7 @@ def new_chat_menu(price: int) -> InlineKeyboardMarkup:
         [
             InlineKeyboardButton(
                 text=label.format(price=coins_label(price)),
-                callback_data=SearchAction(action="start", wants=wants).pack(),
+                callback_data=PaidSearchAction(wants=wants).pack(),
             )
         ]
         for wants, label in PAID_BUTTONS.items()

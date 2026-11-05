@@ -253,14 +253,17 @@ class Matcher:
         return expired
 
     async def _release_hold(self, user_id: int, search: Search, now: datetime) -> bool:
-        """Give back the coins held for a paid search that ended without a match."""
+        """Give back the coins held for a paid search that ended without a match; returns
+        whether they are back, also if the stale-hold sweep returned them already."""
         if search.wants is None:
             return False
         async with self._sessions() as session:
             hold_id = await coins.hold_id_for(session, search_hold_key(user_id, search.token))
-            released = hold_id is not None and await coins.release(session, hold_id, now)
+            if hold_id is not None:
+                await coins.release(session, hold_id, now)
+            status = None if hold_id is None else await coins.hold_status(session, hold_id)
             await session.commit()
-        return released
+        return status == "released"
 
     async def _match(self, first: int, second: int, now: datetime) -> bool:
         claimed = await self._queue.claim_pair(first, second)
@@ -320,6 +323,16 @@ class Matcher:
             if eligible != {first, second}:
                 await session.rollback()
                 return None, eligible, {}
+            # Choices and genders were read before the claim. Check them again here, from
+            # the searches actually claimed and the genders under lock (a gender change
+            # locks the profile), so nobody pays for a partner who no longer fits.
+            genders = await chat.genders(session, (first, second), lock=True)
+            wants = {user.user_id: parse_search(user.search_id).wants for user in claimed}
+            if not (
+                fits(wants[first], genders.get(second)) and fits(wants[second], genders.get(first))
+            ):
+                await session.rollback()
+                return None, eligible, {}  # both go back in the queue
             try:
                 conversation_id = await chat.start_conversation(session, first, second)
             except IntegrityError:

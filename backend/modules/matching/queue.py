@@ -203,6 +203,13 @@ class SearchQueue:
         )
         return str(current), bool(created)
 
+    async def current_search(self, user_id: int) -> str | None:
+        """The id of the user's running search (also while the matcher holds it), if any."""
+        value = await self.current(user_id)
+        if value is None or value == CANCELLED:
+            return None
+        return value.removeprefix(CLAIMED)
+
     async def searches(self, user_ids: list[int]) -> dict[int, Search]:
         """The live search of each of these users (searching, not claimed or cancelled)."""
         if not user_ids:
