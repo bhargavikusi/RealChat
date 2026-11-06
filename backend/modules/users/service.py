@@ -9,11 +9,12 @@ from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from enum import StrEnum
 
-from sqlalchemy import delete, func, select, update
+from sqlalchemy import delete, func, or_, select, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.modules.admin.models import AdminAuditEntry
+from backend.modules.people.models import ProfileVisit
 from backend.modules.users import validation
 from backend.modules.users.models import (
     RESTRICTED_STATUSES,
@@ -133,7 +134,8 @@ async def delete_account(session: AsyncSession, user_id: int, now: datetime) -> 
     """Erase a user's personal data and keep a minimal account record (D-016, D-025).
 
     Erased: every profile field (the profile is replaced by an empty one), the age
-    and gender change history, notification settings, and terms acceptances, so a
+    and gender change history, notification settings, profile visits made or received
+    (D-053), and terms acceptances, so a
     returning user starts a fresh onboarding with the default settings. Kept: the
     Telegram user ID, the status, and timestamps. An
     active account becomes "deleted"; a suspended or banned one keeps its status, so
@@ -147,6 +149,11 @@ async def delete_account(session: AsyncSession, user_id: int, now: datetime) -> 
     await session.execute(delete(Profile).where(Profile.user_id == user_id))
     await session.execute(
         delete(NotificationSettings).where(NotificationSettings.user_id == user_id)
+    )
+    await session.execute(
+        delete(ProfileVisit).where(
+            or_(ProfileVisit.visitor_user_id == user_id, ProfileVisit.visited_user_id == user_id)
+        )
     )
     await session.execute(insert(Profile).values(user_id=user_id))
     if user.status not in RESTRICTED_STATUSES:

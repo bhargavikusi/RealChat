@@ -94,6 +94,14 @@ def last_to(session: RecordingSession, chat_id: int) -> SendMessage | SendPhoto:
     return session.sent_to(chat_id)[-1]
 
 
+def own_buttons(chat: Chat) -> dict[str, str]:
+    """Button text -> data on the latest message to the user's own chat, ignoring any
+    notice their bot sent someone else afterwards."""
+    markup = last_to(chat.session, chat.user_id).reply_markup
+    assert isinstance(markup, InlineKeyboardMarkup)
+    return {b.text: str(b.callback_data) for row in markup.inline_keyboard for b in row}
+
+
 def text_of(method: SendMessage | SendPhoto) -> str:
     return method.text if isinstance(method, SendMessage) else method.caption or ""
 

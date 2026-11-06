@@ -16,7 +16,7 @@ from datetime import datetime, timedelta
 from sqlalchemy import ColumnElement, Select, and_, exists, or_, select
 from sqlalchemy.dialects.postgresql import distinct_on
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import aliased
+from sqlalchemy.orm import InstrumentedAttribute, aliased
 
 from backend.modules.chat.models import Conversation
 from backend.modules.chat.models import ConversationParticipant as Participant
@@ -74,7 +74,9 @@ def _past_conversations(viewer_id: int, since: datetime) -> Select[int, int, dat
     )
 
 
-def _blocked_by(viewer_id: int, partner_id: ColumnElement[int]) -> ColumnElement[bool]:
+def blocked_by(
+    viewer_id: int, partner_id: ColumnElement[int] | InstrumentedAttribute[int]
+) -> ColumnElement[bool]:
     return exists().where(
         UserBlock.blocker_user_id == viewer_id,
         UserBlock.blocked_user_id == partner_id,
@@ -99,7 +101,7 @@ async def past_chats(
             latest.c.id,
             latest.c.ended_at,
             Profile.nickname,
-            _blocked_by(viewer_id, latest.c.user_id),
+            blocked_by(viewer_id, latest.c.user_id),
         )
         .join(Profile, Profile.user_id == latest.c.user_id)
         .order_by(latest.c.ended_at.desc(), latest.c.id.desc())

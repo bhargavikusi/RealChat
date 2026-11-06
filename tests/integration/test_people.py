@@ -21,7 +21,16 @@ from backend.modules.people import service as people
 from backend.modules.users import service as users
 from backend.modules.users.models import Profile, User
 from tests.support.chat import USER_ID, Chat, complete_onboarding
-from tests.support.world import BOB_ID, World, buttons, last_to, match, onboarded_world, text_of
+from tests.support.world import (
+    BOB_ID,
+    World,
+    buttons,
+    last_to,
+    match,
+    onboarded_world,
+    own_buttons,
+    text_of,
+)
 
 Sessions = async_sessionmaker[AsyncSession]
 CAROL_ID = 6464
@@ -102,7 +111,7 @@ async def test_a_past_partner_is_listed_and_their_card_opens(world: World) -> No
     card = last_to(world.alice.session, USER_ID)
     assert text_of(card).startswith("💬 Past chat\n\n👤 Moon Child")
     assert buttons(card) == [BLOCK_BUTTON, REPORT_BUTTON]
-    assert world.alice.session.last_buttons()[BLOCK_BUTTON].endswith(f":{conversation_id}::0")
+    assert own_buttons(world.alice)[BLOCK_BUTTON].endswith(f":{conversation_id}::0")
 
 
 async def test_the_partner_sees_it_too(world: World) -> None:
@@ -173,16 +182,16 @@ async def test_a_blocked_partner_stays_listed_marked_only_for_the_blocker(world:
     await chatted(world)
     await open_past_chats(world.alice)
     await world.alice.press("Moon Child · today")
-    await world.alice.press(BLOCK_BUTTON)
+    await world.alice.press_data(own_buttons(world.alice)[BLOCK_BUTTON])
     await open_past_chats(world.alice)
     assert entries(world.alice) == ["Moon Child · today 🚫"]
     await world.alice.press("Moon Child · today 🚫")
     assert buttons(last_to(world.alice.session, USER_ID)) == [UNBLOCK_BUTTON, REPORT_BUTTON]
-    await world.alice.press(UNBLOCK_BUTTON)
+    await world.alice.press_data(own_buttons(world.alice)[UNBLOCK_BUTTON])
     await open_past_chats(world.alice)
     assert entries(world.alice) == ["Moon Child · today"]
     await world.alice.press("Moon Child · today")
-    await world.alice.press(BLOCK_BUTTON)
+    await world.alice.press_data(own_buttons(world.alice)[BLOCK_BUTTON])
     await open_past_chats(world.bob)
     assert len(entries(world.bob)) == 1
     assert not entries(world.bob)[0].endswith(pp.BLOCKED_MARK)

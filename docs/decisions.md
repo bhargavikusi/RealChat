@@ -547,6 +547,20 @@ Work happens on short-lived issue branches, such as `feature/12-onboarding`, cre
 
 **Why:** Owner decisions (requirements §15). Reminders are on by default so that they reach users.
 
+### D-053 — Profile visits
+
+**Date:** 2026-11-06
+**Decision:**
+
+* Opening someone's profile card from People (Past chats, Visited you, or a visit notice) records a visit. Opening 👤 Partner profile during a chat records one too.
+* 👀 **Visited you** in People lists each visitor once, ordered by their latest visit, with no visit counts. Tapping one opens their card with Block (or Unblock) and Report; that is a visit to them in turn.
+* Every visit from People sends the visited user a notice ("‹nickname› viewed your profile", with a button to the visitor's card). No notice is sent while the two are chatting together, when the visited user turned visit alerts off (D-052), or when the visited user blocked the visitor.
+* A visit is kept for 30 days after the latest one (admin runtime setting, 1–365), then the worker deletes it. Visitors who can no longer use RealChat are not listed. A blocked visitor stays listed and is marked for the blocker. Account deletion erases the account's visits, made and received.
+* Visits are free.
+* The draft terms say that visiting a profile card can be seen and notified (terms version `draft-11`).
+
+**Why:** Owner decisions (requirements §13). One entry per visitor keeps the list readable and visit counts from being inflated. A notice on every visit can be repeated by reopening a card; the per-user flood limit caps the rate, and blocking or turning visit alerts off stops it.
+
 ## Open
 
 Each of these needs the owner's decision. Until then, the behavior stays configurable and is not presented to users as final.

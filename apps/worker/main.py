@@ -1,4 +1,4 @@
-"""Background worker: matching, idle chats, Private mode, and chat retention.
+"""Background worker: matching, idle chats, Private mode, and chat and visit retention.
 
 Run with: uv run python -m apps.worker.main
 
@@ -32,6 +32,7 @@ from backend.modules.chat.idle import IdleChats
 from backend.modules.chat.private import PrivateModeJob
 from backend.modules.chat.retention import ChatRetention
 from backend.modules.matching.matcher import Matcher
+from backend.modules.people.visits import VisitRetention
 from backend.modules.users.terms import TERMS_VERSION
 
 logger = logging.getLogger(__name__)
@@ -92,6 +93,7 @@ async def run() -> None:
     matcher = Matcher(redis, sessions, runtime_settings, notifier, TERMS_VERSION)
     idle_chats = IdleChats(sessions, runtime_settings, notifier)
     retention = ChatRetention(redis, sessions, runtime_settings)
+    visit_retention = VisitRetention(redis, sessions, runtime_settings)
     private_mode = PrivateModeJob(sessions, runtime_settings, PrivateModeNotifier(bot, sessions))
     deletions = TelegramDeletions(bot, sessions)
     stop = asyncio.Event()
@@ -109,6 +111,7 @@ async def run() -> None:
                 ("private mode", private_mode.tick, PRIVATE_MODE_SECONDS),
                 ("private mode deletions", deletions.tick, DELETIONS_SECONDS),
                 ("chat retention", retention.tick, RETENTION_CHECK_SECONDS),
+                ("visit retention", visit_retention.tick, RETENTION_CHECK_SECONDS),
             ),
             stop,
         )
