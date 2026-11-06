@@ -45,6 +45,25 @@ async def get_or_create_user(session: AsyncSession, telegram_user_id: int) -> Us
     return user
 
 
+async def record_activity(
+    session: AsyncSession, telegram_user_id: int, now: datetime, every: timedelta
+) -> None:
+    """Note that an active account used RealChat at `now` (D-051).
+
+    Written only when the stored time is at least `every` old, so a busy user causes at
+    most one write per interval. This is RealChat activity, never Telegram presence.
+    """
+    await session.execute(
+        update(User)
+        .where(
+            User.telegram_user_id == telegram_user_id,
+            User.status == "active",
+            User.last_active_at <= now - every,
+        )
+        .values(last_active_at=now)
+    )
+
+
 async def get_user(session: AsyncSession, user_id: int) -> User:
     return (await session.execute(select(User).where(User.id == user_id))).scalar_one()
 

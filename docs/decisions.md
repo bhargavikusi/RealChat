@@ -518,6 +518,20 @@ Work happens on short-lived issue branches, such as `feature/12-onboarding`, cre
 
 **Why:** Owner decisions (requirements §9, §16). Holds keep coins from being spent twice once more paid features exist; keeping coins on deletion means nothing is lost by mistake and nothing is gained by rejoining.
 
+### D-051 — People: past chat partners, and RealChat activity
+
+**Date:** 2026-11-05
+**Decision:**
+
+* Until location-based discovery exists, the people a user can reach again are their past chat partners: anyone they shared a conversation with that ended within a window. The window is an admin runtime setting, default 10 days (1–30). Later features (visits, likes, direct messages, chat requests) build on this list.
+* 👥 People is a button on the user's own profile card. It opens 💬 Past chats: each partner once, by their latest chat, latest first, in pages of 10. Tapping one shows their profile card with Block (or Unblock) and Report for that chat (D-045). The layout is provisional until the design pass.
+* Only partners who can still use RealChat are listed: an active account with a finished profile. Chats from before either user deleted their account are never counted, so a returning account starts afresh. Someone the user is chatting with again is left out until that chat ends.
+* Blocks hide nobody: both users still see each other, and the blocker sees 🚫 beside the name. What a blocked user cannot do (direct messages, chat requests) is enforced by those features.
+* RealChat activity: each user's last use of the bot is recorded (at most once a minute). It is never presented as Telegram online status, which bots cannot see (requirements §15).
+* The draft terms say past chat partners can see the profile card for a while after the chat (terms version `draft-10`).
+
+**Why:** Owner decisions. Browsing strangers waits for discovery; a short window limits unwanted contact after an anonymous chat, while keeping blocked people visible lets the blocker unblock and keeps the block from being obvious.
+
 ## Open
 
 Each of these needs the owner's decision. Until then, the behavior stays configurable and is not presented to users as final.

@@ -25,13 +25,13 @@ from aiogram.types import (
     InlineKeyboardButton,
     InlineKeyboardMarkup,
     Message,
-    ReplyKeyboardMarkup,
 )
 from aiogram.types import User as TelegramUser
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from apps.bot.avatars import Avatars
+from apps.bot.cards import send_card
 from apps.bot.endings import (
     IDLE_ENDED,
     PARTNER_ENDED,
@@ -54,7 +54,6 @@ from apps.bot.keyboards import (
     main_keyboard,
 )
 from apps.bot.onboarding import load_context, prompt_next
-from apps.bot.profile import profile_caption
 from backend.config.settings import BotSettings
 from backend.core.logging import exception_summary
 from backend.modules.chat import service as chat
@@ -68,8 +67,7 @@ from backend.modules.matching.queue import (
 )
 from backend.modules.moderation import service as moderation
 from backend.modules.users import service as users
-from backend.modules.users.models import Profile, User
-from backend.modules.users.validation import Gender
+from backend.modules.users.models import User
 
 logger = logging.getLogger(__name__)
 
@@ -111,25 +109,6 @@ def _cancel_keyboard(search_id: str) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[[_button(CANCEL_BUTTON, SearchAction(action="cancel", search=search_id))]]
     )
-
-
-async def send_card(
-    bot: Bot,
-    avatars: Avatars,
-    chat_id: int,
-    profile: Profile,
-    header: str,
-    reply_markup: ReplyKeyboardMarkup | InlineKeyboardMarkup | None = None,
-) -> None:
-    """Send `profile` as others see it (D-029), with the photo or the default avatar."""
-    caption = f"{header}\n\n{profile_caption(profile, datetime.now(UTC).date())}"
-    if profile.photo_file_id is not None:
-        await bot.send_photo(
-            chat_id, profile.photo_file_id, caption=caption, reply_markup=reply_markup
-        )
-        return
-    gender = Gender(profile.gender) if profile.gender else Gender.OTHER
-    await avatars.send(bot, chat_id, gender, caption, reply_markup)
 
 
 async def _telegram_id(session: AsyncSession, user_id: int) -> int:
