@@ -532,6 +532,21 @@ Work happens on short-lived issue branches, such as `feature/12-onboarding`, cre
 
 **Why:** Owner decisions. Browsing strangers waits for discovery; a short window limits unwanted contact after an anonymous chat, while keeping blocked people visible lets the blocker unblock and keeps the block from being obvious.
 
+### D-052 — Notification settings
+
+**Date:** 2026-11-06
+**Decision:**
+
+* Advanced settings (on the profile card) holds the notification settings, each a one-tap button that shows its current value:
+  * 🤫 **Silent mode**, off by default: nobody can send the user chat requests. Direct messages still arrive.
+  * 👀 **Visit alerts** and ❤️ **Like alerts**, on by default: notices when someone visits or likes the profile.
+  * ⏰ **Reminders**, on by default: general reminders, such as the daily reward while it is offered.
+* Advanced settings also keeps Delete account (and Admin settings for admins), and gains ◀️ Back to the profile card. VIP options join it with the VIP work. More categories may be split out before launch.
+* Each setting is enforced by the feature it controls, as those features ship.
+* Account deletion resets the settings to their defaults. Suspended and banned users cannot change them.
+
+**Why:** Owner decisions (requirements §15). Reminders are on by default so that they reach users.
+
 ## Open
 
 Each of these needs the owner's decision. Until then, the behavior stays configurable and is not presented to users as final.

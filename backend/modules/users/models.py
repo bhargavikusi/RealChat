@@ -1,9 +1,11 @@
-"""Users, profiles, and terms acceptances (PostgreSQL is the source of truth)."""
+"""Users, profiles, terms acceptances, and notification settings (PostgreSQL is the
+source of truth)."""
 
 from datetime import date, datetime
 
 from sqlalchemy import (
     BigInteger,
+    Boolean,
     CheckConstraint,
     Date,
     DateTime,
@@ -149,3 +151,24 @@ class ProfileChange(Base):
     old_value: Mapped[str] = mapped_column(String(16))
     new_value: Mapped[str] = mapped_column(String(16))
     changed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class NotificationSettings(Base):
+    """A user's notification settings (D-052). No row means every default applies.
+
+    Erased with the account (D-016), so a returning user starts with the defaults.
+    """
+
+    __tablename__ = "notification_settings"
+
+    user_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("users.id", ondelete="CASCADE"), primary_key=True
+    )
+    # Nobody can send the user chat requests; direct messages still arrive.
+    silent_mode: Mapped[bool] = mapped_column(Boolean, server_default="false")
+    visit_alerts: Mapped[bool] = mapped_column(Boolean, server_default="true")
+    like_alerts: Mapped[bool] = mapped_column(Boolean, server_default="true")
+    reminders: Mapped[bool] = mapped_column(Boolean, server_default="true")
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )

@@ -1,5 +1,10 @@
 """Advanced settings, account deletion, and the access gate (D-016, D-025, D-026).
 
+Advanced settings also holds the notification settings (D-052): Silent mode, visit and
+like alerts, and reminders. Each button shows the current value and carries the value
+it sets, so a repeated or old tap never flips a setting back. Their buttons have their
+own prefix, which the access gate does not let suspended or banned users through.
+
 Deletion is reached from the profile card's Advanced settings button, or from the
 notice shown to suspended and banned users. It always needs a second, explicit
 confirmation. The confirmation buttons carry a random id kept in FSM state, so a
@@ -17,6 +22,7 @@ from typing import Any
 
 from aiogram import BaseMiddleware, Bot, F, Router
 from aiogram.enums import ChatType
+from aiogram.exceptions import TelegramAPIError
 from aiogram.filters.callback_data import CallbackData
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
@@ -35,10 +41,12 @@ from apps.bot.menu import HelpAction
 from apps.bot.middlewares import Handler
 from apps.bot.onboarding import load_context, prompt_next
 from backend.config.settings import BotSettings
+from backend.core.logging import exception_summary
 from backend.modules.admin import service as admin_service
 from backend.modules.chat import service as chat_service
 from backend.modules.moderation import service as moderation
 from backend.modules.users import service
+from backend.modules.users.service import Notification, NotificationChoices
 
 logger = logging.getLogger(__name__)
 
@@ -46,6 +54,15 @@ logger = logging.getLogger(__name__)
 class AccountAction(CallbackData, prefix="acct"):
     action: str  # "settings", "delete", "confirm", or "keep"
     request: str = ""  # the deletion request a confirm or keep button belongs to
+
+
+class NotifyAction(CallbackData, prefix="notify"):
+    setting: str  # a `Notification` value
+    on: bool  # the value this button sets
+
+
+class BackToProfile(CallbackData, prefix="pback"):
+    """◀️ Back from Advanced settings to the profile card (handled in `apps.bot.profile`)."""
 
 
 class AccountDeletion(StatesGroup):
@@ -74,6 +91,38 @@ NOTICES = {
     "banned": "Your account has been banned for breaking the rules.",
 }
 NOTICE_OPTIONS = "You can still read /help, or delete your account."
+BACK_BUTTON = "◀️ Back"
+NOTIFICATION_LABELS = {
+    Notification.SILENT_MODE: "🤫 Silent mode",
+    Notification.VISIT_ALERTS: "👀 Visit alerts",
+    Notification.LIKE_ALERTS: "❤️ Like alerts",
+    Notification.REMINDERS: "⏰ Reminders",
+}
+SILENT_MODE_ON = "Silent mode is on: nobody can send you chat requests. Messages still arrive."
+SILENT_MODE_OFF = "Silent mode is off."
+
+
+def notification_button(setting: Notification, on: bool) -> InlineKeyboardButton:
+    """Shows the current value; a tap sets the other one."""
+    return _button(
+        f"{NOTIFICATION_LABELS[setting]}: {'On' if on else 'Off'}",
+        NotifyAction(setting=setting.value, on=not on),
+    )
+
+
+def settings_keyboard(choices: NotificationChoices, *, admin: bool) -> InlineKeyboardMarkup:
+    rows = [[notification_button(setting, choices[setting])] for setting in Notification]
+    rows.append([_button(DELETE_BUTTON, AccountAction(action="delete"))])
+    if admin:
+        rows.append([admin_button()])
+    rows.append([_button(BACK_BUTTON, BackToProfile())])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def changed(setting: Notification, on: bool) -> str:
+    if setting is Notification.SILENT_MODE:
+        return SILENT_MODE_ON if on else SILENT_MODE_OFF
+    return f"{NOTIFICATION_LABELS[setting]}: {'On' if on else 'Off'}"
 
 
 def _button(text: str, data: CallbackData) -> InlineKeyboardButton:
@@ -123,13 +172,54 @@ async def show_settings(
 ) -> None:
     if not await _may_delete(query, bot, session, state, settings):
         return
+    # The access gate keeps suspended and banned users out of settings (D-026).
+    user = await service.get_or_create_user(session, query.from_user.id)
     # Admin settings are offered to admins only; the admin handlers check again (D-035).
     is_admin = await admin_service.get_role(session, query.from_user.id) == "admin"
+    choices = await service.notification_settings(session, user.id)
     await session.commit()
     await query.answer()
     await bot.send_message(
-        query.from_user.id, ADVANCED_SETTINGS_TEXT, reply_markup=_delete_keyboard(admin=is_admin)
+        query.from_user.id,
+        ADVANCED_SETTINGS_TEXT,
+        reply_markup=settings_keyboard(choices, admin=is_admin),
     )
+
+
+async def on_notify(
+    query: CallbackQuery,
+    bot: Bot,
+    callback_data: NotifyAction,
+    session: AsyncSession,
+    state: FSMContext,
+    settings: BotSettings,
+) -> None:
+    try:
+        setting = Notification(callback_data.setting)
+    except ValueError:
+        await query.answer(EXPIRED)
+        return
+    ctx = await load_context(session, query.from_user)
+    if not ctx.terms_accepted:
+        await query.answer()
+        await prompt_next(bot, query.from_user.id, session, ctx, state, settings)
+        return
+    await service.set_notification(session, ctx.user.id, setting, callback_data.on)
+    is_admin = ctx.user.role == "admin"
+    choices = await service.notification_settings(session, ctx.user.id)
+    await session.commit()
+    await query.answer(changed(setting, callback_data.on))
+    if query.message is None:
+        return
+    try:
+        await bot.edit_message_reply_markup(
+            chat_id=query.message.chat.id,
+            message_id=query.message.message_id,
+            reply_markup=settings_keyboard(choices, admin=is_admin),
+        )
+    except TelegramAPIError as exc:
+        # The setting is saved either way; Telegram refuses an unchanged keyboard.
+        logger.info("could not update settings buttons", extra=exception_summary(exc))
 
 
 async def ask_to_confirm(
@@ -222,6 +312,7 @@ def create_router() -> Router:
     router = Router(name="account")
     router.callback_query.filter(F.message.chat.type == ChatType.PRIVATE)
     router.callback_query.register(show_settings, AccountAction.filter(F.action == "settings"))
+    router.callback_query.register(on_notify, NotifyAction.filter())
     router.callback_query.register(ask_to_confirm, AccountAction.filter(F.action == "delete"))
     router.callback_query.register(on_confirm, AccountAction.filter(F.action == "confirm"))
     router.callback_query.register(on_keep, AccountAction.filter(F.action == "keep"))

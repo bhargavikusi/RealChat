@@ -5,7 +5,9 @@ caller can group several operations into one transaction. Profile setters and
 helpers work on an already loaded Profile and do no I/O.
 """
 
+from dataclasses import dataclass
 from datetime import date, datetime, timedelta
+from enum import StrEnum
 
 from sqlalchemy import delete, func, select, update
 from sqlalchemy.dialects.postgresql import insert
@@ -15,6 +17,7 @@ from backend.modules.admin.models import AdminAuditEntry
 from backend.modules.users import validation
 from backend.modules.users.models import (
     RESTRICTED_STATUSES,
+    NotificationSettings,
     Profile,
     ProfileChange,
     TermsAcceptance,
@@ -130,8 +133,9 @@ async def delete_account(session: AsyncSession, user_id: int, now: datetime) -> 
     """Erase a user's personal data and keep a minimal account record (D-016, D-025).
 
     Erased: every profile field (the profile is replaced by an empty one), the age
-    and gender change history, and terms acceptances, so a returning user starts a
-    fresh onboarding. Kept: the Telegram user ID, the status, and timestamps. An
+    and gender change history, notification settings, and terms acceptances, so a
+    returning user starts a fresh onboarding with the default settings. Kept: the
+    Telegram user ID, the status, and timestamps. An
     active account becomes "deleted"; a suspended or banned one keeps its status, so
     deleting cannot be used to escape a restriction. A moderator or admin role is reset
     to "user" and the change is audit-logged, so a returning account has no special
@@ -141,6 +145,9 @@ async def delete_account(session: AsyncSession, user_id: int, now: datetime) -> 
     await session.execute(delete(ProfileChange).where(ProfileChange.user_id == user_id))
     await session.execute(delete(TermsAcceptance).where(TermsAcceptance.user_id == user_id))
     await session.execute(delete(Profile).where(Profile.user_id == user_id))
+    await session.execute(
+        delete(NotificationSettings).where(NotificationSettings.user_id == user_id)
+    )
     await session.execute(insert(Profile).values(user_id=user_id))
     if user.status not in RESTRICTED_STATUSES:
         user.status = "deleted"
@@ -156,6 +163,54 @@ async def delete_account(session: AsyncSession, user_id: int, now: datetime) -> 
             )
         )
         user.role = "user"
+
+
+class Notification(StrEnum):
+    """The notification settings a user can change (D-052), by column name."""
+
+    SILENT_MODE = "silent_mode"
+    VISIT_ALERTS = "visit_alerts"
+    LIKE_ALERTS = "like_alerts"
+    REMINDERS = "reminders"
+
+
+NOTIFICATION_DEFAULTS = {
+    Notification.SILENT_MODE: False,
+    Notification.VISIT_ALERTS: True,
+    Notification.LIKE_ALERTS: True,
+    Notification.REMINDERS: True,
+}
+
+
+@dataclass(frozen=True)
+class NotificationChoices:
+    values: dict[Notification, bool]
+
+    def __getitem__(self, setting: Notification) -> bool:
+        return self.values[setting]
+
+
+async def notification_settings(session: AsyncSession, user_id: int) -> NotificationChoices:
+    """The user's notification settings, with the defaults for anything never changed."""
+    row = await session.get(NotificationSettings, user_id, populate_existing=True)
+    if row is None:
+        return NotificationChoices(dict(NOTIFICATION_DEFAULTS))
+    return NotificationChoices({setting: bool(getattr(row, setting)) for setting in Notification})
+
+
+async def set_notification(
+    session: AsyncSession, user_id: int, setting: Notification, value: bool
+) -> None:
+    """Set one notification setting. Setting the value it already has changes nothing,
+    so a repeated or old button cannot flip it back."""
+    await session.execute(
+        insert(NotificationSettings)
+        .values(user_id=user_id, **{setting.value: value})
+        .on_conflict_do_update(
+            index_elements=[NotificationSettings.user_id],
+            set_={setting.value: value, "updated_at": func.now()},
+        )
+    )
 
 
 class ChangeCooldownError(Exception):
