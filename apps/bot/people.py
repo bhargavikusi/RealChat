@@ -1,4 +1,5 @@
-"""People: past chat partners the user can reach again (D-051), and visits (D-053).
+"""People: past chat partners the user can reach again (D-051), visits (D-053), and
+opening profiles by RealChat ID (D-054).
 
 👥 People sits on the user's own profile card. It opens 💬 Past chats: everyone the
 user chatted with whose chat ended within the window (an admin setting), latest
@@ -16,29 +17,41 @@ visitor's card opens from the list or from that notice while the visit is kept. 
 the profile, People needs the current terms
 and a finished onboarding. The wording and layout are provisional until the design
 pass. As elsewhere, every database transaction is ended before any Telegram call.
+
+Every card shows its RealChat ID as /userid_<id>. Sending that, or /userid <id>, opens
+the card for anyone, as a visit; /userid alone shows the user's own ID. Unknown IDs
+and accounts that can't be opened get the same answer, and wrong lookups are limited
+per hour (an admin setting), so IDs can't be found by trying many. A card opened this
+way, or from Visited you, has Block and Report for the latest chat the two shared, or
+for the profile if they never chatted (D-054).
 """
 
 import logging
+import re
 from datetime import UTC, datetime
 
 from aiogram import Bot, F, Router
 from aiogram.enums import ChatType
 from aiogram.exceptions import TelegramAPIError
+from aiogram.filters import Command, CommandObject
 from aiogram.filters.callback_data import CallbackData
 from aiogram.fsm.context import FSMContext
-from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup
+from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
+from aiogram.types import User as TelegramUser
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from apps.bot.avatars import Avatars
 from apps.bot.cards import send_card
-from apps.bot.endings import safety_keyboard
-from apps.bot.onboarding import load_context, prompt_next
+from apps.bot.endings import profile_safety_keyboard, safety_keyboard
+from apps.bot.onboarding import Context, load_context, prompt_next
 from backend.config.settings import BotSettings
 from backend.core.logging import exception_summary
 from backend.modules.admin.settings import RuntimeSettings, SettingKey
 from backend.modules.moderation import service as moderation
 from backend.modules.people import service as people
 from backend.modules.people import visits
+from backend.modules.people.lookups import IdLookups, LookupsUnavailable
+from backend.modules.users import public_ids
 from backend.modules.users import service as users
 from backend.modules.users.models import Profile
 
@@ -70,6 +83,19 @@ VISITOR_HEADER = "👀 Visited your profile"
 VISIT_NOTICE = "👀 {nickname} viewed your profile."
 VIEW_PROFILE_BUTTON = "👤 View profile"
 BLOCKED_MARK = " 🚫"
+OWN_ID = (
+    "🆔 Your RealChat ID: /userid_{id}\n\n"
+    "Anyone who has it can open your profile. To open someone else's, send /userid "
+    "followed by their ID."
+)
+ID_HEADER = "🆔 RealChat profile"
+OWN_CARD_HEADER = "🆔 This is your profile."
+NO_PROFILE = "No profile with that ID."
+LOOKUPS_PAUSED = "Too many wrong IDs. Please try again later."
+LOOKUPS_UNAVAILABLE = "Profiles can't be looked up right now. Please try again later."
+# /userid_<id>, as shown on every card, in any letter case; `public_ids.normalize`
+# then decides whether the rest can be an ID.
+ID_LINK = re.compile(r"userid_(\w+)", re.IGNORECASE)
 
 
 def _now() -> datetime:
@@ -166,6 +192,23 @@ async def _visit(
     return Notice(chat_id, visitor_id, str(nickname))
 
 
+async def _ready_context(
+    bot: Bot,
+    telegram_user: TelegramUser,
+    session: AsyncSession,
+    state: FSMContext,
+    settings: BotSettings,
+) -> Context | None:
+    """The user's context once they have accepted the current terms and finished
+    onboarding. Otherwise they are shown the terms or their onboarding step, and None
+    is returned."""
+    ctx = await load_context(session, telegram_user)
+    if ctx.terms_accepted and ctx.profile.onboarding_completed_at is not None:
+        return ctx
+    await prompt_next(bot, telegram_user.id, session, ctx, state, settings)
+    return None
+
+
 async def _ready(
     query: CallbackQuery,
     bot: Bot,
@@ -173,16 +216,23 @@ async def _ready(
     state: FSMContext,
     settings: BotSettings,
 ) -> int | None:
-    """The user's id once they have accepted the current terms and finished onboarding.
-
-    Otherwise they are shown the terms or their onboarding step, and None is returned.
-    """
+    """As `_ready_context`, for a button: the user's id, or None."""
     ctx = await load_context(session, query.from_user)
     if ctx.terms_accepted and ctx.profile.onboarding_completed_at is not None:
         return ctx.user.id
     await query.answer()
     await prompt_next(bot, query.from_user.id, session, ctx, state, settings)
     return None
+
+
+async def _card_safety(session: AsyncSession, user_id: int, other: Profile) -> InlineKeyboardMarkup:
+    """Block (or Unblock) and Report on another user's card: for the latest chat the two
+    shared, or for the profile if they never chatted (D-054)."""
+    blocked = await moderation.is_blocked(session, user_id, other.user_id)
+    conversation_id = await visits.latest_conversation(session, user_id, other.user_id)
+    if conversation_id is None:
+        return profile_safety_keyboard(other.public_id, blocked)
+    return safety_keyboard(conversation_id, blocked)
 
 
 async def on_menu(
@@ -321,13 +371,63 @@ async def on_visitor(
         await session.commit()
         await query.answer(NOT_AVAILABLE)
         return
-    conversation_id = await visits.latest_conversation(session, user_id, profile.user_id)
-    blocked = await moderation.is_blocked(session, user_id, profile.user_id)
+    markup = await _card_safety(session, user_id, profile)
     notice = await _visit(session, user_id, profile, now)
     await session.commit()
     await query.answer()
-    markup = None if conversation_id is None else safety_keyboard(conversation_id, blocked)
     await send_card(bot, avatars, query.from_user.id, profile, VISITOR_HEADER, markup)
+    if notice is not None:
+        await notice.send(bot)
+
+
+async def on_userid(
+    message: Message,
+    bot: Bot,
+    command: CommandObject,
+    session: AsyncSession,
+    state: FSMContext,
+    settings: BotSettings,
+    runtime_settings: RuntimeSettings,
+    avatars: Avatars,
+    id_lookups: IdLookups,
+) -> None:
+    """/userid alone shows the user's own ID; /userid <id> and /userid_<id> open that
+    profile."""
+    raw = command.args if command.regexp_match is None else command.regexp_match.group(1)
+    if message.from_user is None:
+        return
+    ctx = await _ready_context(bot, message.from_user, session, state, settings)
+    if ctx is None:
+        return
+    own = ctx.profile
+    if raw is None or not raw.strip():
+        await message.answer(OWN_ID.format(id=own.public_id))
+        return
+    public_id = public_ids.normalize(raw)
+    if public_id == own.public_id:
+        await send_card(bot, avatars, message.chat.id, own, OWN_CARD_HEADER)
+        return
+    limit = await runtime_settings.get(session, SettingKey.USERID_MISSES_PER_HOUR)
+    try:
+        if await id_lookups.paused(ctx.user.id, limit):
+            await session.commit()
+            await message.answer(LOOKUPS_PAUSED)
+            return
+        profile = None if public_id is None else await users.find_profile(session, public_id)
+        if profile is None:
+            await session.commit()
+            await id_lookups.miss(ctx.user.id)
+            await message.answer(NO_PROFILE)
+            return
+    except LookupsUnavailable:
+        await session.rollback()
+        logger.warning("RealChat ID lookups unavailable")
+        await message.answer(LOOKUPS_UNAVAILABLE)
+        return
+    markup = await _card_safety(session, ctx.user.id, profile)
+    notice = await _visit(session, ctx.user.id, profile, _now())
+    await session.commit()
+    await send_card(bot, avatars, message.chat.id, profile, ID_HEADER, markup)
     if notice is not None:
         await notice.send(bot)
 
@@ -335,7 +435,9 @@ async def on_visitor(
 def create_router() -> Router:
     router = Router(name="people")
     # Private chats only: other users' profiles must never be posted in a group.
+    router.message.filter(F.chat.type == ChatType.PRIVATE)
     router.callback_query.filter(F.message.chat.type == ChatType.PRIVATE)
+    router.message.register(on_userid, Command("userid", ID_LINK, ignore_case=True))
     router.callback_query.register(on_menu, PeopleAction.filter(F.action == "menu"))
     router.callback_query.register(on_past_chats, PeopleAction.filter(F.action == "past"))
     router.callback_query.register(on_open, PeopleAction.filter(F.action == "open"))

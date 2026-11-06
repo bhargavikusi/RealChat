@@ -21,6 +21,7 @@ from sqlalchemy import (
 from sqlalchemy.orm import Mapped, mapped_column
 
 from backend.database.engine import Base
+from backend.modules.users import public_ids
 from backend.modules.users.validation import (
     AGE_FLOOR,
     AGE_MAX,
@@ -96,6 +97,11 @@ class Profile(Base):
 
     user_id: Mapped[int] = mapped_column(
         BigInteger, ForeignKey("users.id", ondelete="CASCADE"), primary_key=True
+    )
+    # The RealChat ID shown on the card (D-054). Account deletion replaces the profile,
+    # and with it the ID, so an old ID never finds a returning user.
+    public_id: Mapped[str] = mapped_column(
+        String(public_ids.LENGTH), unique=True, default=public_ids.new_public_id
     )
     nickname: Mapped[str | None] = mapped_column(String(NICKNAME_MAX_LENGTH))
     # D-010: age as entered plus the date it was entered; current age is derived.

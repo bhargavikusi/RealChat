@@ -38,6 +38,7 @@ class SettingKey(StrEnum):
     PAID_MATCH_COINS = "paid_match_coins"
     PAST_CHATS_DAYS = "past_chats_days"
     VISITS_DAYS = "visits_days"
+    USERID_MISSES_PER_HOUR = "userid_misses_per_hour"
 
 
 @dataclass(frozen=True)
@@ -199,6 +200,14 @@ SPECS: dict[SettingKey, SettingSpec] = {
             default=30,
             minimum=1,
             maximum=365,
+        ),
+        SettingSpec(
+            SettingKey.USERID_MISSES_PER_HOUR,
+            "Wrong RealChat ID lookups per user per hour",
+            "lookups",
+            default=10,
+            minimum=1,
+            maximum=100,
         ),
     )
 }

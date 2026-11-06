@@ -411,4 +411,7 @@ async def test_block_and_report_ignore_chats_from_before_an_account_deletion(
     await world.alice.press_data(visitor_data(bob))
     card = last_to(world.alice.session, USER_ID)
     assert text_of(card).startswith(pp.VISITOR_HEADER)
-    assert buttons(card) == []
+    # The old chat is ignored: Block and Report are for the profile (D-054).
+    data = own_buttons(world.alice)
+    assert list(data) == [BLOCK_BUTTON, REPORT_BUTTON]
+    assert all(value.startswith("psafety:") for value in data.values())

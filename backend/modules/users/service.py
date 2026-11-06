@@ -15,7 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.modules.admin.models import AdminAuditEntry
 from backend.modules.people.models import ProfileVisit
-from backend.modules.users import validation
+from backend.modules.users import public_ids, validation
 from backend.modules.users.models import (
     RESTRICTED_STATUSES,
     NotificationSettings,
@@ -41,12 +41,45 @@ async def get_or_create_user(session: AsyncSession, telegram_user_id: int) -> Us
     user = (
         await session.execute(select(User).where(User.telegram_user_id == telegram_user_id))
     ).scalar_one()
-    await session.execute(
-        insert(Profile)
-        .values(user_id=user.id)
-        .on_conflict_do_nothing(index_elements=[Profile.user_id])
-    )
+    await _ensure_profile(session, user.id)
     return user
+
+
+async def _ensure_profile(session: AsyncSession, user_id: int) -> None:
+    """Give the user an empty profile with a new RealChat ID, unless they have one.
+
+    The insert yields to any conflict: a profile created at the same moment, or an ID
+    already taken, in which case another ID is drawn.
+    """
+    while await session.scalar(select(Profile.user_id).where(Profile.user_id == user_id)) is None:
+        await session.execute(
+            insert(Profile)
+            .values(user_id=user_id, public_id=public_ids.new_public_id())
+            .on_conflict_do_nothing()
+        )
+
+
+async def find_profile(session: AsyncSession, public_id: str) -> Profile | None:
+    """The profile with this RealChat ID, if its account is active and onboarded.
+
+    Unknown IDs and unavailable accounts give the same answer, so a lookup reveals
+    nothing about accounts that cannot be opened (D-054).
+    """
+    return await session.scalar(
+        select(Profile)
+        .join(User, User.id == Profile.user_id)
+        .where(
+            Profile.public_id == public_id,
+            User.status == "active",
+            Profile.onboarding_completed_at.is_not(None),
+        )
+        .execution_options(populate_existing=True)
+    )
+
+
+async def user_id_for(session: AsyncSession, public_id: str) -> int | None:
+    """The account that currently has this RealChat ID, whatever its status."""
+    return await session.scalar(select(Profile.user_id).where(Profile.public_id == public_id))
 
 
 async def record_activity(
@@ -133,7 +166,8 @@ def is_restricted(status: str | None) -> bool:
 async def delete_account(session: AsyncSession, user_id: int, now: datetime) -> None:
     """Erase a user's personal data and keep a minimal account record (D-016, D-025).
 
-    Erased: every profile field (the profile is replaced by an empty one), the age
+    Erased: every profile field (the profile is replaced by an empty one with a new
+    RealChat ID, so the old ID finds nobody, D-054), the age
     and gender change history, notification settings, profile visits made or received
     (D-053), and terms acceptances, so a
     returning user starts a fresh onboarding with the default settings. Kept: the
@@ -155,7 +189,7 @@ async def delete_account(session: AsyncSession, user_id: int, now: datetime) -> 
             or_(ProfileVisit.visitor_user_id == user_id, ProfileVisit.visited_user_id == user_id)
         )
     )
-    await session.execute(insert(Profile).values(user_id=user_id))
+    await _ensure_profile(session, user_id)
     if user.status not in RESTRICTED_STATUSES:
         user.status = "deleted"
     user.deleted_at = now

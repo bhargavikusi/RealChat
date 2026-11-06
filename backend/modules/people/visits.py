@@ -191,12 +191,18 @@ async def delete_expired_visits(session: AsyncSession, cutoff: datetime, limit: 
         .limit(limit)
         # A visit being updated right now is left for the next run.
         .with_for_update(skip_locked=True)
+        # Materialized, so the batch is chosen once. As a plain subquery the planner
+        # may run it again for every row it scans, deleting more than `limit`.
+        .cte("expired")
+        .prefix_with("MATERIALIZED")
     )
     result = await session.execute(
         delete(ProfileVisit)
         .where(
             ProfileVisit.last_visited_at < cutoff,
-            tuple_(ProfileVisit.visitor_user_id, ProfileVisit.visited_user_id).in_(expired),
+            tuple_(ProfileVisit.visitor_user_id, ProfileVisit.visited_user_id).in_(
+                select(expired.c.visitor_user_id, expired.c.visited_user_id)
+            ),
         )
         .returning(ProfileVisit.visitor_user_id)
     )

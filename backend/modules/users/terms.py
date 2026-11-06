@@ -8,7 +8,7 @@ message retention, are not given as numbers, so the text stays true when they ch
 (D-046).
 """
 
-TERMS_VERSION = "draft-11"
+TERMS_VERSION = "draft-12"
 
 TERMS_TEXT = """\
 DRAFT - not for launch
@@ -20,6 +20,8 @@ Welcome to RealChat. Before you start:
 username, or phone number. When you're matched, your chat partner sees your profile \
 card: nickname, age, gender, country, and any city, bio, or photo you add. People \
 you've chatted with can still see your profile card for a while after the chat. \
+Your profile card shows your RealChat ID, and anyone who has it can open your \
+profile card. A new ID is given if you delete your account and come back. \
 When you view someone's profile card, they can see that you visited, and they may be \
 told.
 • Messages pass through the RealChat bot. They are not end-to-end encrypted. \
@@ -32,7 +34,8 @@ block screenshots of it, but not all of them do.
 or captions containing links, phone numbers, or @usernames are not delivered.
 • Be respectful. Harassment, threats, hate, sexual content involving minors, spam, \
 scams, and sharing other people's private information are not allowed.
-• You can block or report a chat partner from their profile card or after a chat. \
+• You can block or report a chat partner from their profile card or after a chat, \
+and anyone whose profile card you opened, or who opened yours, from their card. \
 Blocking or reporting someone you're chatting with ends the chat, and they are only \
 told that the chat ended. Reporting also blocks them. Blocking doesn't stop you being \
 matched again in a random chat.

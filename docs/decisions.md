@@ -425,7 +425,7 @@ Work happens on short-lived issue branches, such as `feature/12-onboarding`, cre
 * **Report** asks for a reason (D-037) and files the report at once. Filing also blocks the reported user and ends the chat if it is still open. Optional details (up to 500 characters) can then be added, or skipped. Details are not asked for if the reporter is already in a chat with someone else or searching for one, so messages meant for that chat are never captured as report details.
 * Each user can report a conversation once. Reports are limited per user per 24 hours by an admin runtime setting (default 10, range 1–100). Blocking is never limited.
 * The other user is only ever told that the chat ended, never that they were blocked or reported.
-* Only the other participant of a conversation the user was in can be blocked or reported.
+* Only the other participant of a conversation the user was in can be blocked or reported. *Amended by D-054:* someone the user met through a profile visit, either way round, can be too.
 * Blocks (with their history of blocking and unblocking) and reports are kept when either account is deleted.
 * The draft terms describe this (terms version `draft-7`).
 
@@ -560,6 +560,23 @@ Work happens on short-lived issue branches, such as `feature/12-onboarding`, cre
 * The draft terms say that visiting a profile card can be seen and notified (terms version `draft-11`).
 
 **Why:** Owner decisions (requirements §13). One entry per visitor keeps the list readable and visit counts from being inflated. A notice on every visit can be repeated by reopening a card; the per-user flood limit caps the rate, and blocking or turning visit alerts off stops it.
+
+### D-054 — RealChat IDs and /userid
+
+**Date:** 2026-11-06
+**Decision:**
+
+* Every account has a **RealChat ID**: 7 random characters from lowercase letters and digits, without look-alikes (`abcdefghjkmnpqrstuvwxyz23456789`). It is not the Telegram ID or the internal account number, follows no pattern, and is unique. Existing accounts were given one when the feature shipped.
+* The ID never changes while the account exists. Deleting the account retires it with the rest of the profile: the old ID finds nobody, and a returning user gets a new one. A retired ID is not tracked, so a later random draw could reissue it; with about 27 billion possible IDs, this is negligible.
+* Every profile card, including the user's own, shows the ID as a tappable `/userid_<id>`. `/userid <id>` does the same, ignoring letter case, and `/userid` alone shows the user's own ID. `/userid` is in the command menu.
+* Anyone who has finished onboarding can open a card by ID. It is a visit with the usual notice rules (D-053). The user's own ID opens their own card, without a visit.
+* Unknown IDs and accounts that can't be opened (deleted, suspended, banned, or unfinished) all get "No profile with that ID", so a lookup reveals nothing about them.
+* Wrong lookups are limited per user: after 10 in an hour (admin runtime setting, 1–100), counted from the first, every lookup is refused until the hour ends, even for a correct ID. The user's own ID is not limited. If the limit can't be checked (Redis unavailable), lookups are refused.
+* A person met through a visit, either way round, can be blocked and reported from their card without a shared chat (amends D-045). When the two did chat (after both accounts' latest deletion), Block and Report act on the latest chat, as before. Otherwise a report is about the profile: it has no chat messages, can be filed once per reporter per person, counts toward the daily report limit, and also blocks. A profile block or report ends no chat.
+* Visits are the record of having met by ID, so later features that reach visitors (direct messages, chat requests) also reach people met this way.
+* The draft terms say the ID is visible, lets anyone open the card, and is replaced after deletion (terms version `draft-12`).
+
+**Why:** Owner decisions. A visible ID lets users find and share profiles and, in the design pass, can replace some buttons. Making it random and retiring it on deletion keeps it from revealing the user count or following a user into a fresh account.
 
 ## Open
 

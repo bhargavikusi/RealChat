@@ -39,6 +39,7 @@ from backend.core.redis import create_redis
 from backend.database.engine import create_engine, create_session_factory
 from backend.modules.admin.settings import RuntimeSettings
 from backend.modules.matching.queue import SearchQueue
+from backend.modules.people.lookups import IdLookups
 
 logger = logging.getLogger(__name__)
 
@@ -52,8 +53,9 @@ def create_dispatcher(
     # FSM state (position within optional onboarding steps) lives in Redis so it
     # survives restarts; durable progress is in PostgreSQL. `settings` is passed to
     # every handler that declares a `settings` parameter, and `avatars` and
-    # `runtime_settings` (admin-changeable values, D-035), `search_queue` (D-027), and
-    # `held_media` (media waiting for the sender's answer, D-049) likewise.
+    # `runtime_settings` (admin-changeable values, D-035), `search_queue` (D-027),
+    # `held_media` (media waiting for the sender's answer, D-049), and `id_lookups` (the
+    # limit on wrong RealChat ID lookups, D-054) likewise.
     # Event isolation processes one update at a time per user and chat, so a quick
     # second message cannot be routed by the FSM state the first one is changing.
     # The locks live in Redis: they expire on their own (no per-user memory kept in
@@ -66,6 +68,7 @@ def create_dispatcher(
         runtime_settings=RuntimeSettings(),
         search_queue=SearchQueue(redis),
         held_media=relay.HeldMedia(redis),
+        id_lookups=IdLookups(redis),
     )
     # Order matters: duplicates are discarded before they count toward flood limits.
     dispatcher.update.outer_middleware(
@@ -103,7 +106,7 @@ def create_dispatcher(
         safety.create_router(),
         # The Private mode buttons, which must never be relayed (D-047).
         private.create_router(),
-        # People: past chat partners (D-051).
+        # People: past chat partners (D-051), visits, and /userid (D-054).
         people.create_router(),
         # Relay right after the chat buttons: it only takes messages from users in a
         # chat with no other step waiting for an answer, and passes the rest on.
