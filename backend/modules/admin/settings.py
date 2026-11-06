@@ -36,6 +36,7 @@ class SettingKey(StrEnum):
     DAILY_REWARD_ON = "daily_reward_on"
     DAILY_REWARD_COINS = "daily_reward_coins"
     PAID_MATCH_COINS = "paid_match_coins"
+    PAST_CHATS_DAYS = "past_chats_days"
 
 
 @dataclass(frozen=True)
@@ -181,6 +182,14 @@ SPECS: dict[SettingKey, SettingSpec] = {
             default=2,
             minimum=1,
             maximum=1_000,
+        ),
+        SettingSpec(
+            SettingKey.PAST_CHATS_DAYS,
+            "How long past chat partners stay reachable",
+            "days",
+            default=10,
+            minimum=1,
+            maximum=30,
         ),
     )
 }

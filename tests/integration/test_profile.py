@@ -13,6 +13,7 @@ from apps.bot import profile as pr
 from apps.bot.account import ADVANCED_SETTINGS
 from apps.bot.avatars import avatar_path
 from apps.bot.menu import BOT_COMMANDS, HELP_TEXT
+from apps.bot.people import PEOPLE_BUTTON
 from backend.config.settings import BotSettings
 from backend.modules.users.models import ProfileChange
 from backend.modules.users.terms import terms_body
@@ -77,7 +78,11 @@ async def test_profile_card_uses_the_default_avatar_for_the_gender(chat: Chat) -
     assert await chat.send("/profile") == CARD
     second = chat.session.sent_photos()[-1]
     assert isinstance(second.photo, str) and second.photo.startswith("uploaded-")
-    assert set(chat.session.last_buttons()) == {*pr.BUTTON_LABELS.values(), ADVANCED_SETTINGS}
+    assert set(chat.session.last_buttons()) == {
+        *pr.BUTTON_LABELS.values(),
+        PEOPLE_BUTTON,
+        ADVANCED_SETTINGS,
+    }
 
 
 async def test_avatar_is_uploaded_again_if_the_cache_is_lost(chat: Chat, redis: Redis) -> None:

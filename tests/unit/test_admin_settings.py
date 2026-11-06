@@ -30,6 +30,7 @@ def test_approved_defaults() -> None:
         SettingKey.DAILY_REWARD_ON: 0,
         SettingKey.DAILY_REWARD_COINS: 1,
         SettingKey.PAID_MATCH_COINS: 2,
+        SettingKey.PAST_CHATS_DAYS: 10,
     }
 
 

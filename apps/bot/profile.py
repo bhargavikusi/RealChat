@@ -13,7 +13,7 @@ answered as expired and changes nothing.
 """
 
 import secrets
-from datetime import UTC, date, datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from enum import StrEnum
 
 from aiogram import Bot, F, Router
@@ -27,6 +27,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from apps.bot.account import settings_button
 from apps.bot.avatars import Avatars
+from apps.bot.cards import send_card
 from apps.bot.onboarding import (
     COUNTRY_NOT_FOUND,
     COUNTRY_PICK,
@@ -35,9 +36,10 @@ from apps.bot.onboarding import (
     load_context,
     prompt_next,
 )
+from apps.bot.people import people_button
 from backend.config.settings import BotSettings
 from backend.modules.users import service
-from backend.modules.users.countries import country_name, match_country
+from backend.modules.users.countries import match_country
 from backend.modules.users.models import Profile
 from backend.modules.users.validation import (
     BIO_MAX_LENGTH,
@@ -179,6 +181,7 @@ def _edit_keyboard() -> InlineKeyboardMarkup:
         [edit(ProfileField.NICKNAME), edit(ProfileField.AGE), edit(ProfileField.GENDER)],
         [edit(ProfileField.COUNTRY), edit(ProfileField.CITY), edit(ProfileField.BIO)],
         [edit(ProfileField.PHOTO)],
+        [people_button()],
         [settings_button()],
     )
 
@@ -196,30 +199,10 @@ def _current_value(profile: Profile, field: ProfileField) -> str | None:
     return values.get(field)
 
 
-def profile_caption(profile: Profile, today: date) -> str:
-    """The profile as other users see it: nickname, age, gender, place, and bio."""
-    age = service.profile_age(profile, today)
-    gender = profile.gender.capitalize() if profile.gender else ""
-    place = country_name(profile.country_code) if profile.country_code else ""
-    if profile.city:
-        place = f"{profile.city}, {place}"
-    lines = [f"👤 {profile.nickname}", f"🎂 {age} · {gender}", f"📍 {place}"]
-    if profile.bio:
-        lines += ["", profile.bio]
-    return "\n".join(lines)
-
-
 async def _send_card(
     bot: Bot, chat_id: int, profile: Profile, avatars: Avatars, header: str
 ) -> None:
-    caption = f"{header}\n\n{profile_caption(profile, _now().date())}"
-    markup = _edit_keyboard()
-    if profile.photo_file_id is not None:
-        await bot.send_photo(chat_id, profile.photo_file_id, caption=caption, reply_markup=markup)
-        return
-    # Onboarding guarantees a gender; "other" is a safe fallback for the avatar only.
-    gender = Gender(profile.gender) if profile.gender else Gender.OTHER
-    await avatars.send(bot, chat_id, gender, caption, markup)
+    await send_card(bot, avatars, chat_id, profile, header, _edit_keyboard())
 
 
 async def _ready(

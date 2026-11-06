@@ -22,6 +22,7 @@ from apps.bot import (
     errors,
     menu,
     onboarding,
+    people,
     private,
     profile,
     relay,
@@ -29,7 +30,7 @@ from apps.bot import (
 )
 from apps.bot.account import AccessGateMiddleware
 from apps.bot.avatars import Avatars
-from apps.bot.db import DbSessionMiddleware
+from apps.bot.db import ActivityMiddleware, DbSessionMiddleware
 from apps.bot.middlewares import DeduplicateUpdatesMiddleware, FloodControlMiddleware
 from apps.bot.telegram_session import install_request_middlewares
 from backend.config.settings import BotSettings, load_bot_settings
@@ -86,6 +87,8 @@ def create_dispatcher(
     dispatcher.update.middleware(DbSessionMiddleware(session_factory))
     # Then suspended and banned users are stopped before any feature handler (D-026).
     dispatcher.update.middleware(AccessGateMiddleware())
+    # Then RealChat activity is recorded (D-051), so restricted users are not counted.
+    dispatcher.update.middleware(ActivityMiddleware())
     # Onboarding comes last: its final handler answers any message no other router took.
     dispatcher.include_routers(
         errors.create_router(),
@@ -100,6 +103,8 @@ def create_dispatcher(
         safety.create_router(),
         # The Private mode buttons, which must never be relayed (D-047).
         private.create_router(),
+        # People: past chat partners (D-051).
+        people.create_router(),
         # Relay right after the chat buttons: it only takes messages from users in a
         # chat with no other step waiting for an answer, and passes the rest on.
         relay.create_router(),
