@@ -316,6 +316,8 @@ Respect blocks, profile visibility, account eligibility, and privacy settings.
 
 Prevent repeated requests from creating duplicate likes or inflating visitor counts. Decide and document how visitor history is deduplicated and retained.
 
+Every profile has a visible, random RealChat ID that opens it with `/userid` (approved, D-054). It never changes while the account exists and is replaced when the account is deleted. Wrong lookups are rate-limited so IDs cannot be found by guessing. People met by ID can block and report each other without a shared chat.
+
 ## 14. Progressive Nearby Discovery
 
 Nearby discovery should expand geographically based on available eligible profiles. Do not impose one fixed radius as the only discovery method.

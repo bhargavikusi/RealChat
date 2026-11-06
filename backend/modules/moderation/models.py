@@ -1,4 +1,4 @@
-"""Blocks and reports between chat partners (D-037, D-045).
+"""Blocks and reports between users who have met (D-037, D-045, D-054).
 
 Both are kept when either account is deleted: they hold no profile data, and keeping
 them stops a deletion from being used to undo a block or erase a report.
@@ -53,14 +53,16 @@ class UserBlock(Base):
     id: Mapped[int] = mapped_column(BigInteger, Identity(), primary_key=True)
     blocker_user_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("users.id"))
     blocked_user_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("users.id"))
-    # The conversation the block was made from: a user can only block a past partner.
-    conversation_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("conversations.id"))
+    # The conversation the block was made from, or NULL for someone the user only met
+    # through a profile visit (D-054).
+    conversation_id: Mapped[int | None] = mapped_column(BigInteger, ForeignKey("conversations.id"))
     blocked_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     unblocked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
 class Report(Base):
-    """A report about a chat partner. The conversation's messages are kept while it is open."""
+    """A report about a chat partner, or about the profile of someone the user met only
+    through a visit (D-054). A chat's messages are kept while its report is open."""
 
     __tablename__ = "reports"
     __table_args__ = (
@@ -75,6 +77,14 @@ class Report(Base):
         ),
         # One report per user per conversation: repeated or stale presses add none.
         UniqueConstraint("reporter_user_id", "conversation_id"),
+        # And one profile report (no conversation) per user per reported user.
+        Index(
+            "uq_reports_profile_pair",
+            "reporter_user_id",
+            "reported_user_id",
+            unique=True,
+            postgresql_where=text("conversation_id IS NULL"),
+        ),
         # Serves the per-user limit on reports in a period.
         Index("ix_reports_reporter_created_at", "reporter_user_id", "created_at"),
         # Serves "is this conversation under an open report" for retention cleanup.
@@ -88,7 +98,7 @@ class Report(Base):
     id: Mapped[int] = mapped_column(BigInteger, Identity(), primary_key=True)
     reporter_user_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("users.id"))
     reported_user_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("users.id"))
-    conversation_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("conversations.id"))
+    conversation_id: Mapped[int | None] = mapped_column(BigInteger, ForeignKey("conversations.id"))
     reason: Mapped[str] = mapped_column(String(16))
     # Optional context from the reporter, added after the reason. For moderators only.
     details: Mapped[str | None] = mapped_column(String(REPORT_DETAILS_MAX_LENGTH))

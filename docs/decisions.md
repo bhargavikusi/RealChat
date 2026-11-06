@@ -425,7 +425,7 @@ Work happens on short-lived issue branches, such as `feature/12-onboarding`, cre
 * **Report** asks for a reason (D-037) and files the report at once. Filing also blocks the reported user and ends the chat if it is still open. Optional details (up to 500 characters) can then be added, or skipped. Details are not asked for if the reporter is already in a chat with someone else or searching for one, so messages meant for that chat are never captured as report details.
 * Each user can report a conversation once. Reports are limited per user per 24 hours by an admin runtime setting (default 10, range 1–100). Blocking is never limited.
 * The other user is only ever told that the chat ended, never that they were blocked or reported.
-* Only the other participant of a conversation the user was in can be blocked or reported.
+* Only the other participant of a conversation the user was in can be blocked or reported. *Amended by D-054:* someone the user met through a profile visit, either way round, can be too.
 * Blocks (with their history of blocking and unblocking) and reports are kept when either account is deleted.
 * The draft terms describe this (terms version `draft-7`).
 
@@ -561,6 +561,23 @@ Work happens on short-lived issue branches, such as `feature/12-onboarding`, cre
 
 **Why:** Owner decisions (requirements §13). One entry per visitor keeps the list readable and visit counts from being inflated. A notice on every visit can be repeated by reopening a card; the per-user flood limit caps the rate, and blocking or turning visit alerts off stops it.
 
+### D-054 — RealChat IDs and /userid
+
+**Date:** 2026-11-06
+**Decision:**
+
+* Every account has a **RealChat ID**: 7 random characters from lowercase letters and digits, without look-alikes (`abcdefghjkmnpqrstuvwxyz23456789`). It is not the Telegram ID or the internal account number, follows no pattern, and is unique. Existing accounts were given one when the feature shipped.
+* The ID never changes while the account exists. Deleting the account retires it with the rest of the profile: the old ID finds nobody, and a returning user gets a new one. A retired ID is not tracked, so a later random draw could reissue it; with about 27 billion possible IDs, this is negligible.
+* Every profile card, including the user's own, shows the ID as a tappable `/userid_<id>`. `/userid <id>` does the same, ignoring letter case, and `/userid` alone shows the user's own ID. `/userid` is in the command menu.
+* Anyone who has finished onboarding can open a card by ID. It is a visit with the usual notice rules (D-053). The user's own ID opens their own card, without a visit.
+* Unknown IDs and accounts that can't be opened (deleted, suspended, banned, or unfinished) all get "No profile with that ID", so a lookup reveals nothing about them.
+* Wrong lookups are limited per user: after 10 in an hour (admin runtime setting, 1–100), counted from the first, every lookup is refused until the hour ends, even for a correct ID. The user's own ID is not limited. If the limit can't be checked (Redis unavailable), lookups are refused.
+* A person met through a visit, either way round, within the visits window, can be blocked and reported from their card without a shared chat (amends D-045). If the two have chatted since the card was sent, its buttons act on that chat, so an open chat is ended as usual. When the two did chat (after both accounts' latest deletion), Block and Report act on the latest chat, as before. Otherwise a report is about the profile: it has no chat messages, can be filed once per reporter per person, counts toward the daily report limit, and also blocks. A profile block or report ends no chat.
+* Visits are the record of having met by ID, so later features that reach visitors (direct messages, chat requests) also reach people met this way.
+* The draft terms say the ID is visible, lets anyone open the card, and is replaced after deletion (terms version `draft-12`).
+
+**Why:** Owner decisions. A visible ID lets users find and share profiles and, in the design pass, can replace some buttons. Making it random and retiring it on deletion keeps it from revealing the user count or following a user into a fresh account.
+
 ## Open
 
 Each of these needs the owner's decision. Until then, the behavior stays configurable and is not presented to users as final.
@@ -573,7 +590,7 @@ Each of these needs the owner's decision. Until then, the behavior stays configu
 | O-003 | Terms of the 1-coin activity notification | Before that feature is built | What event triggers it, how long it lasts, and whether it is one alert or several (requirements §15). |
 | O-005 | Coin package and VIP pricing in Telegram Stars | Before payments are built | Also covers what VIP includes and how many coins it grants (requirements §17). |
 | O-006 | Webhook or long polling for receiving Telegram updates in production | Before deployment | Development will use polling. Webhooks require a public HTTPS endpoint. |
-| O-008 | Which premium offer includes hiding the profile, and what happens when it ends | Before the VIP work | D-021. For example, whether the profile becomes visible again automatically. |
+| O-008 | Which premium offer includes hiding the profile, and what happens when it ends | Before the VIP work | D-021. For example, whether the profile becomes visible again automatically. Also whether a hidden profile can still be opened by its RealChat ID (D-054); until decided, nothing hides a profile, so every finished profile can be. |
 | O-009 | Retention period for the age and gender change history | Public launch | D-024. Separate from conversation content (O-002), because moderators use the history to spot repeated switching. Until decided, rows are kept until account deletion. |
 | O-010 | The fourth button on the chat keyboard | Before the chat keyboard is final | D-030. Until then Block and Report are inline buttons on the partner's card and after each chat (D-045). |
 | O-011 | Separate database roles for migrations and the running application | Before deployment | The application currently connects as the table owner, which can disable the audit log's append-only triggers. A restricted application role without UPDATE, DELETE, or TRUNCATE on `admin_audit_log` (and without DDL rights) would make the log tamper-resistant. Part of deployment hardening. |

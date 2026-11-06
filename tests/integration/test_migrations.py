@@ -6,6 +6,8 @@ from alembic.script import ScriptDirectory
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import create_async_engine
 
+from backend.modules.users import public_ids
+
 
 def _alembic_config(database_url: str) -> Config:
     config = Config("alembic.ini")
@@ -108,5 +110,55 @@ def test_idle_tracking_counts_open_chats_from_their_last_message(database_url: s
             1: "2026-01-01 10:30:00+00",  # its last message
             2: "2026-01-01 11:00:00+00",  # no messages: its start
         }
+    finally:
+        command.upgrade(config, "head")
+
+
+def test_existing_profiles_get_distinct_realchat_ids(database_url: str) -> None:
+    config = _alembic_config(database_url)
+    command.upgrade(config, "head")
+    command.downgrade(config, "2bd4ae63b8d8")  # before RealChat IDs (D-054)
+
+    async def seed() -> None:
+        engine = create_async_engine(database_url)
+        try:
+            async with engine.begin() as connection:
+                # As in the test fixtures: the audit log and the ledger refuse TRUNCATE.
+                for table in ("admin_audit_log", "coin_transactions"):
+                    await connection.execute(
+                        text(f"ALTER TABLE {table} DISABLE TRIGGER {table}_no_truncate")
+                    )
+                await connection.execute(text("TRUNCATE users RESTART IDENTITY CASCADE"))
+                for table in ("admin_audit_log", "coin_transactions"):
+                    await connection.execute(
+                        text(f"ALTER TABLE {table} ENABLE TRIGGER {table}_no_truncate")
+                    )
+                await connection.execute(
+                    text(
+                        "INSERT INTO users (telegram_user_id) "
+                        "SELECT g FROM generate_series(1, 50) g"
+                    )
+                )
+                await connection.execute(
+                    text("INSERT INTO profiles (user_id) SELECT id FROM users")
+                )
+        finally:
+            await engine.dispose()
+
+    async def ids() -> list[str]:
+        engine = create_async_engine(database_url)
+        try:
+            async with engine.connect() as connection:
+                rows = await connection.execute(text("SELECT public_id FROM profiles"))
+                return [row[0] for row in rows]
+        finally:
+            await engine.dispose()
+
+    try:
+        asyncio.run(seed())
+        command.upgrade(config, "head")
+        found = asyncio.run(ids())
+        assert len(found) == 50 and len(set(found)) == 50
+        assert all(public_ids.normalize(value) == value for value in found)
     finally:
         command.upgrade(config, "head")

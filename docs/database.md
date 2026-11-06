@@ -26,6 +26,7 @@ There is one row per user. The primary key is also a foreign key to `users.id`, 
 
 | Column | Type | Rule |
 |---|---|---|
+| `public_id` | varchar(7), unique | The RealChat ID on the card (D-054): 7 random characters from `abcdefghjkmnpqrstuvwxyz23456789`. Set when the profile row is created; a drawn ID that is taken is drawn again. A check constraint enforces the length and alphabet. Opening a card with `/userid` share-locks the account row, so it is serialized with account deletion; profile Block and Report rely on the account locks they take themselves instead. Account deletion replaces the profile row, so the account gets a new ID. |
 | `nickname` | varchar(20) | 2–20 characters (D-012), with no leading or trailing spaces, so a blank nickname cannot be stored. |
 | `age_at_entry` | smallint | 13–99 in the database. The eligibility minimum (D-009, currently 18) is a setting applied by the service. |
 | `age_entered_on` | date | Set together with `age_at_entry`, enforced by a constraint. The current age is derived from both (D-010). |
@@ -196,13 +197,13 @@ Ending a session queues the sender's original and the partner's copy of each of 
 
 ### `user_blocks`
 
-Blocks between users (D-045). Blocks do not affect random matching; they will stop direct messages and chat requests once those exist.
+Blocks between users (D-045, D-054). Blocks do not affect random matching; they will stop direct messages and chat requests once those exist.
 
 | Column | Type | Notes |
 |---|---|---|
 | `id` | bigint identity | |
 | `blocker_user_id`, `blocked_user_id` | bigint | Reference `users.id`. A constraint stops a user blocking themselves. |
-| `conversation_id` | bigint | References `conversations.id`. The chat the block was made from: only a past or current partner can be blocked. |
+| `conversation_id` | bigint, nullable | References `conversations.id`. The chat the block was made from, or NULL for a profile block: someone met only through a profile visit, either way round (D-054). |
 | `blocked_at` | timestamptz | |
 | `unblocked_at` | timestamptz, nullable | Set when the block is lifted. The row is kept as history, and blocking again adds a new row. |
 
@@ -210,13 +211,13 @@ A partial unique index on `(blocker_user_id, blocked_user_id)` where `unblocked_
 
 ### `reports`
 
-Reports about chat partners (D-037, D-045).
+Reports about chat partners, and profile reports about people met only through a visit (D-037, D-045, D-054).
 
 | Column | Type | Notes |
 |---|---|---|
 | `id` | bigint identity | |
 | `reporter_user_id`, `reported_user_id` | bigint | Reference `users.id`. A constraint stops a user reporting themselves. |
-| `conversation_id` | bigint | References `conversations.id`. Only the other participant of a conversation the reporter was in can be reported. |
+| `conversation_id` | bigint, nullable | References `conversations.id`. Only the other participant of a conversation the reporter was in can be reported. NULL for a profile report, which needs a profile visit between the two, either way round. |
 | `reason` | varchar(16) | `spam`, `harassment`, `sexual`, `under_18`, `threats`, or `other`. |
 | `details` | varchar(500), nullable | Optional context from the reporter, 1–500 characters, added once. For moderators only; never written to ordinary logs. |
 | `urgent` | boolean | True for `under_18`. |
@@ -224,7 +225,7 @@ Reports about chat partners (D-037, D-045).
 | `created_at` | timestamptz | |
 | `closed_at` | timestamptz, nullable | Set exactly when the status is `closed`, enforced by a constraint. |
 
-`(reporter_user_id, conversation_id)` is unique: one report per user per conversation. The index on `(reporter_user_id, created_at)` serves the per-user limit on reports in 24 hours (an admin setting); the reporter's `users` row is locked while counting (`FOR NO KEY UPDATE`), so simultaneous reports cannot pass the limit together. A block or report takes all its locks up front, in the same order as account deletion: the user's row, the partner's row (key share), then the conversation. So two users blocking or reporting each other in the same chat at once, or one doing so while the other deletes their account, cannot deadlock. A partial index on `conversation_id` for open reports serves the retention cleanup, which keeps those conversations' messages. Rows are kept when either account is deleted.
+`(reporter_user_id, conversation_id)` is unique: one report per user per conversation. A partial unique index on `(reporter_user_id, reported_user_id)` where `conversation_id IS NULL` allows one profile report per reporter per person. The index on `(reporter_user_id, created_at)` serves the per-user limit on reports in 24 hours (an admin setting); the reporter's `users` row is locked while counting (`FOR NO KEY UPDATE`), so simultaneous reports cannot pass the limit together. A block or report takes all its locks up front, in the same order as account deletion: the user's row, the partner's row (key share), then the conversation (a profile action has none). So two users blocking or reporting each other in the same chat at once, or one doing so while the other deletes their account, cannot deadlock. A partial index on `conversation_id` for open reports serves the retention cleanup, which keeps those conversations' messages. Rows are kept when either account is deleted.
 
 ### `coin_transactions`
 

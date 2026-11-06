@@ -1,7 +1,7 @@
 """Profile cards: a profile as other users see it (D-029).
 
-Shared by /profile, the chat partner's card, and People (D-051), so every card shows
-the same details in the same way.
+Shared by /profile, the chat partner's card, People (D-051), and /userid (D-054), so
+every card shows the same details in the same way.
 """
 
 from datetime import UTC, date, datetime
@@ -17,13 +17,19 @@ from backend.modules.users.validation import Gender
 
 
 def profile_caption(profile: Profile, today: date) -> str:
-    """The profile as other users see it: nickname, age, gender, place, and bio."""
+    """The profile as other users see it: nickname, age, gender, place, RealChat ID (as
+    a command that opens the card, D-054), and bio."""
     age = service.profile_age(profile, today)
     gender = profile.gender.capitalize() if profile.gender else ""
     place = country_name(profile.country_code) if profile.country_code else ""
     if profile.city:
         place = f"{profile.city}, {place}"
-    lines = [f"👤 {profile.nickname}", f"🎂 {age} · {gender}", f"📍 {place}"]
+    lines = [
+        f"👤 {profile.nickname}",
+        f"🎂 {age} · {gender}",
+        f"📍 {place}",
+        f"🆔 /userid_{profile.public_id}",
+    ]
     if profile.bio:
         lines += ["", profile.bio]
     return "\n".join(lines)

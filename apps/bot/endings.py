@@ -46,6 +46,15 @@ class SafetyAction(CallbackData, prefix="safety"):
     report: int = 0  # the report a "skip" button belongs to
 
 
+class ProfileSafetyAction(CallbackData, prefix="psafety"):
+    """Block and Report for someone met through a profile visit, with no chat (D-054)."""
+
+    # "block", "unblock", "report", or "reason" (a report reason was chosen)
+    action: str
+    profile: str  # the RealChat ID of the person acted on
+    reason: str = ""
+
+
 MEET_PROMPT = "Who do you want to meet?"
 RANDOM_BUTTON = "🎲 Random chat · Free"
 # Paid chats with a chosen gender (D-050); the price is an admin setting.
@@ -89,6 +98,24 @@ def safety_keyboard(conversation_id: int, blocked: bool) -> InlineKeyboardMarkup
         else (BLOCK_BUTTON, SafetyAction(action="block", conversation=conversation_id))
     )
     report = (REPORT_BUTTON, SafetyAction(action="report", conversation=conversation_id))
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(text=text, callback_data=data.pack())
+                for text, data in (toggle, report)
+            ]
+        ]
+    )
+
+
+def profile_safety_keyboard(public_id: str, blocked: bool) -> InlineKeyboardMarkup:
+    """Block (or Unblock) and Report for someone met only through a profile visit."""
+    toggle = (
+        (UNBLOCK_BUTTON, ProfileSafetyAction(action="unblock", profile=public_id))
+        if blocked
+        else (BLOCK_BUTTON, ProfileSafetyAction(action="block", profile=public_id))
+    )
+    report = (REPORT_BUTTON, ProfileSafetyAction(action="report", profile=public_id))
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [

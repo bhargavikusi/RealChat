@@ -29,7 +29,7 @@ from tests.support.chat import (
 )
 from tests.support.telegram import message_update
 
-CARD = f"{pr.PROFILE_HEADER}\n\n👤 Night Owl\n🎂 24 · Female\n📍 India"
+CARD = f"{pr.PROFILE_HEADER}\n\n👤 Night Owl\n🎂 24 · Female\n📍 India\n🆔 /userid_{{id}}"
 
 
 def _no_downloads(chat: Chat) -> bool:
@@ -66,16 +66,19 @@ async def test_profile_is_ignored_in_group_chats(chat: Chat) -> None:
 # --- Viewing -------------------------------------------------------------------------
 
 
-async def test_profile_card_uses_the_default_avatar_for_the_gender(chat: Chat) -> None:
+async def test_profile_card_uses_the_default_avatar_for_the_gender(
+    chat: Chat, session_factory: Sessions
+) -> None:
     await complete_onboarding(chat)
+    card = CARD.format(id=(await load_profile(session_factory)).public_id)
 
-    assert await chat.send("/profile") == CARD
+    assert await chat.send("/profile") == card
     first = chat.session.sent_photos()[-1]
     assert isinstance(first.photo, FSInputFile)
     assert first.photo.path == avatar_path(Gender.FEMALE)
 
     # The upload's file identifier is reused instead of uploading again.
-    assert await chat.send("/profile") == CARD
+    assert await chat.send("/profile") == card
     second = chat.session.sent_photos()[-1]
     assert isinstance(second.photo, str) and second.photo.startswith("uploaded-")
     assert set(chat.session.last_buttons()) == {
