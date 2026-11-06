@@ -67,7 +67,7 @@ The index on `(user_id, field, changed_at)` serves the "latest change of this fi
 
 ### `notification_settings`
 
-A user's notification settings (D-052). One row per user, created the first time they change a setting; a user without a row has every default.
+A user's notification settings (D-052). One row per user, created the first time they change a setting; a user without a row has every default. The notes below say what each setting is for. Each takes effect only once the feature it controls exists: chat requests (Silent mode), profile visits and likes (the alerts), and reminders. Until then the values are stored but not read.
 
 | Column | Type | Notes |
 |---|---|---|
