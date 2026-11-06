@@ -62,14 +62,13 @@ async def partner_in(session: AsyncSession, user_id: int, conversation_id: int) 
     return int(partner)
 
 
-async def check_met(session: AsyncSession, user_id: int, other_id: int) -> None:
-    """Raises NotPartnerError unless one of the two has opened the other's card (D-054).
-
-    Visits are kept for the visits window, so a profile action works while the visit is.
-    """
+async def check_met(session: AsyncSession, user_id: int, other_id: int, since: datetime) -> None:
+    """Raises NotPartnerError unless one of the two opened the other's card at or after
+    `since`, the start of the visits window (D-054)."""
     visited = await session.scalar(
         select(ProfileVisit.visitor_user_id)
         .where(
+            ProfileVisit.last_visited_at >= since,
             or_(
                 and_(
                     ProfileVisit.visitor_user_id == user_id,
@@ -79,7 +78,7 @@ async def check_met(session: AsyncSession, user_id: int, other_id: int) -> None:
                     ProfileVisit.visitor_user_id == other_id,
                     ProfileVisit.visited_user_id == user_id,
                 ),
-            )
+            ),
         )
         .limit(1)
     )
@@ -187,15 +186,16 @@ async def unblock(session: AsyncSession, user_id: int, conversation_id: int, now
 
 
 async def block_profile(
-    session: AsyncSession, user_id: int, other_id: int, now: datetime
+    session: AsyncSession, user_id: int, other_id: int, since: datetime
 ) -> Blocked:
-    """Block someone the user met through a profile visit (D-054).
+    """Block someone the user met through a profile visit since `since` (D-054).
 
-    Raises NotPartnerError if they have not met. No chat is ended: when the two share a
-    chat, its card offers the chat's Block instead.
+    Raises NotPartnerError if they have not met. The visit is checked under the locks,
+    so an account deletion (which erases visits) can't slip in between. No chat is
+    ended: when the two share a chat, the chat's Block is used instead.
     """
-    await check_met(session, user_id, other_id)
     await _lock(session, user_id, other_id, None)
+    await check_met(session, user_id, other_id, since)
     added = await _add_block(session, user_id, other_id, None)
     return Blocked(other_id, added, ended_chat=False)
 
@@ -261,6 +261,7 @@ async def file_report(
     if reason not in REPORT_REASONS:
         raise ValueError(f"unknown report reason: {reason}")
     partner_id = await partner_in(session, user_id, conversation_id)
+    await _lock(session, user_id, partner_id, conversation_id, serialize_user=True)
     return await _file(session, user_id, partner_id, conversation_id, reason, now, per_day)
 
 
@@ -282,16 +283,19 @@ async def file_profile_report(
     reason: str,
     now: datetime,
     per_day: int,
+    since: datetime,
 ) -> Filed:
-    """Report the profile of someone the user met through a visit, and block them (D-054).
+    """Report the profile of someone the user met through a visit since `since`, and
+    block them (D-054).
 
-    Raises NotPartnerError if they have not met, and ValueError for an unknown reason.
-    A user reports a given profile at most once; the daily limit is shared with chat
-    reports.
+    Raises NotPartnerError if they have not met (checked under the locks, as for
+    `block_profile`), and ValueError for an unknown reason. A user reports a given
+    profile at most once; the daily limit is shared with chat reports.
     """
     if reason not in REPORT_REASONS:
         raise ValueError(f"unknown report reason: {reason}")
-    await check_met(session, user_id, other_id)
+    await _lock(session, user_id, other_id, None, serialize_user=True)
+    await check_met(session, user_id, other_id, since)
     return await _file(session, user_id, other_id, None, reason, now, per_day)
 
 
@@ -304,8 +308,8 @@ async def _file(
     now: datetime,
     per_day: int,
 ) -> Filed:
-    """File a chat report (`conversation_id` set) or a profile report (None)."""
-    await _lock(session, user_id, partner_id, conversation_id, serialize_user=True)
+    """File a chat report (`conversation_id` set) or a profile report (None), with the
+    caller holding the locks from `_lock`."""
     reported = (
         await has_reported_profile(session, user_id, partner_id)
         if conversation_id is None

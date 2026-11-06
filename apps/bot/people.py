@@ -93,9 +93,9 @@ OWN_CARD_HEADER = "🆔 This is your profile."
 NO_PROFILE = "No profile with that ID."
 LOOKUPS_PAUSED = "Too many wrong IDs. Please try again later."
 LOOKUPS_UNAVAILABLE = "Profiles can't be looked up right now. Please try again later."
-# /userid_<id>, as shown on every card, in any letter case; `public_ids.normalize`
-# then decides whether the rest can be an ID.
-ID_LINK = re.compile(r"userid_(\w+)", re.IGNORECASE)
+# /userid_<id>, as shown on every card, in any letter case. The whole command is taken,
+# so `public_ids.normalize` refuses anything after the ID instead of ignoring it.
+ID_LINK = re.compile(r"userid_(\S+)$", re.IGNORECASE)
 
 
 def _now() -> datetime:
@@ -393,7 +393,10 @@ async def on_userid(
 ) -> None:
     """/userid alone shows the user's own ID; /userid <id> and /userid_<id> open that
     profile."""
-    raw = command.args if command.regexp_match is None else command.regexp_match.group(1)
+    raw = command.args
+    if command.regexp_match is not None:
+        # Text after /userid_<id> is kept, so it makes the ID invalid rather than ignored.
+        raw = " ".join(part for part in (command.regexp_match.group(1), command.args) if part)
     if message.from_user is None:
         return
     ctx = await _ready_context(bot, message.from_user, session, state, settings)

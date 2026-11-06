@@ -42,6 +42,7 @@ from tests.support.world import (
 )
 
 Sessions = async_sessionmaker[AsyncSession]
+LONG_AGO = datetime(2000, 1, 1, tzinfo=UTC)
 ALICE = "Night Owl"
 BOB = "Moon Child"
 
@@ -150,8 +151,16 @@ async def test_deleting_an_account_retires_its_id(world: World, session_factory:
 
 def test_ids_ignore_case_and_spaces_but_nothing_else() -> None:
     assert public_ids.normalize(" K7M3QXA ") == "k7m3qxa"
-    for wrong in ("k7m3qx", "k7m3qxaa", "k7m3qx0", "k7m3qxl", "k7m3qx_", ""):
+    # The Kelvin sign lowercases to "k" but is not an ASCII letter.
+    for wrong in ("k7m3qx", "k7m3qxaa", "k7m3qx0", "k7m3qxl", "k7m3qx_", "", "\u212a7m3qxa"):
         assert public_ids.normalize(wrong) is None
+
+
+async def test_text_after_the_id_makes_it_wrong(world: World, session_factory: Sessions) -> None:
+    bob_id = await public_id(session_factory, BOB_ID)
+    for text in (f"/userid_{bob_id} hello", f"/userid_{bob_id}-x", f"/userid {bob_id} x"):
+        assert await world.alice.send(text) == pp.NO_PROFILE
+    assert await visit_pairs(session_factory) == set()
 
 
 # --- /userid ---------------------------------------------------------------------------------
@@ -479,7 +488,7 @@ async def test_simultaneous_profile_reports_file_one(
     async def report() -> moderation.ReportOutcome:
         async with session_factory() as session:
             filed = await moderation.file_profile_report(
-                session, alice, bob, "spam", datetime.now(UTC), per_day=10
+                session, alice, bob, "spam", datetime.now(UTC), per_day=10, since=LONG_AGO
             )
             await session.commit()
             return filed.outcome
@@ -531,4 +540,90 @@ async def test_profile_ids_are_unique_in_the_database(
         with pytest.raises(IntegrityError):
             await session.execute(
                 update(Profile).where(Profile.user_id == bob).values(public_id=alice)
+            )
+
+
+async def test_a_profile_button_acts_on_a_chat_started_after_the_card(
+    world: World, session_factory: Sessions
+) -> None:
+    await alice_opens_bob(world, session_factory)
+    block, report = own_buttons(world.alice)[BLOCK_BUTTON], own_buttons(world.alice)[REPORT_BUTTON]
+    await match(world)
+    # The old profile button now asks first, because blocking ends this chat.
+    await world.alice.press_data(block)
+    assert world.alice.last() == sf.CONFIRM_BLOCK
+    # And Report files a report about the chat, which ends it.
+    await world.alice.press_data(report)
+    assert world.alice.last() == sf.REPORT_PROMPT
+    assert all(v.startswith("safety:") for v in world.alice.session.last_buttons().values())
+    await world.alice.press(sf.REASON_LABELS["spam"])
+    assert sf.REPORT_SENT_ENDED in world.alice.session.sent_texts()
+    alice, bob = await world.user_id(USER_ID), await world.user_id(BOB_ID)
+    rows = await report_rows(session_factory)
+    assert len(rows) == 1 and rows[0][:2] == (alice, bob) and rows[0][2] is not None
+
+
+async def test_a_visit_outside_the_window_allows_no_profile_action(
+    world: World, session_factory: Sessions
+) -> None:
+    await alice_opens_bob(world, session_factory)
+    block = own_buttons(world.alice)[BLOCK_BUTTON]
+    async with session_factory() as session:
+        # Older than the 30-day window, but not yet removed by the daily cleanup.
+        await session.execute(update(ProfileVisit).values(last_visited_at=LONG_AGO))
+        await session.commit()
+    await world.alice.press_data(block)
+    assert world.alice.session.callback_answers()[-1] == sf.NOT_AVAILABLE
+    assert await block_rows(session_factory) == []
+
+
+async def test_a_profile_block_waits_for_a_deletion_and_then_fails(
+    world: World, session_factory: Sessions
+) -> None:
+    await alice_opens_bob(world, session_factory)
+    alice, bob = await world.user_id(USER_ID), await world.user_id(BOB_ID)
+    async with session_factory() as deleting:
+        await users.delete_account(deleting, bob, datetime.now(UTC))
+
+        async def block() -> None:
+            async with session_factory() as session:
+                with pytest.raises(moderation.NotPartnerError):
+                    await moderation.block_profile(session, alice, bob, LONG_AGO)
+                await session.rollback()
+
+        task = asyncio.create_task(block())
+        await wait_until_blocked(session_factory)
+        assert not task.done()  # waits for the deletion's lock on Bob
+        await deleting.commit()
+        await task
+    assert await block_rows(session_factory) == []
+
+
+async def test_a_lookup_waits_for_a_deletion_and_then_finds_nobody(
+    world: World, session_factory: Sessions
+) -> None:
+    bob = await world.user_id(BOB_ID)
+    bob_id = await public_id(session_factory, BOB_ID)
+    async with session_factory() as deleting:
+        await users.delete_account(deleting, bob, datetime.now(UTC))
+
+        async def lookup() -> Profile | None:
+            async with session_factory() as session:
+                return await users.find_profile(session, bob_id)
+
+        task = asyncio.create_task(lookup())
+        await wait_until_blocked(session_factory)
+        assert not task.done()
+        await deleting.commit()
+        assert await task is None
+
+
+async def test_the_database_refuses_a_malformed_id(world: World, session_factory: Sessions) -> None:
+    from sqlalchemy.exc import IntegrityError
+
+    bob = await world.user_id(BOB_ID)
+    async with session_factory() as session:
+        with pytest.raises(IntegrityError):
+            await session.execute(
+                update(Profile).where(Profile.user_id == bob).values(public_id="ABC0001")
             )

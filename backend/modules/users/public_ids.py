@@ -12,6 +12,8 @@ import secrets
 ALPHABET = "abcdefghjkmnpqrstuvwxyz23456789"
 LENGTH = 7
 _FORMAT = re.compile(f"[{ALPHABET}]{{{LENGTH}}}")
+# The same rule as a PostgreSQL check constraint on `profiles.public_id`.
+SQL_FORMAT = f"public_id ~ '^[{ALPHABET}]{{{LENGTH}}}$'"
 
 
 def new_public_id() -> str:
@@ -20,6 +22,10 @@ def new_public_id() -> str:
 
 def normalize(raw: str) -> str | None:
     """The ID as stored, ignoring letter case and surrounding spaces; None if `raw`
-    cannot be an ID."""
-    candidate = raw.strip().lower()
+    cannot be an ID. Only ASCII is accepted, so a look-alike such as the Kelvin sign,
+    which lowercases to "k", is not taken for a letter."""
+    candidate = raw.strip()
+    if not candidate.isascii():
+        return None
+    candidate = candidate.lower()
     return candidate if _FORMAT.fullmatch(candidate) else None

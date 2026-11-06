@@ -26,7 +26,7 @@ There is one row per user. The primary key is also a foreign key to `users.id`, 
 
 | Column | Type | Rule |
 |---|---|---|
-| `public_id` | varchar(7), unique | The RealChat ID on the card (D-054): 7 random characters from `abcdefghjkmnpqrstuvwxyz23456789`. Set when the profile row is created; a drawn ID that is taken is drawn again. Account deletion replaces the profile row, so the account gets a new ID. |
+| `public_id` | varchar(7), unique | The RealChat ID on the card (D-054): 7 random characters from `abcdefghjkmnpqrstuvwxyz23456789`. Set when the profile row is created; a drawn ID that is taken is drawn again. A check constraint enforces the length and alphabet. A lookup by ID share-locks the account row, so it is serialized with account deletion. Account deletion replaces the profile row, so the account gets a new ID. |
 | `nickname` | varchar(20) | 2–20 characters (D-012), with no leading or trailing spaces, so a blank nickname cannot be stored. |
 | `age_at_entry` | smallint | 13–99 in the database. The eligibility minimum (D-009, currently 18) is a setting applied by the service. |
 | `age_entered_on` | date | Set together with `age_at_entry`, enforced by a constraint. The current age is derived from both (D-010). |

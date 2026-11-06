@@ -88,6 +88,7 @@ class Profile(Base):
         CheckConstraint("city = btrim(city)", name="city_trimmed"),
         CheckConstraint("bio = btrim(bio)", name="bio_trimmed"),
         CheckConstraint(_in("visibility", tuple(v.value for v in Visibility)), name="visibility"),
+        CheckConstraint(public_ids.SQL_FORMAT, name="public_id_format"),
         CheckConstraint(
             "onboarding_completed_at IS NULL OR (nickname IS NOT NULL AND age_at_entry IS NOT NULL"
             " AND gender IS NOT NULL AND country_code IS NOT NULL)",

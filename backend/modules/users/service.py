@@ -63,7 +63,9 @@ async def find_profile(session: AsyncSession, public_id: str) -> Profile | None:
     """The profile with this RealChat ID, if its account is active and onboarded.
 
     Unknown IDs and unavailable accounts give the same answer, so a lookup reveals
-    nothing about accounts that cannot be opened (D-054).
+    nothing about accounts that cannot be opened (D-054). The account row is share-locked
+    until the transaction ends, so an account deletion (which locks it for update)
+    either finishes first, and the profile is not found, or waits until the card is read.
     """
     return await session.scalar(
         select(Profile)
@@ -73,6 +75,7 @@ async def find_profile(session: AsyncSession, public_id: str) -> Profile | None:
             User.status == "active",
             Profile.onboarding_completed_at.is_not(None),
         )
+        .with_for_update(read=True, of=User)
         .execution_options(populate_existing=True)
     )
 
