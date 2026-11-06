@@ -37,6 +37,7 @@ class SettingKey(StrEnum):
     DAILY_REWARD_COINS = "daily_reward_coins"
     PAID_MATCH_COINS = "paid_match_coins"
     PAST_CHATS_DAYS = "past_chats_days"
+    VISITS_DAYS = "visits_days"
 
 
 @dataclass(frozen=True)
@@ -190,6 +191,14 @@ SPECS: dict[SettingKey, SettingSpec] = {
             default=10,
             minimum=1,
             maximum=30,
+        ),
+        SettingSpec(
+            SettingKey.VISITS_DAYS,
+            "How long profile visits are kept",
+            "days",
+            default=30,
+            minimum=1,
+            maximum=365,
         ),
     )
 }

@@ -8,7 +8,7 @@ message retention, are not given as numbers, so the text stays true when they ch
 (D-046).
 """
 
-TERMS_VERSION = "draft-10"
+TERMS_VERSION = "draft-11"
 
 TERMS_TEXT = """\
 DRAFT - not for launch
@@ -19,7 +19,9 @@ Welcome to RealChat. Before you start:
 • You chat anonymously with other people. Other users never see your Telegram name, \
 username, or phone number. When you're matched, your chat partner sees your profile \
 card: nickname, age, gender, country, and any city, bio, or photo you add. People \
-you've chatted with can still see your profile card for a while after the chat.
+you've chatted with can still see your profile card for a while after the chat. \
+When you view someone's profile card, they can see that you visited, and they may be \
+told.
 • Messages pass through the RealChat bot. They are not end-to-end encrypted. \
 Chat messages are stored so that reports of abuse can be checked. They are deleted \
 automatically after a set period, unless they are part of a report that is still open. \

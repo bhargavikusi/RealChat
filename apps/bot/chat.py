@@ -66,6 +66,7 @@ from backend.modules.matching.queue import (
     search_id_for,
 )
 from backend.modules.moderation import service as moderation
+from backend.modules.people import visits
 from backend.modules.users import service as users
 from backend.modules.users.models import User
 
@@ -313,6 +314,8 @@ async def on_partner_profile(
         return
     partner = await users.get_profile(session, active.partner_id)
     blocked = await moderation.is_blocked(session, user.id, active.partner_id)
+    # Listed in the partner's Visited you, without a notice during the chat (D-053).
+    await visits.record_visit(session, user.id, active.partner_id, datetime.now(UTC))
     await session.commit()
     await send_card(
         bot,

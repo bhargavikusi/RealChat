@@ -80,6 +80,18 @@ A user's notification settings (D-052). One row per user, created the first time
 
 A change is a single upsert that sets the chosen value, so a repeated or old button cannot flip a setting back. Account deletion removes the row.
 
+### `profile_visits`
+
+The latest time one user opened another's profile card (D-053). One row per pair, so Visited you lists each visitor once; each visit updates `last_visited_at`.
+
+| Column | Type | Notes |
+|---|---|---|
+| `visitor_user_id` | bigint | References `users.id`, with `ON DELETE CASCADE`. Part of the primary key. |
+| `visited_user_id` | bigint | References `users.id`, with `ON DELETE CASCADE`. Part of the primary key. |
+| `last_visited_at` | timestamptz | The latest visit. A write never moves it back in time. |
+
+A check constraint rejects self-visits. The index on `(visited_user_id, last_visited_at)` serves Visited you, and the one on `last_visited_at` the retention job, which deletes visits older than the admin setting `visits_days` (default 30) once a day in batches. Account deletion removes the user's rows on both sides.
+
 ### `app_settings`
 
 Runtime settings changed by admins (D-035). A row exists only for a setting an admin has changed; any other setting uses its default. The known keys, defaults, and allowed ranges are defined in code (`backend/modules/admin/settings.py`), so adding a setting needs no migration. A stored value outside the allowed range is ignored in favour of the default.
@@ -286,7 +298,7 @@ Role changes lock the `users` row. A setting change share-locks the acting admin
 Account deletion (`service.delete_account`, D-016, D-025) runs in one transaction with the `users` row locked:
 
 * The `profiles` row is replaced by an empty one, which erases every profile field.
-* All `profile_changes`, `notification_settings`, and `terms_acceptances` rows for the user are deleted, so a returning user starts with the default notification settings.
+* All `profile_changes`, `notification_settings`, and `terms_acceptances` rows for the user are deleted, as are `profile_visits` rows made or received, so a returning user starts with the default notification settings.
 * The `users` row is kept with its Telegram user ID and timestamps, and `deleted_at` is set. A moderator or admin role is reset to `user`, with an audit entry. Admin audit entries are kept. An `active` account becomes `deleted`. A `suspended` or `banned` account keeps its status, so deleting cannot be used to escape a restriction.
 
 A deleted user who returns goes through onboarding again. Accepting the terms sets the status back to `active`; a restricted status is never changed this way.
