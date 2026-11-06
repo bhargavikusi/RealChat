@@ -25,7 +25,7 @@ from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from apps.bot.account import settings_button
+from apps.bot.account import BackToProfile, settings_button
 from apps.bot.avatars import Avatars
 from apps.bot.cards import send_card
 from apps.bot.onboarding import (
@@ -257,6 +257,24 @@ async def show_profile(
         return
     await state.clear()
     await _send_card(bot, message.chat.id, ctx.profile, avatars, PROFILE_HEADER)
+
+
+async def on_back(
+    query: CallbackQuery,
+    bot: Bot,
+    session: AsyncSession,
+    state: FSMContext,
+    settings: BotSettings,
+    avatars: Avatars,
+) -> None:
+    """◀️ Back from Advanced settings: the profile card again."""
+    chat_id = query.from_user.id
+    ctx = await load_context(session, query.from_user)
+    await query.answer()
+    if not await _ready(ctx, bot, chat_id, session, state, settings):
+        return
+    await state.clear()
+    await _send_card(bot, chat_id, ctx.profile, avatars, PROFILE_HEADER)
 
 
 # --- Starting, cancelling, and removing ----------------------------------------------
@@ -566,6 +584,7 @@ def create_router() -> Router:
 
     router.message.register(show_profile, Command("profile"))
 
+    router.callback_query.register(on_back, BackToProfile.filter())
     router.callback_query.register(on_edit, EditField.filter())
     router.callback_query.register(on_cancel, CancelEdit.filter())
     router.callback_query.register(on_remove, RemoveField.filter())
