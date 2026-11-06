@@ -254,9 +254,21 @@ async def test_visits_cost_nothing_and_never_record_self_visits(
 ) -> None:
     alice = await world.user_id(USER_ID)
     async with session_factory() as session:
-        await visits.record_visit(session, alice, alice, NOW)
+        assert not await visits.record_visit(session, alice, alice, NOW)
         await session.commit()
     assert await visit_rows(session_factory) == []
+
+
+async def test_no_notice_when_the_visit_is_not_recorded(
+    world: World, session_factory: Sessions, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    async def skipped(*args: object) -> bool:
+        return False  # as when an account was deleted at that moment
+
+    monkeypatch.setattr(visits, "record_visit", skipped)
+    await alice_visits_bob(world)
+    assert text_of(last_to(world.alice.session, USER_ID)).startswith(pp.PAST_CHAT_HEADER)
+    assert notices_to(world.alice, BOB_ID) == []
 
 
 async def test_a_late_write_never_moves_a_visit_back(
@@ -373,7 +385,7 @@ async def test_a_visit_waiting_on_an_account_deletion_is_skipped(
 
         async def visit() -> None:
             async with session_factory() as session:
-                await visits.record_visit(session, alice, bob, NOW)
+                assert not await visits.record_visit(session, alice, bob, NOW)
                 await session.commit()
 
         task = asyncio.create_task(visit())

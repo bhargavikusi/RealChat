@@ -157,7 +157,8 @@ async def _visit(
     session: AsyncSession, visitor_id: int, visited: Profile, now: datetime
 ) -> Notice | None:
     """Record the visit; returns the notice to send after committing, if any."""
-    await visits.record_visit(session, visitor_id, visited.user_id, now)
+    if not await visits.record_visit(session, visitor_id, visited.user_id, now):
+        return None
     if not await visits.should_notify(session, visitor_id, visited.user_id):
         return None
     nickname = (await users.get_profile(session, visitor_id)).nickname

@@ -49,8 +49,9 @@ class Visitors:
 
 async def record_visit(
     session: AsyncSession, visitor_id: int, visited_id: int, now: datetime
-) -> None:
-    """Record that `visitor_id` opened `visited_id`'s card at `now`.
+) -> bool:
+    """Record that `visitor_id` opened `visited_id`'s card at `now`; returns whether it
+    was recorded (not for a self-visit, or when either account is no longer active).
 
     Both accounts are locked FOR KEY SHARE (in id order) and must still be active. Account
     deletion locks the account row FOR UPDATE, so a visit and a deletion never overlap:
@@ -58,7 +59,7 @@ async def record_visit(
     leaving a row behind the deletion's cleanup.
     """
     if visitor_id == visited_id:
-        return
+        return False
     active = await session.scalars(
         select(User.id)
         .where(User.id.in_((visitor_id, visited_id)), User.status == "active")
@@ -66,7 +67,7 @@ async def record_visit(
         .with_for_update(key_share=True)
     )
     if len(active.all()) < 2:
-        return
+        return False
     await session.execute(
         insert(ProfileVisit)
         .values(visitor_user_id=visitor_id, visited_user_id=visited_id, last_visited_at=now)
@@ -77,6 +78,7 @@ async def record_visit(
             where=ProfileVisit.last_visited_at < now,
         )
     )
+    return True
 
 
 async def should_notify(session: AsyncSession, visitor_id: int, visited_id: int) -> bool:
