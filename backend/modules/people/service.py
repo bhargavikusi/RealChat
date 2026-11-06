@@ -115,15 +115,23 @@ async def past_chats(
 
 async def past_partner(
     session: AsyncSession, viewer_id: int, conversation_id: int, since: datetime
-) -> int | None:
-    """The partner in `conversation_id`, if it counts as one of the viewer's past chats.
+) -> Profile | None:
+    """The partner's profile in `conversation_id`, if it counts as one of the viewer's
+    past chats.
 
     None for a conversation the viewer was not in, one outside the window, or a partner
-    who is no longer listed, so an old or forged button opens nobody.
+    who is no longer listed, so an old or forged button opens nobody. The profile is read
+    in the same statement as the check, so an account deleted meanwhile is never shown
+    half-erased.
     """
-    rows = _past_conversations(viewer_id, since).where(Conversation.id == conversation_id)
-    partner = (await session.execute(rows)).first()
-    return None if partner is None else int(partner.user_id)
+    rows = (
+        _past_conversations(viewer_id, since)
+        .add_columns(Profile)
+        .where(Conversation.id == conversation_id)
+        .execution_options(populate_existing=True)
+    )
+    found = (await session.execute(rows)).first()
+    return None if found is None else found.Profile
 
 
 def window_start(now: datetime, days: int) -> datetime:

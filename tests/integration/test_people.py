@@ -28,6 +28,13 @@ CAROL_ID = 6464
 NOW = datetime(2026, 11, 5, 12, 0, tzinfo=UTC)
 
 
+@pytest.fixture(autouse=True)
+def clock(monkeypatch: pytest.MonkeyPatch) -> None:
+    """People reads the time at NOW, so "today" and the window never depend on when the
+    tests run; chats are moved to end an hour before it."""
+    monkeypatch.setattr(pp, "_now", lambda: NOW)
+
+
 @pytest.fixture
 async def world(bot_settings: BotSettings, redis: Redis, session_factory: Sessions) -> World:
     return await onboarded_world(bot_settings, redis, session_factory)
@@ -37,7 +44,9 @@ async def chatted(world: World) -> int:
     """Alice and Bob chatted and Alice ended it; returns the conversation's id."""
     await match(world)
     await world.alice.send(END_CHAT)
-    return await latest_conversation(world.sessions)
+    conversation_id = await latest_conversation(world.sessions)
+    await end_conversation_at(world.sessions, conversation_id, NOW - timedelta(hours=1))
+    return conversation_id
 
 
 async def latest_conversation(sessions: Sessions) -> int:
@@ -121,6 +130,8 @@ async def test_someone_being_chatted_with_again_is_left_out_until_that_chat_ends
     await match(world)
     assert await open_past_chats(world.alice) == "No past chats from the last 10 days."
     await world.bob.send(END_CHAT)
+    again = await latest_conversation(world.sessions)
+    await end_conversation_at(world.sessions, again, NOW - timedelta(minutes=5))
     await open_past_chats(world.alice)
     assert entries(world.alice) == ["Moon Child · today"]
 
@@ -130,7 +141,7 @@ async def test_each_partner_is_listed_once_with_their_latest_chat(
 ) -> None:
     first = await chatted(world)
     second = await chatted(world)
-    await end_conversation_at(session_factory, first, datetime.now(UTC) - timedelta(days=3))
+    await end_conversation_at(session_factory, first, NOW - timedelta(days=3))
     await open_past_chats(world.alice)
     assert entries(world.alice) == ["Moon Child · today"]
     assert world.alice.session.last_buttons()["Moon Child · today"] == open_data(second)
@@ -142,9 +153,7 @@ async def test_chats_outside_the_window_are_not_listed_or_opened(
     conversation_id = await chatted(world)
     await open_past_chats(world.alice)
     stale = world.alice.session.last_buttons()["Moon Child · today"]
-    await end_conversation_at(
-        session_factory, conversation_id, datetime.now(UTC) - timedelta(days=10, minutes=1)
-    )
+    await end_conversation_at(session_factory, conversation_id, NOW - timedelta(days=10, minutes=1))
     assert await open_past_chats(world.alice) == "No past chats from the last 10 days."
     assert await world.alice.press_data_reply(stale) == ""
     assert world.alice.session.callback_answers()[-1] == pp.NOT_AVAILABLE
@@ -152,9 +161,7 @@ async def test_chats_outside_the_window_are_not_listed_or_opened(
 
 async def test_the_window_is_an_admin_setting(world: World, session_factory: Sessions) -> None:
     conversation_id = await chatted(world)
-    await end_conversation_at(
-        session_factory, conversation_id, datetime.now(UTC) - timedelta(days=12)
-    )
+    await end_conversation_at(session_factory, conversation_id, NOW - timedelta(days=12))
     await set_setting(session_factory, SettingKey.PAST_CHATS_DAYS, 13)
     assert await open_past_chats(world.alice) == "💬 Past chats from the last 13 days"
     assert entries(world.alice) == ["Moon Child · 12 days ago"]
@@ -202,7 +209,7 @@ async def test_chats_from_before_an_account_deletion_are_never_listed(
     conversation_id = await chatted(world)
     bob = await world.user_id(BOB_ID)
     async with session_factory() as session:
-        await users.delete_account(session, bob, datetime.now(UTC))
+        await users.delete_account(session, bob, NOW)
         await session.commit()
     assert await open_past_chats(world.alice) == "No past chats from the last 10 days."
     # Bob comes back as a new person: the chat from before is still not his.
@@ -217,7 +224,7 @@ async def test_a_deleted_viewer_starts_afresh(world: World, session_factory: Ses
     await chatted(world)
     alice = await world.user_id(USER_ID)
     async with session_factory() as session:
-        await users.delete_account(session, alice, datetime.now(UTC))
+        await users.delete_account(session, alice, NOW)
         await session.commit()
     await complete_onboarding(world.alice)
     assert await open_past_chats(world.alice) == "No past chats from the last 10 days."

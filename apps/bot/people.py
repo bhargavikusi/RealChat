@@ -29,7 +29,6 @@ from backend.config.settings import BotSettings
 from backend.modules.admin.settings import RuntimeSettings, SettingKey
 from backend.modules.moderation import service as moderation
 from backend.modules.people import service as people
-from backend.modules.users import service as users
 
 
 class PeopleAction(CallbackData, prefix="people"):
@@ -48,6 +47,10 @@ NEXT_BUTTON = "Next ▶️"
 PAST_CHAT_HEADER = "💬 Past chat"
 NOT_AVAILABLE = "This person isn't available any more."
 BLOCKED_MARK = " 🚫"
+
+
+def _now() -> datetime:
+    return datetime.now(UTC)
 
 
 def _button(text: str, data: PeopleAction) -> InlineKeyboardButton:
@@ -140,7 +143,7 @@ async def on_past_chats(
     if user_id is None:
         return
     days = await runtime_settings.get(session, SettingKey.PAST_CHATS_DAYS)
-    now = datetime.now(UTC)
+    now = _now()
     page = max(callback_data.page, 0)
     found = await people.past_chats(session, user_id, people.window_start(now, days), page)
     await session.commit()
@@ -169,15 +172,14 @@ async def on_open(
     if user_id is None:
         return
     days = await runtime_settings.get(session, SettingKey.PAST_CHATS_DAYS)
-    since = people.window_start(datetime.now(UTC), days)
+    since = people.window_start(_now(), days)
     conversation_id = callback_data.conversation
-    partner_id = await people.past_partner(session, user_id, conversation_id, since)
-    if partner_id is None:
+    profile = await people.past_partner(session, user_id, conversation_id, since)
+    if profile is None:
         await session.commit()
         await query.answer(NOT_AVAILABLE)
         return
-    profile = await users.get_profile(session, partner_id)
-    blocked = await moderation.is_blocked(session, user_id, partner_id)
+    blocked = await moderation.is_blocked(session, user_id, profile.user_id)
     await session.commit()
     await query.answer()
     await send_card(

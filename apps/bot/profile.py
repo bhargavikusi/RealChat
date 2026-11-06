@@ -27,7 +27,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from apps.bot.account import settings_button
 from apps.bot.avatars import Avatars
-from apps.bot.cards import profile_caption
+from apps.bot.cards import send_card
 from apps.bot.onboarding import (
     COUNTRY_NOT_FOUND,
     COUNTRY_PICK,
@@ -202,14 +202,7 @@ def _current_value(profile: Profile, field: ProfileField) -> str | None:
 async def _send_card(
     bot: Bot, chat_id: int, profile: Profile, avatars: Avatars, header: str
 ) -> None:
-    caption = f"{header}\n\n{profile_caption(profile, _now().date())}"
-    markup = _edit_keyboard()
-    if profile.photo_file_id is not None:
-        await bot.send_photo(chat_id, profile.photo_file_id, caption=caption, reply_markup=markup)
-        return
-    # Onboarding guarantees a gender; "other" is a safe fallback for the avatar only.
-    gender = Gender(profile.gender) if profile.gender else Gender.OTHER
-    await avatars.send(bot, chat_id, gender, caption, markup)
+    await send_card(bot, avatars, chat_id, profile, header, _edit_keyboard())
 
 
 async def _ready(

@@ -527,7 +527,7 @@ Work happens on short-lived issue branches, such as `feature/12-onboarding`, cre
 * 👥 People is a button on the user's own profile card. It opens 💬 Past chats: each partner once, by their latest chat, latest first, in pages of 10. Tapping one shows their profile card with Block (or Unblock) and Report for that chat (D-045). The layout is provisional until the design pass.
 * Only partners who can still use RealChat are listed: an active account with a finished profile. Chats from before either user deleted their account are never counted, so a returning account starts afresh. Someone the user is chatting with again is left out until that chat ends.
 * Blocks hide nobody: both users still see each other, and the blocker sees 🚫 beside the name. What a blocked user cannot do (direct messages, chat requests) is enforced by those features.
-* RealChat activity: each user's last use of the bot is recorded (at most once a minute). It is never presented as Telegram online status, which bots cannot see (requirements §15).
+* RealChat activity: each active user's last use of the bot in a private chat is recorded (at most once a minute). Suspended and banned users, who are stopped by the access gate, and group-chat updates are not counted. It is never presented as Telegram online status, which bots cannot see (requirements §15).
 * The draft terms say past chat partners can see the profile card for a while after the chat (terms version `draft-10`).
 
 **Why:** Owner decisions. Browsing strangers waits for discovery; a short window limits unwanted contact after an anonymous chat, while keeping blocked people visible lets the blocker unblock and keeps the block from being obvious.
