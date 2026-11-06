@@ -14,13 +14,14 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 
 from redis.asyncio import Redis
-from sqlalchemy import Select, delete, select, tuple_
+from sqlalchemy import Select, delete, or_, select, tuple_
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sqlalchemy.orm import aliased
 
 from backend.modules.admin.settings import RuntimeSettings, SettingKey
 from backend.modules.chat import service as chat
+from backend.modules.chat.models import Conversation
 from backend.modules.chat.models import ConversationParticipant as Participant
 from backend.modules.moderation import service as moderation
 from backend.modules.people.models import ProfileVisit
@@ -49,8 +50,22 @@ class Visitors:
 async def record_visit(
     session: AsyncSession, visitor_id: int, visited_id: int, now: datetime
 ) -> None:
-    """Record that `visitor_id` opened `visited_id`'s card at `now`."""
+    """Record that `visitor_id` opened `visited_id`'s card at `now`.
+
+    Both accounts are locked FOR KEY SHARE (in id order) and must still be active. Account
+    deletion locks the account row FOR UPDATE, so a visit and a deletion never overlap:
+    a visit waiting on a deletion sees the account deleted and is skipped, instead of
+    leaving a row behind the deletion's cleanup.
+    """
     if visitor_id == visited_id:
+        return
+    active = await session.scalars(
+        select(User.id)
+        .where(User.id.in_((visitor_id, visited_id)), User.status == "active")
+        .order_by(User.id)
+        .with_for_update(key_share=True)
+    )
+    if len(active.all()) < 2:
         return
     await session.execute(
         insert(ProfileVisit)
@@ -126,15 +141,27 @@ async def visitor_profile(
 
 
 async def latest_conversation(session: AsyncSession, user_id: int, other_id: int) -> int | None:
-    """The latest conversation the two users shared, for Block and Report on a card."""
+    """The latest conversation the two users shared, for Block and Report on a card.
+
+    Conversations from before either user's latest account deletion don't count, as for
+    Past chats: a returning account starts afresh.
+    """
     other = aliased(Participant)
+    me, them = aliased(User), aliased(User)
     return await session.scalar(
         select(Participant.conversation_id)
         .join(
             other,
             (other.conversation_id == Participant.conversation_id) & (other.user_id == other_id),
         )
-        .where(Participant.user_id == user_id)
+        .join(Conversation, Conversation.id == Participant.conversation_id)
+        .join(me, me.id == user_id)
+        .join(them, them.id == other_id)
+        .where(
+            Participant.user_id == user_id,
+            or_(me.deleted_at.is_(None), Conversation.started_at > me.deleted_at),
+            or_(them.deleted_at.is_(None), Conversation.started_at > them.deleted_at),
+        )
         .order_by(Participant.conversation_id.desc())
         .limit(1)
     )

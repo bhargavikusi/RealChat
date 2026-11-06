@@ -1,6 +1,8 @@
 """Profile visits and Visited you (D-053)."""
 
+import asyncio
 from datetime import UTC, datetime, timedelta
+from typing import Any
 
 import pytest
 from aiogram.exceptions import TelegramForbiddenError
@@ -23,7 +25,7 @@ from backend.modules.users import service as users
 from backend.modules.users.models import User
 from backend.modules.users.service import Notification
 from tests.support.chat import USER_ID, Chat, complete_onboarding
-from tests.support.telegram import make_bot
+from tests.support.db import wait_until_blocked
 from tests.support.world import (
     BOB_ID,
     World,
@@ -229,14 +231,22 @@ async def test_no_notice_while_chatting_together(world: World) -> None:
     assert notices_to(world.bob, USER_ID) == []
 
 
-async def test_a_failed_notice_still_records_the_visit() -> None:
-    bot, telegram = make_bot()
+async def test_a_failed_notice_still_records_the_visit(
+    world: World, session_factory: Sessions, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    telegram = world.alice.session
+    record = telegram.make_request
 
-    async def refuse(*args: object, **kwargs: object) -> None:
-        raise TelegramForbiddenError(method=SendMessage(chat_id=1, text=""), message="blocked")
+    async def refuse_bob(bot: Any, method: Any, timeout: int | None = None) -> Any:  # noqa: ASYNC109
+        if isinstance(method, SendMessage) and int(method.chat_id) == BOB_ID:
+            raise TelegramForbiddenError(method=method, message="bot was blocked by the user")
+        return await record(bot, method, timeout)
 
-    telegram.make_request = refuse  # type: ignore[method-assign,assignment]
-    await pp.Notice(1, 2, ALICE).send(bot)  # does not raise
+    monkeypatch.setattr(telegram, "make_request", refuse_bob)
+    await alice_visits_bob(world)
+    assert text_of(last_to(telegram, USER_ID)).startswith(pp.PAST_CHAT_HEADER)
+    alice, bob = await world.user_id(USER_ID), await world.user_id(BOB_ID)
+    assert await visit_rows(session_factory) == [(alice, bob, NOW)]
 
 
 async def test_visits_cost_nothing_and_never_record_self_visits(
@@ -349,3 +359,44 @@ async def test_expired_visits_are_deleted_in_batches(
         await session.commit()
         count = await session.scalar(select(func.count()).select_from(ProfileVisit))
     assert count == 1
+
+
+# --- Account deletion at the same time ---------------------------------------------------
+
+
+async def test_a_visit_waiting_on_an_account_deletion_is_skipped(
+    world: World, session_factory: Sessions
+) -> None:
+    alice, bob = await world.user_id(USER_ID), await world.user_id(BOB_ID)
+    async with session_factory() as deleting:
+        await users.delete_account(deleting, bob, NOW)
+
+        async def visit() -> None:
+            async with session_factory() as session:
+                await visits.record_visit(session, alice, bob, NOW)
+                await session.commit()
+
+        task = asyncio.create_task(visit())
+        await wait_until_blocked(session_factory)
+        assert not task.done()  # waits for the deletion's lock on Bob
+        await deleting.commit()
+        await task
+    assert await visit_rows(session_factory) == []
+
+
+async def test_block_and_report_ignore_chats_from_before_an_account_deletion(
+    world: World, session_factory: Sessions
+) -> None:
+    alice, bob = await world.user_id(USER_ID), await world.user_id(BOB_ID)
+    async with session_factory() as session:
+        await users.delete_account(session, bob, NOW)
+        await session.commit()
+    await complete_onboarding(world.bob)
+    async with session_factory() as session:
+        assert await visits.latest_conversation(session, alice, bob) is None
+        await visits.record_visit(session, bob, alice, NOW)
+        await session.commit()
+    await world.alice.press_data(visitor_data(bob))
+    card = last_to(world.alice.session, USER_ID)
+    assert text_of(card).startswith(pp.VISITOR_HEADER)
+    assert buttons(card) == []
