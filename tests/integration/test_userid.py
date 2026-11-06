@@ -454,6 +454,17 @@ async def test_profile_actions_need_a_visit_either_way(
         ProfileSafetyAction(action="reason", profile=bob, reason="spam").pack()
     )
     assert world.alice.session.callback_answers()[-1] == sf.NOT_AVAILABLE
+    # Your own ID, even with a past chat that a "chat with yourself" lookup would find.
+    await match(world)
+    await world.alice.send(END_CHAT)
+    alice = await public_id(session_factory, USER_ID)
+    for action in ("block", "report"):
+        await world.alice.press_data(ProfileSafetyAction(action=action, profile=alice).pack())
+        assert world.alice.session.callback_answers()[-1] == sf.NOT_AVAILABLE
+    await world.alice.press_data(
+        ProfileSafetyAction(action="reason", profile=alice, reason="spam").pack()
+    )
+    assert world.alice.session.callback_answers()[-1] == sf.NOT_AVAILABLE
     # An ID nobody has, or a made-up reason.
     await world.alice.press_data(ProfileSafetyAction(action="block", profile="zzzzzzz").pack())
     assert world.alice.session.callback_answers()[-1] == sf.NOT_AVAILABLE

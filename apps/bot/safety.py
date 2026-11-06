@@ -410,14 +410,14 @@ async def _profile_target(
 ) -> tuple[int, int, int | None, datetime] | None:
     """The user, the person the button names, the latest chat the two shared, and the
     start of the visits window. Answers "not available" and returns None if the RealChat
-    ID no longer belongs to anyone.
+    ID no longer belongs to anyone, or is the user's own.
 
     The chat is looked up again on every press: if the two have chatted since the card
     was sent, the button acts on that chat, so a chat still open between them is ended.
     """
     user = await users.get_or_create_user(session, query.from_user.id)
     other_id = await users.user_id_for(session, callback_data.profile)
-    if other_id is None:
+    if other_id is None or other_id == user.id:
         await session.commit()
         await query.answer(NOT_AVAILABLE)
         return None
