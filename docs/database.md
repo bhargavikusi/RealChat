@@ -18,7 +18,7 @@ There is one row per Telegram account.
 | `created_at` | timestamptz | |
 | `last_active_at` | timestamptz | When the user last used RealChat (D-051): updated by the bot for each private-chat update from an active account, at most once a minute. RealChat activity only, never Telegram online status. |
 | `deleted_at` | timestamptz, nullable | When the user last deleted their account (D-016). Kept if they return. |
-| `coin_history_after_id` | bigint, nullable | Set at account deletion to the account's latest coin ledger entry: `/coins` lists only later entries, so a returning user sees a fresh history (D-055). |
+| `coin_history_after_id` | bigint, nullable | Set at account deletion to the account's latest coin ledger entry, or 0 if it had none (not a real entry id): `/coins` lists only later entries, so a returning user sees a fresh history (D-055). NULL for accounts never deleted since this was added; those see their whole history. |
 | `role` | varchar(16) | One of `user` (default), `moderator`, `admin` (D-034). Changed only by the admin CLI, except that account deletion resets it to `user`. |
 
 ### `profiles`

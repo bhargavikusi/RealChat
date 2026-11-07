@@ -374,3 +374,12 @@ async def test_a_credit_racing_a_deletion_is_listed_after_return(
     assert bot_coins.LABELS["admin_grant"] in reply
     assert bot_coins.LABELS["welcome_bonus"] not in reply
     assert await total(session_factory, user_id) == 4
+
+
+async def test_the_forfeit_is_dated_the_deletion_time(
+    alice: Chat, session_factory: Sessions
+) -> None:
+    user_id = await user_id_of(session_factory)
+    await delete(session_factory, user_id)
+    amount, kind, _, created_at = (await ledger(session_factory, user_id))[-1]
+    assert (amount, kind, created_at) == (-10, "account_deleted", NOW)

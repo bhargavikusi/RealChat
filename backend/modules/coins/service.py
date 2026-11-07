@@ -75,6 +75,7 @@ async def _record(
     *,
     hold_id: int | None = None,
     note: str | None = None,
+    created_at: datetime | None = None,
 ) -> bool:
     """Add a ledger entry unless one with `key` exists; returns whether it was added."""
     if kind not in TRANSACTION_KINDS:
@@ -90,6 +91,7 @@ async def _record(
             idempotency_key=key,
             hold_id=hold_id,
             note=note,
+            **({} if created_at is None else {"created_at": created_at}),
         )
         .on_conflict_do_nothing(index_elements=["idempotency_key"])
         .returning(CoinTransaction.id)
@@ -151,7 +153,7 @@ async def forfeit_all(session: AsyncSession, user_id: int, now: datetime) -> For
     """Remove all of a deleted account's coins (D-055).
 
     Coins on hold are released first, then the whole balance is removed by one
-    `account_deleted` entry. Its key names the account's latest entry before it, so
+    `account_deleted` entry, dated `now`. Its key names the account's latest entry before it, so
     each deletion has its own key and the same one never records twice. Nothing is
     recorded for a balance of zero. Every ledger write locks the user's row, as this
     does, so anything else either finishes first (and is forfeited too) or waits until
@@ -168,7 +170,8 @@ async def forfeit_all(session: AsyncSession, user_id: int, now: datetime) -> For
     removed = 0
     if total > 0:
         key = f"deleted:{user_id}:{await _latest_entry(session, user_id)}"
-        if await _record(session, user_id, -total, "account_deleted", key):
+        # Dated the deletion time, like `users.deleted_at`, for the audit trail.
+        if await _record(session, user_id, -total, "account_deleted", key, created_at=now):
             removed = total
     return Forfeited(removed, await _latest_entry(session, user_id))
 
