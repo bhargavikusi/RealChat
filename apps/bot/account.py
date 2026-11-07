@@ -36,7 +36,7 @@ from aiogram.types import (
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from apps.bot.admin import admin_button
-from apps.bot.endings import PARTNER_LEFT, menu_price, tell_chat_ended
+from apps.bot.endings import PARTNER_LEFT, coins_label, menu_price, tell_chat_ended
 from apps.bot.menu import HelpAction
 from apps.bot.middlewares import Handler
 from apps.bot.onboarding import load_context, prompt_next
@@ -44,6 +44,7 @@ from backend.config.settings import BotSettings
 from backend.core.logging import exception_summary
 from backend.modules.admin import service as admin_service
 from backend.modules.chat import service as chat_service
+from backend.modules.coins import service as coins
 from backend.modules.moderation import service as moderation
 from backend.modules.users import service
 from backend.modules.users.service import Notification, NotificationChoices
@@ -74,13 +75,20 @@ DELETE_BUTTON = "🗑 Delete account"
 CONFIRM_BUTTON = "Yes, delete my account"
 KEEP_BUTTON = "Cancel"
 ADVANCED_SETTINGS_TEXT = "Advanced settings"
+# What deletion removes (D-016, D-055); {coins} is the current balance.
 DELETE_CONFIRM = (
     "Delete your account?\n\n"
-    "Your profile (nickname, age, gender, country, city, bio, and photo) is erased "
-    "immediately and can't be recovered. A minimal record (your Telegram user ID, "
-    "account status, and dates) is kept so that restrictions can't be avoided by "
-    "signing up again.\n\n"
-    "You can come back later with /start and create a new profile."
+    "This can't be undone. You'll lose:\n"
+    "• Your profile (nickname, age, gender, country, city, bio, and photo) and your "
+    "RealChat ID\n"
+    "• Your coins (you have {coins})\n"
+    "• Your Past chats list, visitors, and settings\n"
+    "• Your invite link, and rewards for invites that haven't finished signing up\n\n"
+    "A minimal record (your Telegram user ID, account status, and dates) is kept so that "
+    "restrictions can't be avoided by signing up again, along with blocks, reports, and "
+    "coin records.\n\n"
+    "You can come back later with /start and start fresh. One-time rewards you already "
+    "received, like the welcome bonus, aren't given again."
 )
 DELETED = "Your account has been deleted. Send /start if you ever want to come back."
 DELETED_RESTRICTED = "Your profile has been erased. Your account remains restricted."
@@ -231,6 +239,9 @@ async def ask_to_confirm(
 ) -> None:
     if not await _may_delete(query, bot, session, state, settings):
         return
+    user = await service.get_or_create_user(session, query.from_user.id)
+    balance = await coins.balance(session, user.id)
+    await session.commit()
     request = secrets.token_hex(4)
     await state.set_state(AccountDeletion.confirm)
     await state.set_data({"request": request})
@@ -241,7 +252,11 @@ async def ask_to_confirm(
         ]
     )
     await query.answer()
-    await bot.send_message(query.from_user.id, DELETE_CONFIRM, reply_markup=keyboard)
+    await bot.send_message(
+        query.from_user.id,
+        DELETE_CONFIRM.format(coins=coins_label(balance.total)),
+        reply_markup=keyboard,
+    )
 
 
 async def _is_current(state: FSMContext, request: str) -> bool:

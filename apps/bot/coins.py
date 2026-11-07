@@ -37,6 +37,8 @@ LABELS = {
     "paid_match": "Paid match",
     "admin_grant": "Bonus from RealChat",
     "admin_correction": "Correction",
+    # Never shown to the user: a returning user's history starts after the deletion.
+    "account_deleted": "Removed when the account was deleted",
 }
 NO_ACTIVITY = "No coin activity yet."
 DAILY_AVAILABLE = "🎁 Daily reward: {amount} today."

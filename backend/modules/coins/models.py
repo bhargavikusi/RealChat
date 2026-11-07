@@ -34,10 +34,12 @@ TRANSACTION_KINDS = (
     "paid_match",
     "admin_grant",
     "admin_correction",
+    # Coins removed because the account was deleted (D-055).
+    "account_deleted",
 )
 # Kinds that add coins, and kinds that remove them; the database checks the sign.
 CREDIT_KINDS = ("welcome_bonus", "referral_reward", "daily_reward", "admin_grant")
-DEBIT_KINDS = ("paid_match", "admin_correction")
+DEBIT_KINDS = ("paid_match", "admin_correction", "account_deleted")
 # Admin entries must say why.
 ADMIN_KINDS = ("admin_grant", "admin_correction")
 HOLD_PURPOSES = ("paid_match",)

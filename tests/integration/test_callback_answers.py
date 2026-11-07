@@ -50,7 +50,7 @@ async def test_account_buttons(chat: Chat) -> None:
     await chat.send("/profile")
     chat.session.reject_callback_answers = EXPIRED
     assert await chat.press(ac.ADVANCED_SETTINGS) == ac.ADVANCED_SETTINGS_TEXT
-    assert await chat.press(ac.DELETE_BUTTON) == ac.DELETE_CONFIRM
+    assert await chat.press(ac.DELETE_BUTTON) == ac.DELETE_CONFIRM.format(coins="10 coins")
 
 
 async def test_admin_buttons(chat: Chat, session_factory: Sessions) -> None:

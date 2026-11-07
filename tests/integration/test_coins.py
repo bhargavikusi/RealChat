@@ -269,12 +269,15 @@ async def test_the_cli_adjusts_and_shows_coins(
         await run(["coins", str(USER_ID), "5"], session_factory)  # a reason is required
 
 
-async def test_coins_survive_account_deletion(session_factory: Sessions, user_id: int) -> None:
+async def test_coins_are_forfeited_on_account_deletion(
+    session_factory: Sessions, user_id: int
+) -> None:
     await _credit(session_factory, user_id, 7, "a")
     async with session_factory() as session:
         await users.delete_account(session, user_id, NOW)
         await session.commit()
-    assert (await _balance(session_factory, user_id)).total == 7
+    # Removed by a new entry; the original credit is still in the ledger (D-055).
+    assert (await _balance(session_factory, user_id)).total == 0
 
 
 # --- /coins ----------------------------------------------------------------------------

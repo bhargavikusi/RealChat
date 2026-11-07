@@ -14,6 +14,8 @@ from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.modules.admin.models import AdminAuditEntry
+from backend.modules.coins import rewards
+from backend.modules.coins import service as coins
 from backend.modules.people.models import ProfileVisit
 from backend.modules.users import public_ids, validation
 from backend.modules.users.models import (
@@ -173,8 +175,10 @@ async def delete_account(session: AsyncSession, user_id: int, now: datetime) -> 
     RealChat ID, so the old ID finds nobody, D-054), the age
     and gender change history, notification settings, profile visits made or received
     (D-053), and terms acceptances, so a
-    returning user starts a fresh onboarding with the default settings. Kept: the
-    Telegram user ID, the status, and timestamps. An
+    returning user starts a fresh onboarding with the default settings. Coins are
+    forfeited (held coins released, then the balance removed by one ledger entry), the
+    invite code is retired, and pending invites are settled as not rewarded (D-055).
+    Kept: the Telegram user ID, the status, timestamps, and the coin ledger. An
     active account becomes "deleted"; a suspended or banned one keeps its status, so
     deleting cannot be used to escape a restriction. A moderator or admin role is reset
     to "user" and the change is audit-logged, so a returning account has no special
@@ -193,6 +197,8 @@ async def delete_account(session: AsyncSession, user_id: int, now: datetime) -> 
         )
     )
     await _ensure_profile(session, user_id)
+    user.coin_history_after_id = (await coins.forfeit_all(session, user_id, now)).history_after_id
+    await rewards.retire_invites(session, user_id, now)
     if user.status not in RESTRICTED_STATUSES:
         user.status = "deleted"
     user.deleted_at = now

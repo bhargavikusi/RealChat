@@ -19,7 +19,7 @@ import secrets
 from dataclasses import dataclass
 from datetime import UTC, datetime, time
 
-from sqlalchemy import func, select, update
+from sqlalchemy import delete, func, select, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -74,6 +74,21 @@ async def attach_invite(session: AsyncSession, invitee_id: int, payload: str) ->
     )
     if is_new is None:
         return None
+    # The inviter's row is locked too, and the code read again under it: an inviter
+    # deleting their account (which retires the code, D-055) either finishes first, and
+    # the code no longer names them, or waits until this invite is recorded and then
+    # settles it as not rewarded.
+    await session.execute(
+        select(User.id).where(User.id == inviter_id).with_for_update(read=True, key_share=True)
+    )
+    still_theirs = await session.scalar(
+        select(InviteCode.user_id).where(
+            InviteCode.user_id == inviter_id,
+            InviteCode.code == payload.removeprefix(INVITE_PREFIX),
+        )
+    )
+    if still_theirs is None:
+        return None
     recorded = await session.scalar(
         insert(Referral)
         .values(invitee_user_id=invitee_id, inviter_user_id=inviter_id)
@@ -119,6 +134,23 @@ async def on_profile_complete(
     welcomed = welcome > 0 and await coins.credit(
         session, user_id, welcome, "welcome_bonus", f"welcome:{user_id}"
     )
+    pending = await session.scalar(
+        select(Referral.inviter_user_id).where(
+            Referral.invitee_user_id == user_id, Referral.status == "pending"
+        )
+    )
+    if pending is None:
+        return Granted(welcome if welcomed else 0)
+    inviter_id = int(pending)
+    # The inviter's row is locked while counting, so two invitees completing at once
+    # cannot both pass the cap. It is locked before the referral row, in the same order
+    # as account deletion (which settles the inviter's pending invites, D-055), so the
+    # two cannot deadlock; the referral is then read again under its lock.
+    inviter_status = (
+        await session.execute(
+            select(User.status).where(User.id == inviter_id).with_for_update(key_share=True)
+        )
+    ).scalar_one()
     referral = (
         await session.execute(
             select(Referral.inviter_user_id)
@@ -128,14 +160,6 @@ async def on_profile_complete(
     ).scalar_one_or_none()
     if referral is None:
         return Granted(welcome if welcomed else 0)
-    inviter_id = int(referral)
-    # The inviter's row is locked while counting, so two invitees completing at once
-    # cannot both pass the cap.
-    inviter_status = (
-        await session.execute(
-            select(User.status).where(User.id == inviter_id).with_for_update(key_share=True)
-        )
-    ).scalar_one()
     start_of_day = datetime.combine(now.date(), time(0), tzinfo=now.tzinfo)
     rewarded_today = await session.scalar(
         select(func.count())
@@ -174,9 +198,37 @@ async def claimed_today(session: AsyncSession, user_id: int, now: datetime) -> b
 
 
 async def claim_daily(session: AsyncSession, user_id: int, now: datetime, amount: int) -> bool:
-    """Grant today's daily reward; returns False if it was already claimed today (UTC).
+    """Grant today's daily reward; returns False if it was already claimed today (UTC),
+    or the account can no longer claim.
 
     The ledger key is the user and the UTC date, so repeated or simultaneous claims
-    record once. Whether the reward is on is the caller's check.
+    record once. Whether the reward is on is the caller's check. The user's row is
+    locked and the account checked under the lock, so a claim racing an account
+    deletion never leaves coins on the deleted account (D-055).
     """
+    await _lock_user(session, user_id)
+    can_claim = await session.scalar(
+        select(User.id)
+        .join(Profile, Profile.user_id == User.id)
+        .where(
+            User.id == user_id,
+            User.status == "active",
+            Profile.onboarding_completed_at.is_not(None),
+        )
+    )
+    if can_claim is None:
+        return False
     return await coins.credit(session, user_id, amount, "daily_reward", _day_key(user_id, now))
+
+
+async def retire_invites(session: AsyncSession, user_id: int, now: datetime) -> None:
+    """For account deletion (D-055): retire the user's invite code, so old links credit
+    nobody, and settle their pending invites as not rewarded, so they never reward a
+    returning account. The caller holds the user's row locked; completing a profile and
+    following an invite lock it too, so neither can slip in between."""
+    await session.execute(delete(InviteCode).where(InviteCode.user_id == user_id))
+    await session.execute(
+        update(Referral)
+        .where(Referral.inviter_user_id == user_id, Referral.status == "pending")
+        .values(status="not_rewarded", settled_at=now)
+    )

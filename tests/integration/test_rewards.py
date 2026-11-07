@@ -91,7 +91,8 @@ async def test_the_welcome_bonus_is_given_once_per_account_ever(
         await users.delete_account(session, alice_id, NOW)
         await session.commit()
     await complete_onboarding(alice)  # back after deleting the account
-    assert await _total(session_factory, USER_ID) == 10  # kept, and not given again
+    # Forfeited on deletion (D-055), and not given again.
+    assert await _total(session_factory, USER_ID) == 0
     assert ob.WELCOME_COINS.format(amount=10) not in alice.session.sent_texts()[-2:]
 
 

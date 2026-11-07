@@ -75,6 +75,7 @@ async def _record(
     *,
     hold_id: int | None = None,
     note: str | None = None,
+    created_at: datetime | None = None,
 ) -> bool:
     """Add a ledger entry unless one with `key` exists; returns whether it was added."""
     if kind not in TRANSACTION_KINDS:
@@ -90,6 +91,7 @@ async def _record(
             idempotency_key=key,
             hold_id=hold_id,
             note=note,
+            **({} if created_at is None else {"created_at": created_at}),
         )
         .on_conflict_do_nothing(index_elements=["idempotency_key"])
         .returning(CoinTransaction.id)
@@ -106,9 +108,14 @@ async def credit(
     *,
     note: str | None = None,
 ) -> bool:
-    """Add coins; returns False if `key` was already recorded."""
+    """Add coins; returns False if `key` was already recorded.
+
+    The user's row is locked as for spending, so a credit is ordered with account
+    deletion: it lands either before (and is forfeited) or after it (D-055).
+    """
     if amount <= 0:
         raise ValueError("a credit must be positive")
+    await _lock_user(session, user_id)
     return await _record(session, user_id, amount, kind, key, note=note)
 
 
@@ -134,6 +141,46 @@ async def debit(
     if available < amount:
         raise InsufficientCoinsError(available, amount)
     return await _record(session, user_id, -amount, kind, key, note=note)
+
+
+@dataclass(frozen=True)
+class Forfeited:
+    amount: int  # coins removed (0 if none)
+    history_after_id: int  # the account's latest ledger entry once forfeited (0 if none)
+
+
+async def forfeit_all(session: AsyncSession, user_id: int, now: datetime) -> Forfeited:
+    """Remove all of a deleted account's coins (D-055).
+
+    Coins on hold are released first, then the whole balance is removed by one
+    `account_deleted` entry, dated `now`. Its key names the account's latest entry before it, so
+    each deletion has its own key and the same one never records twice. Nothing is
+    recorded for a balance of zero. Every ledger write locks the user's row, as this
+    does, so anything else either finishes first (and is forfeited too) or waits until
+    the deletion has committed. The returned `history_after_id` is where a returning
+    user's history starts: their later entries all have larger ids.
+    """
+    await _lock_user(session, user_id)
+    await session.execute(
+        update(CoinHold)
+        .where(CoinHold.user_id == user_id, CoinHold.status == "held")
+        .values(status="released", settled_at=now)
+    )
+    total = (await balance(session, user_id)).total
+    removed = 0
+    if total > 0:
+        key = f"deleted:{user_id}:{await _latest_entry(session, user_id)}"
+        # Dated the deletion time, like `users.deleted_at`, for the audit trail.
+        if await _record(session, user_id, -total, "account_deleted", key, created_at=now):
+            removed = total
+    return Forfeited(removed, await _latest_entry(session, user_id))
+
+
+async def _latest_entry(session: AsyncSession, user_id: int) -> int:
+    latest = await session.scalar(
+        select(func.max(CoinTransaction.id)).where(CoinTransaction.user_id == user_id)
+    )
+    return int(latest or 0)
 
 
 @dataclass(frozen=True)
@@ -282,10 +329,20 @@ async def summary(session: AsyncSession, user_id: int, limit: int) -> tuple[Bala
 
 
 async def history(session: AsyncSession, user_id: int, limit: int) -> list[Entry]:
-    """The user's most recent ledger entries, newest first."""
+    """The user's most recent ledger entries, newest first.
+
+    Only entries after the account's `coin_history_after_id` are listed, read in the
+    same statement: a returning user sees a fresh history (D-055). Older entries stay
+    in the ledger.
+    """
+    after = (
+        select(func.coalesce(User.coin_history_after_id, 0))
+        .where(User.id == user_id)
+        .scalar_subquery()
+    )
     rows = await session.execute(
         select(CoinTransaction.amount, CoinTransaction.kind, CoinTransaction.created_at)
-        .where(CoinTransaction.user_id == user_id)
+        .where(CoinTransaction.user_id == user_id, CoinTransaction.id > after)
         .order_by(CoinTransaction.id.desc())
         .limit(limit)
     )
