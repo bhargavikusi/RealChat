@@ -39,6 +39,7 @@ class SettingKey(StrEnum):
     PAST_CHATS_DAYS = "past_chats_days"
     VISITS_DAYS = "visits_days"
     USERID_MISSES_PER_HOUR = "userid_misses_per_hour"
+    LIKE_NOTICE_GAP_HOURS = "like_notice_gap_hours"
 
 
 @dataclass(frozen=True)
@@ -208,6 +209,14 @@ SPECS: dict[SettingKey, SettingSpec] = {
             default=10,
             minimum=1,
             maximum=100,
+        ),
+        SettingSpec(
+            SettingKey.LIKE_NOTICE_GAP_HOURS,
+            "Time before a pair's like notice can repeat",
+            "hours",
+            default=1,
+            minimum=1,
+            maximum=720,
         ),
     )
 }

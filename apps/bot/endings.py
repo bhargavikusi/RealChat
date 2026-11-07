@@ -126,6 +126,39 @@ def profile_safety_keyboard(public_id: str, blocked: bool) -> InlineKeyboardMark
     )
 
 
+class LikeAction(CallbackData, prefix="like"):
+    """❤️ Like and 💔 Unlike on another user's card (D-056)."""
+
+    action: str  # "like" or "unlike"
+    profile: str  # the RealChat ID of the person liked
+
+
+LIKE_BUTTON = "❤️ Like"
+UNLIKE_BUTTON = "💔 Unlike"
+
+
+def like_row(public_id: str, liked: bool) -> list[InlineKeyboardButton]:
+    """Like, or Unlike once liked, as the first row of another user's card."""
+    text, action = (UNLIKE_BUTTON, "unlike") if liked else (LIKE_BUTTON, "like")
+    return [
+        InlineKeyboardButton(
+            text=text, callback_data=LikeAction(action=action, profile=public_id).pack()
+        )
+    ]
+
+
+def is_like_row(row: list[InlineKeyboardButton]) -> bool:
+    prefix = f"{LikeAction.__prefix__}{LikeAction.__separator__}"
+    return any((button.callback_data or "").startswith(prefix) for button in row)
+
+
+def card_keyboard(
+    like: list[InlineKeyboardButton], buttons: InlineKeyboardMarkup
+) -> InlineKeyboardMarkup:
+    """Another user's card: the like row, then `buttons` (Block and Report)."""
+    return InlineKeyboardMarkup(inline_keyboard=[like, *buttons.inline_keyboard])
+
+
 def new_chat_menu(price: int) -> InlineKeyboardMarkup:
     """The free random chat, then a paid chat per gender at `price` coins."""
     rows = [

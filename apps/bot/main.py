@@ -20,6 +20,7 @@ from apps.bot import (
     chat,
     coins,
     errors,
+    likes,
     menu,
     onboarding,
     people,
@@ -108,6 +109,8 @@ def create_dispatcher(
         private.create_router(),
         # People: past chat partners (D-051), visits, and /userid (D-054).
         people.create_router(),
+        # Like and Unlike on cards (D-056).
+        likes.create_router(),
         # Relay right after the chat buttons: it only takes messages from users in a
         # chat with no other step waiting for an answer, and passes the rest on.
         relay.create_router(),

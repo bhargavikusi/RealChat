@@ -38,7 +38,9 @@ from apps.bot.endings import (
     YOU_ENDED,
     PaidSearchAction,
     SearchAction,
+    card_keyboard,
     coins_label,
+    like_row,
     menu_price,
     safety_keyboard,
     send_chat_ended,
@@ -66,7 +68,7 @@ from backend.modules.matching.queue import (
     search_id_for,
 )
 from backend.modules.moderation import service as moderation
-from backend.modules.people import visits
+from backend.modules.people import likes, visits
 from backend.modules.users import service as users
 from backend.modules.users.models import User
 
@@ -314,6 +316,7 @@ async def on_partner_profile(
         return
     partner = await users.get_profile(session, active.partner_id)
     blocked = await moderation.is_blocked(session, user.id, active.partner_id)
+    liked = await likes.is_liked(session, user.id, active.partner_id)
     # Listed in the partner's Visited you, without a notice during the chat (D-053).
     await visits.record_visit(session, user.id, active.partner_id, datetime.now(UTC))
     await session.commit()
@@ -323,7 +326,9 @@ async def on_partner_profile(
         message.chat.id,
         partner,
         PARTNER_HEADER,
-        safety_keyboard(active.conversation_id, blocked),
+        card_keyboard(
+            like_row(partner.public_id, liked), safety_keyboard(active.conversation_id, blocked)
+        ),
     )
 
 

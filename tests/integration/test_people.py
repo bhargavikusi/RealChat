@@ -9,7 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from apps.bot import people as pp
 from apps.bot.db import ACTIVITY_INTERVAL
-from apps.bot.endings import BLOCK_BUTTON, REPORT_BUTTON, UNBLOCK_BUTTON
+from apps.bot.endings import BLOCK_BUTTON, LIKE_BUTTON, REPORT_BUTTON, UNBLOCK_BUTTON
 from apps.bot.keyboards import END_CHAT
 from apps.bot.people import PeopleAction
 from backend.config.settings import BotSettings
@@ -110,7 +110,7 @@ async def test_a_past_partner_is_listed_and_their_card_opens(world: World) -> No
     await world.alice.press("Moon Child · today")
     card = last_to(world.alice.session, USER_ID)
     assert text_of(card).startswith("💬 Past chat\n\n👤 Moon Child")
-    assert buttons(card) == [BLOCK_BUTTON, REPORT_BUTTON]
+    assert buttons(card) == [LIKE_BUTTON, BLOCK_BUTTON, REPORT_BUTTON]
     assert own_buttons(world.alice)[BLOCK_BUTTON].endswith(f":{conversation_id}::0")
 
 
@@ -186,7 +186,11 @@ async def test_a_blocked_partner_stays_listed_marked_only_for_the_blocker(world:
     await open_past_chats(world.alice)
     assert entries(world.alice) == ["Moon Child · today 🚫"]
     await world.alice.press("Moon Child · today 🚫")
-    assert buttons(last_to(world.alice.session, USER_ID)) == [UNBLOCK_BUTTON, REPORT_BUTTON]
+    assert buttons(last_to(world.alice.session, USER_ID)) == [
+        LIKE_BUTTON,
+        UNBLOCK_BUTTON,
+        REPORT_BUTTON,
+    ]
     await world.alice.press_data(own_buttons(world.alice)[UNBLOCK_BUTTON])
     await open_past_chats(world.alice)
     assert entries(world.alice) == ["Moon Child · today"]

@@ -12,7 +12,7 @@ from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from apps.bot import people as pp
-from apps.bot.endings import BLOCK_BUTTON, REPORT_BUTTON
+from apps.bot.endings import BLOCK_BUTTON, LIKE_BUTTON, REPORT_BUTTON
 from apps.bot.keyboards import END_CHAT, PARTNER_PROFILE
 from apps.bot.people import PeopleAction
 from backend.config.settings import BotSettings
@@ -143,7 +143,7 @@ async def test_visited_you_lists_the_visitor_whose_card_opens(world: World) -> N
     await world.bob.press(f"{ALICE} · today")
     card = last_to(world.bob.session, BOB_ID)
     assert text_of(card).startswith(f"{pp.VISITOR_HEADER}\n\n👤 {ALICE}")
-    assert buttons(card) == [BLOCK_BUTTON, REPORT_BUTTON]
+    assert buttons(card) == [LIKE_BUTTON, BLOCK_BUTTON, REPORT_BUTTON]
     # Opening a visitor's card is a visit too, so Alice is told.
     assert notices_to(world.bob, USER_ID) == [f"👀 {BOB} viewed your profile."]
 
@@ -200,13 +200,14 @@ async def test_no_notice_with_visit_alerts_off(world: World, session_factory: Se
     assert entries(world.bob) == [f"{ALICE} · today"]
 
 
-async def test_a_blocked_visitor_is_listed_and_marked_but_never_notifies(world: World) -> None:
+async def test_a_blocked_visitor_is_listed_marked_and_still_notifies(world: World) -> None:
     await open_people(world.bob)
     await world.bob.press(pp.PAST_CHATS_BUTTON)
     await world.bob.press(f"{ALICE} · today")
     await world.bob.press_data(own_buttons(world.bob)[BLOCK_BUTTON])
     await alice_visits_bob(world)
-    assert notices_to(world.alice, BOB_ID) == []
+    # Blocking doesn't silence visits (D-056).
+    assert notices_to(world.alice, BOB_ID) == [f"👀 {ALICE} viewed your profile."]
     await open_visitors(world.bob)
     assert entries(world.bob) == [f"{ALICE} · today 🚫"]
 
@@ -413,5 +414,5 @@ async def test_block_and_report_ignore_chats_from_before_an_account_deletion(
     assert text_of(card).startswith(pp.VISITOR_HEADER)
     # The old chat is ignored: Block and Report are for the profile (D-054).
     data = own_buttons(world.alice)
-    assert list(data) == [BLOCK_BUTTON, REPORT_BUTTON]
-    assert all(value.startswith("psafety:") for value in data.values())
+    assert list(data) == [LIKE_BUTTON, BLOCK_BUTTON, REPORT_BUTTON]
+    assert data[BLOCK_BUTTON].startswith("psafety:") and data[REPORT_BUTTON].startswith("psafety:")
