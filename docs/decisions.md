@@ -586,9 +586,9 @@ Work happens on short-lived issue branches, such as `feature/12-onboarding`, cre
 * Deleting an account forfeits its coins. Coins on hold are released first, then one ledger entry (`account_deleted`) removes the whole balance. Nothing is recorded for a zero balance. The ledger itself is never changed, so the history stays complete (D-016). This supersedes the coin rule in D-050.
 * The invite code is retired: old invite links credit nobody, and a returning user gets a new code. Invites still pending (people who joined through the link but haven't finished their profile) are settled as not rewarded.
 * One-time rewards already given, such as the welcome bonus, are not given again, and a returning user can never be rewarded as someone's invitee (unchanged from D-050).
-* A returning user's `/coins` shows only activity after their latest deletion. Older entries stay in the ledger for records and admins.
+* A returning user's `/coins` shows only activity after their latest deletion, cut at the account's last ledger entry at deletion rather than by time. Older entries stay in the ledger for records and admins.
 * The confirmation lists what will be lost, including the current balance. Suspended and banned users who delete from their notice lose their coins the same way.
-* Spending, holds, the daily reward, following an invite, and completing a profile all wait for a deletion in progress, so none can add coins to, or record an invite for, the deleted account. Admin grants are explicit, audited actions and are not checked this way.
+* Every coin ledger write (spending, holds, and credits, including admin grants), following an invite, and completing a profile wait for a deletion in progress. A write either lands before it, and is forfeited, or after it, and is listed for the returning account. The daily reward is only granted to an active, onboarded account.
 * The draft terms say that deletion removes coins and the invite link (terms version `draft-13`).
 
 **Why:** Owner decision: a returning user should start completely fresh. Purchased coins don't exist yet; how forfeiting them on deletion is presented must be part of the legal review before payments ship (O-007).

@@ -66,6 +66,10 @@ class User(Base):
         DateTime(timezone=True), server_default=func.now()
     )
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # /coins lists only ledger entries with a larger id: set at account deletion, so a
+    # returning user sees a fresh history (D-055). A ledger position, not a time, so an
+    # entry is never hidden by when its transaction started.
+    coin_history_after_id: Mapped[int | None] = mapped_column(BigInteger)
 
 
 class Profile(Base):

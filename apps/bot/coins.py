@@ -115,10 +115,7 @@ async def on_coins(
     # taken as its answer.
     await state.clear()
     # A fresh transaction, so the balance and history come from one snapshot.
-    # A returning user sees only what happened since their latest deletion (D-055).
-    balance, entries = await coins.summary(
-        session, ctx.user.id, HISTORY_LENGTH, since=ctx.user.deleted_at
-    )
+    balance, entries = await coins.summary(session, ctx.user.id, HISTORY_LENGTH)
     await session.commit()
     code = await rewards.invite_code(session, ctx.user.id)
     values = await load_values(session)

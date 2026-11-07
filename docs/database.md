@@ -18,6 +18,7 @@ There is one row per Telegram account.
 | `created_at` | timestamptz | |
 | `last_active_at` | timestamptz | When the user last used RealChat (D-051): updated by the bot for each private-chat update from an active account, at most once a minute. RealChat activity only, never Telegram online status. |
 | `deleted_at` | timestamptz, nullable | When the user last deleted their account (D-016). Kept if they return. |
+| `coin_history_after_id` | bigint, nullable | Set at account deletion to the account's latest coin ledger entry: `/coins` lists only later entries, so a returning user sees a fresh history (D-055). |
 | `role` | varchar(16) | One of `user` (default), `moderator`, `admin` (D-034). Changed only by the admin CLI, except that account deletion resets it to `user`. |
 
 ### `profiles`
@@ -242,7 +243,7 @@ The coin ledger (D-050). Every change to a user's coins is one row; a balance is
 | `note` | text, nullable | The reason for an admin grant or correction; required for those kinds (constraint). |
 | `created_at` | timestamptz | |
 
-The index on `(user_id, id)` serves balances and history. A balance reads the ledger total and the held coins in one statement, so both come from the same snapshot. Spending and holding lock the user's `users` row (`FOR NO KEY UPDATE`) while available coins are counted, so simultaneous spends cannot overdraw. The daily reward locks it too and is only granted to an active, onboarded account; other credits need no lock. Account deletion (D-055) locks the row for update, releases the account's held coins, and removes the whole balance with one `account_deleted` row keyed `deleted:<user id>:<deletion time>` and dated the deletion time; nothing is recorded for a zero balance. For a returning user, `/coins` lists only rows dated after the latest deletion; older rows stay. `/coins` reads the balance and history at `REPEATABLE READ`, so they agree. Admin adjustments can carry an operator key (`--key`, 1 to 122 characters), so a rerun records once; reusing a key for a different account, amount, or reason is refused.
+The index on `(user_id, id)` serves balances and history. A balance reads the ledger total and the held coins in one statement, so both come from the same snapshot. Spending and holding lock the user's `users` row (`FOR NO KEY UPDATE`) while available coins are counted, so simultaneous spends cannot overdraw. Credits take the same lock, before their row is written, so every ledger write for a user is ordered with account deletion; the daily reward is also only granted to an active, onboarded account. Account deletion (D-055) locks the row for update, releases the account's held coins, and removes the whole balance with one `account_deleted` row keyed `deleted:<user id>:<id of the account's latest entry before it>`, so each deletion has its own key; nothing is recorded for a zero balance. It then sets `users.coin_history_after_id` to the account's latest entry, and `/coins` lists only rows with a larger id, read in the same statement as the history; older rows stay. `/coins` reads the balance and history at `REPEATABLE READ`, so they agree. Admin adjustments can carry an operator key (`--key`, 1 to 122 characters), so a rerun records once; reusing a key for a different account, amount, or reason is refused.
 
 ### `coin_holds`
 

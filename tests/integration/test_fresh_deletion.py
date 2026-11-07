@@ -6,7 +6,7 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 from redis.asyncio import Redis
-from sqlalchemy import select, update
+from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from apps.bot import account as ac
@@ -101,9 +101,15 @@ async def test_deletion_forfeits_the_balance_and_keeps_the_history(
     await delete(session_factory, user_id)
     after = await ledger(session_factory, user_id)
     assert after[: len(before)] == before  # nothing earlier is changed
-    assert after[len(before) :] == [
-        (-25, "account_deleted", f"deleted:{user_id}:{NOW.isoformat()}", NOW)
-    ]
+    [(amount, kind, key, _)] = after[len(before) :]
+    async with session_factory() as session:
+        last_before = await session.scalar(
+            select(func.max(CoinTransaction.id)).where(
+                CoinTransaction.user_id == user_id, CoinTransaction.amount > 0
+            )
+        )
+    # Keyed to the latest entry before it, so each deletion has its own key.
+    assert (amount, kind, key) == (-25, "account_deleted", f"deleted:{user_id}:{last_before}")
     assert await total(session_factory, user_id) == 0
 
 
@@ -135,7 +141,7 @@ async def test_the_same_deletion_forfeits_once_and_a_later_one_again(
     await delete(session_factory, user_id)
     async with session_factory() as session:
         # Repeated for the same deletion: already forfeited, nothing more.
-        assert await coins.forfeit_all(session, user_id, NOW) == 0
+        assert (await coins.forfeit_all(session, user_id, NOW)).amount == 0
         await session.commit()
     later = NOW + timedelta(days=3)
     await credit(session_factory, user_id, 6, "after-return")
@@ -331,3 +337,40 @@ async def test_held_coins_in_the_database_cannot_be_left_held(
             select(CoinHold.id).where(CoinHold.user_id == user_id, CoinHold.status == "held")
         )
     assert held is None
+
+
+async def test_two_deletions_at_the_same_moment_each_forfeit(
+    alice: Chat, session_factory: Sessions
+) -> None:
+    user_id = await user_id_of(session_factory)
+    await delete(session_factory, user_id)
+    await credit(session_factory, user_id, 6, "after-return")
+    await delete(session_factory, user_id)  # the same timestamp as the first
+    assert await total(session_factory, user_id) == 0
+
+
+async def test_a_credit_racing_a_deletion_is_listed_after_return(
+    alice: Chat, session_factory: Sessions
+) -> None:
+    user_id = await user_id_of(session_factory)
+    async with session_factory() as granting:
+        # The grant's transaction starts before the deletion, so its timestamp is older
+        # than the deletion's, but the grant only lands after the deletion commits.
+        await granting.execute(select(func.now()))
+        async with session_factory() as deleting:
+            # The deletion has locked the account but not yet written its forfeit, so a
+            # credit that took its ledger id before waiting would get an older id.
+            await users.lock_user(deleting, user_id)
+            task = asyncio.create_task(
+                coins.credit(granting, user_id, 4, "admin_grant", "race", note="test")
+            )
+            await wait_until_blocked(session_factory)
+            await users.delete_account(deleting, user_id, datetime.now(UTC))
+            await deleting.commit()
+            await task
+        await granting.commit()
+    await complete_onboarding(alice)
+    reply = await alice.send("/coins")
+    assert bot_coins.LABELS["admin_grant"] in reply
+    assert bot_coins.LABELS["welcome_bonus"] not in reply
+    assert await total(session_factory, user_id) == 4

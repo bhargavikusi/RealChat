@@ -82,7 +82,7 @@ DELETE_CONFIRM = (
     "• Your profile (nickname, age, gender, country, city, bio, and photo) and your "
     "RealChat ID\n"
     "• Your coins (you have {coins})\n"
-    "• Your past chats, visitors, and settings\n"
+    "• Your Past chats list, visitors, and settings\n"
     "• Your invite link, and rewards for invites that haven't finished signing up\n\n"
     "A minimal record (your Telegram user ID, account status, and dates) is kept so that "
     "restrictions can't be avoided by signing up again, along with blocks, reports, and "
