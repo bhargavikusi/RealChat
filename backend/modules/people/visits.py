@@ -6,7 +6,7 @@ visit row, holding the latest visit, so Visited you lists each visitor once, lat
 first, however often they visited. Visits older than the retention period (an admin
 setting) are not listed and are deleted by the worker (`VisitRetention`). Only
 visitors who can still use RealChat are listed. Blocks hide nobody; the blocker's
-entry is only marked, and a blocked visitor never triggers a notice.
+entry is only marked, and a blocked visitor's visits are still announced (D-056).
 """
 
 import logging
@@ -23,7 +23,6 @@ from backend.modules.admin.settings import RuntimeSettings, SettingKey
 from backend.modules.chat import service as chat
 from backend.modules.chat.models import Conversation
 from backend.modules.chat.models import ConversationParticipant as Participant
-from backend.modules.moderation import service as moderation
 from backend.modules.people.models import ProfileVisit
 from backend.modules.people.service import PAGE_SIZE, blocked_by
 from backend.modules.users import service as users
@@ -83,13 +82,12 @@ async def record_visit(
 
 async def should_notify(session: AsyncSession, visitor_id: int, visited_id: int) -> bool:
     """Whether a visit is announced to the visited user: not while the two are chatting
-    together, not with visit alerts off, and never from someone they blocked."""
+    together, and not with visit alerts off. A visit from someone the visited user
+    blocked is announced too (D-056)."""
     active = await chat.active_chat(session, visitor_id)
     if active is not None and active.partner_id == visited_id:
         return False
-    if not (await users.notification_settings(session, visited_id))[Notification.VISIT_ALERTS]:
-        return False
-    return not await moderation.is_blocked(session, visited_id, visitor_id)
+    return (await users.notification_settings(session, visited_id))[Notification.VISIT_ALERTS]
 
 
 def _eligible_visits(viewer_id: int, since: datetime) -> Select[int, datetime]:

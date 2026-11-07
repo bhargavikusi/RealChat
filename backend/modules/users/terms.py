@@ -8,7 +8,7 @@ message retention, are not given as numbers, so the text stays true when they ch
 (D-046).
 """
 
-TERMS_VERSION = "draft-13"
+TERMS_VERSION = "draft-14"
 
 TERMS_TEXT = """\
 DRAFT - not for launch
@@ -23,7 +23,8 @@ you've chatted with can still see your profile card for a while after the chat. 
 Your profile card shows your RealChat ID, and anyone who has it can open your \
 profile card. A new ID is given if you delete your account and come back. \
 When you view someone's profile card, they can see that you visited, and they may be \
-told.
+told. When you like someone's profile, they can see that you liked it while the like \
+stands, and they may be told.
 • Messages pass through the RealChat bot. They are not end-to-end encrypted. \
 Chat messages are stored so that reports of abuse can be checked. They are deleted \
 automatically after a set period, unless they are part of a report that is still open. \
@@ -38,7 +39,7 @@ scams, and sharing other people's private information are not allowed.
 and anyone whose profile card you opened, or who opened yours, from their card. \
 Blocking or reporting someone you're chatting with ends the chat, and they are only \
 told that the chat ended. Reporting also blocks them. Blocking doesn't stop you being \
-matched again in a random chat.
+matched again in a random chat, or being told when they visit or like your profile.
 • Coins are a virtual in-app currency. They have no cash value and can't be exchanged \
 for money or transferred to other users.
 • Accounts that break these rules may be restricted or banned.

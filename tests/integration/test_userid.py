@@ -14,7 +14,13 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from apps.bot import onboarding as ob
 from apps.bot import people as pp
 from apps.bot import safety as sf
-from apps.bot.endings import BLOCK_BUTTON, REPORT_BUTTON, UNBLOCK_BUTTON, ProfileSafetyAction
+from apps.bot.endings import (
+    BLOCK_BUTTON,
+    LIKE_BUTTON,
+    REPORT_BUTTON,
+    UNBLOCK_BUTTON,
+    ProfileSafetyAction,
+)
 from apps.bot.keyboards import END_CHAT
 from apps.bot.menu import HELP_TEXT
 from backend.config.settings import BotSettings
@@ -87,6 +93,12 @@ def own_text(chat: Chat) -> str:
 
 async def press_own(chat: Chat, button: str) -> None:
     await chat.press_data(own_buttons(chat)[button])
+
+
+def safety_data(chat: Chat) -> list[str]:
+    """The callback data of Block and Report on the latest card, without Like."""
+    data = own_buttons(chat)
+    return [data[BLOCK_BUTTON if BLOCK_BUTTON in data else UNBLOCK_BUTTON], data[REPORT_BUTTON]]
 
 
 def notices_to(chat: Chat, telegram_id: int) -> list[str]:
@@ -180,7 +192,7 @@ async def test_both_forms_open_the_card_as_a_visit(
     await world.alice.send(form.format(id=bob_id, upper=bob_id.upper()))
     card = last_to(world.alice.session, USER_ID)
     assert text_of(card).startswith(f"{pp.ID_HEADER}\n\n👤 {BOB}")
-    assert buttons(card) == [BLOCK_BUTTON, REPORT_BUTTON]
+    assert buttons(card) == [LIKE_BUTTON, BLOCK_BUTTON, REPORT_BUTTON]
     alice, bob = await world.user_id(USER_ID), await world.user_id(BOB_ID)
     assert await visit_pairs(session_factory) == {(alice, bob)}
     assert notices_to(world.alice, BOB_ID) == [f"👀 {ALICE} viewed your profile."]
@@ -216,11 +228,15 @@ async def test_a_past_partner_opened_by_id_gets_the_chats_buttons(
     await match(world)
     # During the chat: the card acts on this chat, and the partner is not told.
     await alice_opens_bob(world, session_factory)
-    assert all(v.startswith("safety:") for v in own_buttons(world.alice).values())
+    assert safety_data(world.alice) and all(
+        v.startswith("safety:") for v in safety_data(world.alice)
+    )
     assert notices_to(world.alice, BOB_ID) == []
     await world.alice.send(END_CHAT)
     await alice_opens_bob(world, session_factory)
-    assert all(v.startswith("safety:") for v in own_buttons(world.alice).values())
+    assert safety_data(world.alice) and all(
+        v.startswith("safety:") for v in safety_data(world.alice)
+    )
     assert notices_to(world.alice, BOB_ID) == [f"👀 {ALICE} viewed your profile."]
 
 
@@ -389,7 +405,11 @@ async def test_block_and_unblock_someone_met_by_id(world: World, session_factory
     # The card shows the block when opened again.
     await press_own(world.alice, BLOCK_BUTTON)
     await alice_opens_bob(world, session_factory)
-    assert buttons(last_to(world.alice.session, USER_ID)) == [UNBLOCK_BUTTON, REPORT_BUTTON]
+    assert buttons(last_to(world.alice.session, USER_ID)) == [
+        LIKE_BUTTON,
+        UNBLOCK_BUTTON,
+        REPORT_BUTTON,
+    ]
 
 
 async def test_report_someone_met_by_id_once(world: World, session_factory: Sessions) -> None:

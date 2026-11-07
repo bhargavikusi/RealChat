@@ -222,10 +222,21 @@ def message_update(update_id: int, user_id: int, text: str, chat_type: str = "pr
     )
 
 
-def callback_update(update_id: int, user_id: int, data: str, chat_type: str = "private") -> Update:
-    # The message the button was attached to, as Telegram includes it.
+def callback_update(
+    update_id: int,
+    user_id: int,
+    data: str,
+    chat_type: str = "private",
+    reply_markup: InlineKeyboardMarkup | None = None,
+) -> Update:
+    # The message the button was attached to, as Telegram includes it, with its buttons
+    # when a test needs them.
     button_message = Message(
-        message_id=update_id, date=datetime.now(UTC), chat=_chat(user_id, chat_type), text="-"
+        message_id=update_id,
+        date=datetime.now(UTC),
+        chat=_chat(user_id, chat_type),
+        text="-",
+        reply_markup=reply_markup,
     )
     return Update(
         update_id=update_id,

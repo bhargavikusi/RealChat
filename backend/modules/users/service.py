@@ -16,7 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from backend.modules.admin.models import AdminAuditEntry
 from backend.modules.coins import rewards
 from backend.modules.coins import service as coins
-from backend.modules.people.models import ProfileVisit
+from backend.modules.people.models import ProfileLike, ProfileVisit
 from backend.modules.users import public_ids, validation
 from backend.modules.users.models import (
     RESTRICTED_STATUSES,
@@ -173,8 +173,8 @@ async def delete_account(session: AsyncSession, user_id: int, now: datetime) -> 
 
     Erased: every profile field (the profile is replaced by an empty one with a new
     RealChat ID, so the old ID finds nobody, D-054), the age
-    and gender change history, notification settings, profile visits made or received
-    (D-053), and terms acceptances, so a
+    and gender change history, notification settings, profile visits and likes made or
+    received (D-053, D-056), and terms acceptances, so a
     returning user starts a fresh onboarding with the default settings. Coins are
     forfeited (held coins released, then the balance removed by one ledger entry), the
     invite code is retired, and pending invites are settled as not rewarded (D-055).
@@ -194,6 +194,11 @@ async def delete_account(session: AsyncSession, user_id: int, now: datetime) -> 
     await session.execute(
         delete(ProfileVisit).where(
             or_(ProfileVisit.visitor_user_id == user_id, ProfileVisit.visited_user_id == user_id)
+        )
+    )
+    await session.execute(
+        delete(ProfileLike).where(
+            or_(ProfileLike.liker_user_id == user_id, ProfileLike.liked_user_id == user_id)
         )
     )
     await _ensure_profile(session, user_id)

@@ -14,6 +14,7 @@ from apps.bot import chat as ch
 from apps.bot import safety as sf
 from apps.bot.endings import (
     BLOCK_BUTTON,
+    LIKE_BUTTON,
     MEET_PROMPT,
     PARTNER_ENDED,
     REPORT_BUTTON,
@@ -117,7 +118,7 @@ async def test_the_partner_card_offers_block_and_report(world: World) -> None:
     await world.alice.send(PARTNER_PROFILE)
     card = last_to(world.alice.session, USER_ID)
     assert text_of(card).startswith("Your chat partner:\n\n👤 Moon Child")
-    assert buttons(card) == [BLOCK_BUTTON, REPORT_BUTTON]
+    assert buttons(card) == [LIKE_BUTTON, BLOCK_BUTTON, REPORT_BUTTON]
 
 
 # --- Blocking --------------------------------------------------------------------------
@@ -223,7 +224,11 @@ async def test_blocked_partners_can_still_be_matched(
     assert len(chats) == 2 and chats[1].ended_at is None
     # Alice's card for Bob in the new chat shows that he is blocked.
     await world.alice.send(PARTNER_PROFILE)
-    assert buttons(last_to(world.alice.session, USER_ID)) == [UNBLOCK_BUTTON, REPORT_BUTTON]
+    assert buttons(last_to(world.alice.session, USER_ID)) == [
+        LIKE_BUTTON,
+        UNBLOCK_BUTTON,
+        REPORT_BUTTON,
+    ]
 
 
 # --- Reporting -------------------------------------------------------------------------

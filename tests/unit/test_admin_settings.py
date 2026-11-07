@@ -33,6 +33,7 @@ def test_approved_defaults() -> None:
         SettingKey.PAST_CHATS_DAYS: 10,
         SettingKey.VISITS_DAYS: 30,
         SettingKey.USERID_MISSES_PER_HOUR: 10,
+        SettingKey.LIKE_NOTICE_GAP_HOURS: 1,
     }
 
 

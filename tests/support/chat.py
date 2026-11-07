@@ -7,6 +7,7 @@ and Redis; only Telegram itself is simulated (see `tests.support.telegram`).
 from itertools import count
 
 from aiogram import Dispatcher
+from aiogram.types import InlineKeyboardMarkup
 from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
@@ -72,6 +73,15 @@ class Chat:
     async def press_data(self, data: str) -> None:
         await self.dispatcher.feed_update(
             self.bot, callback_update(next(self._ids), self.user_id, data)
+        )
+
+    async def press_on(self, markup: InlineKeyboardMarkup, button: str) -> None:
+        """Press `button` on a message with these buttons, which Telegram sends along."""
+        data = next(
+            str(b.callback_data) for row in markup.inline_keyboard for b in row if b.text == button
+        )
+        await self.dispatcher.feed_update(
+            self.bot, callback_update(next(self._ids), self.user_id, data, reply_markup=markup)
         )
 
     async def send_photo(self, file_id: str) -> str:

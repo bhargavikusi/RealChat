@@ -69,7 +69,7 @@ The index on `(user_id, field, changed_at)` serves the "latest change of this fi
 
 ### `notification_settings`
 
-A user's notification settings (D-052). One row per user, created the first time they change a setting; a user without a row has every default. The notes below say what each setting is for. Each takes effect only once the feature it controls exists: chat requests (Silent mode), profile visits and likes (the alerts), and reminders. Until then the values are stored but not read.
+A user's notification settings (D-052). One row per user, created the first time they change a setting; a user without a row has every default. The notes below say what each setting is for. Each takes effect only once the feature it controls exists: chat requests (Silent mode) and reminders are not built yet, so those values are stored but not read. Visit and like alerts are in use.
 
 | Column | Type | Notes |
 |---|---|---|
@@ -93,6 +93,19 @@ The latest time one user opened another's profile card (D-053). One row per pair
 | `last_visited_at` | timestamptz | The latest visit. A write never moves it back in time. |
 
 A check constraint rejects self-visits. The index on `(visited_user_id, last_visited_at)` serves Visited you, and the one on `last_visited_at` the retention job, which deletes visits older than the admin setting `visits_days` (default 30) once a day in batches. Account deletion removes the user's rows on both sides.
+
+### `profile_likes`
+
+One user's like of another's profile (D-056). One row per pair, so a like is never counted twice. Unliking clears `liked_at` but keeps the row, so `notified_at` still spaces out like notices when the user likes again.
+
+| Column | Type | Notes |
+|---|---|---|
+| `liker_user_id` | bigint | References `users.id`, with `ON DELETE CASCADE`. Part of the primary key. |
+| `liked_user_id` | bigint | References `users.id`, with `ON DELETE CASCADE`. Part of the primary key. |
+| `liked_at` | timestamptz, nullable | When the current like was given; NULL once unliked. |
+| `notified_at` | timestamptz, nullable | When the liked user was last told of this pair's like. |
+
+A check constraint rejects self-likes. The indexes on `(liked_user_id, liked_at)` and `(liker_user_id, liked_at)` serve Liked you and You liked. A like locks both account rows `FOR KEY SHARE` first, as a visit does, so it never overlaps an account deletion. Liking is an upsert that only sets `liked_at` while it is NULL, and the notice is claimed by a conditional update of `notified_at` (NULL or older than the admin setting `like_notice_gap_hours`, default 1), so concurrent taps add one like and send at most one notice. Likes don't expire. Account deletion removes the user's rows on both sides.
 
 ### `app_settings`
 

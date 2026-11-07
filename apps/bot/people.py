@@ -12,11 +12,11 @@ old or forged button opens nobody.
 
 👀 Visited you lists everyone who opened the user's card, once each, latest visit
 first. Opening someone's card from People records a visit and tells them, unless they
-turned visit alerts off, blocked the visitor, or the two are chatting together. A
-visitor's card opens from the list or from that notice while the visit is kept. Like
-the profile, People needs the current terms
-and a finished onboarding. The wording and layout are provisional until the design
-pass. As elsewhere, every database transaction is ended before any Telegram call.
+turned visit alerts off or the two are chatting together (a blocked visitor is
+announced too, D-056). A visitor's card opens from the list or from that notice while
+the visit is kept. Like the profile, People needs the current terms and a finished
+onboarding. The wording and layout are provisional until the design pass. As
+elsewhere, every database transaction is ended before any Telegram call.
 
 Every card shows its RealChat ID as /userid_<id>. Sending that, or /userid <id>, opens
 the card for anyone, as a visit; /userid alone shows the user's own ID. Unknown IDs
@@ -24,10 +24,15 @@ and accounts that can't be opened get the same answer, and wrong lookups are lim
 per hour (an admin setting), so IDs can't be found by trying many. A card opened this
 way, or from Visited you, has Block and Report for the latest chat the two shared, or
 for the profile if they never chatted (D-054).
+
+Every other user's card also has ❤️ Like (or 💔 Unlike) above Block and Report
+(`apps.bot.likes`, D-056). ❤️ Liked you and 💘 You liked list current likes, latest
+first; opening a card from them is a visit, as elsewhere in People.
 """
 
 import logging
 import re
+from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
 
 from aiogram import Bot, F, Router
@@ -42,14 +47,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from apps.bot.avatars import Avatars
 from apps.bot.cards import send_card
-from apps.bot.endings import profile_safety_keyboard, safety_keyboard
+from apps.bot.endings import card_keyboard, like_row, profile_safety_keyboard, safety_keyboard
 from apps.bot.onboarding import Context, load_context, prompt_next
 from backend.config.settings import BotSettings
 from backend.core.logging import exception_summary
 from backend.modules.admin.settings import RuntimeSettings, SettingKey
 from backend.modules.moderation import service as moderation
+from backend.modules.people import likes, visits
 from backend.modules.people import service as people
-from backend.modules.people import visits
 from backend.modules.people.lookups import IdLookups, LookupsUnavailable
 from backend.modules.users import public_ids
 from backend.modules.users import service as users
@@ -60,11 +65,13 @@ logger = logging.getLogger(__name__)
 
 class PeopleAction(CallbackData, prefix="people"):
     # "menu", "past" (a page of past chats), "open" (a past partner's card), "visitors"
-    # (a page of Visited you), or "visitor" (a visitor's card)
+    # (a page of Visited you), "visitor" (a visitor's card), "likers" (a page of Liked
+    # you), "liker" (a liker's card), "liking" (a page of You liked), or "liked" (the
+    # card of someone the user likes)
     action: str
     page: int = 0
     conversation: int = 0  # the past chat an "open" button belongs to
-    user: int = 0  # the visitor a "visitor" button opens
+    user: int = 0  # the person a "visitor", "liker", or "liked" button opens
 
 
 PEOPLE_BUTTON = "👥 People"
@@ -82,6 +89,14 @@ NO_VISITORS = "Nobody visited your profile in the last {days}."
 VISITOR_HEADER = "👀 Visited your profile"
 VISIT_NOTICE = "👀 {nickname} viewed your profile."
 VIEW_PROFILE_BUTTON = "👤 View profile"
+LIKERS_BUTTON = "❤️ Liked you"
+LIKERS_HEADER = "❤️ Liked you"
+NO_LIKERS = "Nobody has liked your profile yet."
+LIKER_HEADER = "❤️ Liked your profile"
+LIKING_BUTTON = "💘 You liked"
+LIKING_HEADER = "💘 You liked"
+NO_LIKING = "You haven't liked anyone yet."
+LIKED_HEADER = "💘 You liked this profile"
 BLOCKED_MARK = " 🚫"
 OWN_ID = (
     "🆔 Your RealChat ID: /userid_{id}\n\n"
@@ -137,6 +152,14 @@ def _visitor_entry(entry: visits.Visitor, now: datetime) -> InlineKeyboardButton
     )
 
 
+def _like_entry(entry: likes.LikeEntry, action: str, now: datetime) -> InlineKeyboardButton:
+    mark = BLOCKED_MARK if entry.blocked else ""
+    return _button(
+        f"{entry.nickname} · {ago(entry.liked_at, now)}{mark}",
+        PeopleAction(action=action, user=entry.user_id),
+    )
+
+
 def _pages(
     rows: list[list[InlineKeyboardButton]], action: str, page: int, has_next: bool
 ) -> InlineKeyboardMarkup:
@@ -158,6 +181,13 @@ def past_chats_keyboard(page: int, found: people.PastChats, now: datetime) -> In
 def visitors_keyboard(page: int, found: visits.Visitors, now: datetime) -> InlineKeyboardMarkup:
     rows = [[_visitor_entry(entry, now)] for entry in found.entries]
     return _pages(rows, "visitors", page, found.has_next)
+
+
+def likes_keyboard(
+    list_action: str, entry_action: str, page: int, found: likes.LikeEntries, now: datetime
+) -> InlineKeyboardMarkup:
+    rows = [[_like_entry(entry, entry_action, now)] for entry in found.entries]
+    return _pages(rows, list_action, page, found.has_next)
 
 
 class Notice:
@@ -209,7 +239,7 @@ async def _ready_context(
     return None
 
 
-async def _ready(
+async def ready_user(
     query: CallbackQuery,
     bot: Bot,
     session: AsyncSession,
@@ -225,14 +255,25 @@ async def _ready(
     return None
 
 
-async def _card_safety(session: AsyncSession, user_id: int, other: Profile) -> InlineKeyboardMarkup:
-    """Block (or Unblock) and Report on another user's card: for the latest chat the two
-    shared, or for the profile if they never chatted (D-054)."""
+async def _like_row(
+    session: AsyncSession, user_id: int, other: Profile
+) -> list[InlineKeyboardButton]:
+    return like_row(other.public_id, await likes.is_liked(session, user_id, other.user_id))
+
+
+async def _card_buttons(
+    session: AsyncSession, user_id: int, other: Profile
+) -> InlineKeyboardMarkup:
+    """Like (or Unlike), then Block (or Unblock) and Report on another user's card: for
+    the latest chat the two shared, or for the profile if they never chatted (D-054)."""
     blocked = await moderation.is_blocked(session, user_id, other.user_id)
     conversation_id = await visits.latest_conversation(session, user_id, other.user_id)
-    if conversation_id is None:
-        return profile_safety_keyboard(other.public_id, blocked)
-    return safety_keyboard(conversation_id, blocked)
+    safety = (
+        profile_safety_keyboard(other.public_id, blocked)
+        if conversation_id is None
+        else safety_keyboard(conversation_id, blocked)
+    )
+    return card_keyboard(await _like_row(session, user_id, other), safety)
 
 
 async def on_menu(
@@ -242,7 +283,7 @@ async def on_menu(
     state: FSMContext,
     settings: BotSettings,
 ) -> None:
-    if await _ready(query, bot, session, state, settings) is None:
+    if await ready_user(query, bot, session, state, settings) is None:
         return
     await query.answer()
     await bot.send_message(
@@ -252,6 +293,8 @@ async def on_menu(
             inline_keyboard=[
                 [_button(PAST_CHATS_BUTTON, PeopleAction(action="past"))],
                 [_button(VISITORS_BUTTON, PeopleAction(action="visitors"))],
+                [_button(LIKERS_BUTTON, PeopleAction(action="likers"))],
+                [_button(LIKING_BUTTON, PeopleAction(action="liking"))],
             ]
         ),
     )
@@ -266,7 +309,7 @@ async def on_past_chats(
     settings: BotSettings,
     runtime_settings: RuntimeSettings,
 ) -> None:
-    user_id = await _ready(query, bot, session, state, settings)
+    user_id = await ready_user(query, bot, session, state, settings)
     if user_id is None:
         return
     days = await runtime_settings.get(session, SettingKey.PAST_CHATS_DAYS)
@@ -295,7 +338,7 @@ async def on_open(
     runtime_settings: RuntimeSettings,
     avatars: Avatars,
 ) -> None:
-    user_id = await _ready(query, bot, session, state, settings)
+    user_id = await ready_user(query, bot, session, state, settings)
     if user_id is None:
         return
     days = await runtime_settings.get(session, SettingKey.PAST_CHATS_DAYS)
@@ -307,17 +350,13 @@ async def on_open(
         await query.answer(NOT_AVAILABLE)
         return
     blocked = await moderation.is_blocked(session, user_id, profile.user_id)
+    markup = card_keyboard(
+        await _like_row(session, user_id, profile), safety_keyboard(conversation_id, blocked)
+    )
     notice = await _visit(session, user_id, profile, _now())
     await session.commit()
     await query.answer()
-    await send_card(
-        bot,
-        avatars,
-        query.from_user.id,
-        profile,
-        PAST_CHAT_HEADER,
-        safety_keyboard(conversation_id, blocked),
-    )
+    await send_card(bot, avatars, query.from_user.id, profile, PAST_CHAT_HEADER, markup)
     if notice is not None:
         await notice.send(bot)
 
@@ -331,7 +370,7 @@ async def on_visitors(
     settings: BotSettings,
     runtime_settings: RuntimeSettings,
 ) -> None:
-    user_id = await _ready(query, bot, session, state, settings)
+    user_id = await ready_user(query, bot, session, state, settings)
     if user_id is None:
         return
     days = await runtime_settings.get(session, SettingKey.VISITS_DAYS)
@@ -360,7 +399,7 @@ async def on_visitor(
     runtime_settings: RuntimeSettings,
     avatars: Avatars,
 ) -> None:
-    user_id = await _ready(query, bot, session, state, settings)
+    user_id = await ready_user(query, bot, session, state, settings)
     if user_id is None:
         return
     days = await runtime_settings.get(session, SettingKey.VISITS_DAYS)
@@ -371,13 +410,166 @@ async def on_visitor(
         await session.commit()
         await query.answer(NOT_AVAILABLE)
         return
-    markup = await _card_safety(session, user_id, profile)
+    markup = await _card_buttons(session, user_id, profile)
     notice = await _visit(session, user_id, profile, now)
     await session.commit()
     await query.answer()
     await send_card(bot, avatars, query.from_user.id, profile, VISITOR_HEADER, markup)
     if notice is not None:
         await notice.send(bot)
+
+
+LikeList = Callable[[AsyncSession, int, int], Awaitable[likes.LikeEntries]]
+LikedProfile = Callable[[AsyncSession, int, int], Awaitable[Profile | None]]
+
+
+async def _show_likes(
+    query: CallbackQuery,
+    bot: Bot,
+    callback_data: PeopleAction,
+    session: AsyncSession,
+    state: FSMContext,
+    settings: BotSettings,
+    *,
+    fetch: LikeList,
+    header: str,
+    empty: str,
+    entry_action: str,
+) -> None:
+    """A page of Liked you or You liked."""
+    user_id = await ready_user(query, bot, session, state, settings)
+    if user_id is None:
+        return
+    page = max(callback_data.page, 0)
+    found = await fetch(session, user_id, page)
+    await session.commit()
+    await query.answer()
+    if not found.entries and page == 0:
+        await bot.send_message(query.from_user.id, empty)
+        return
+    await bot.send_message(
+        query.from_user.id,
+        header,
+        reply_markup=likes_keyboard(callback_data.action, entry_action, page, found, _now()),
+    )
+
+
+async def _open_like(
+    query: CallbackQuery,
+    bot: Bot,
+    callback_data: PeopleAction,
+    session: AsyncSession,
+    state: FSMContext,
+    settings: BotSettings,
+    avatars: Avatars,
+    *,
+    find: LikedProfile,
+    header: str,
+) -> None:
+    """The card of someone in Liked you or You liked, while the like stands. A visit."""
+    user_id = await ready_user(query, bot, session, state, settings)
+    if user_id is None:
+        return
+    profile = await find(session, user_id, callback_data.user)
+    if profile is None:
+        await session.commit()
+        await query.answer(NOT_AVAILABLE)
+        return
+    markup = await _card_buttons(session, user_id, profile)
+    notice = await _visit(session, user_id, profile, _now())
+    await session.commit()
+    await query.answer()
+    await send_card(bot, avatars, query.from_user.id, profile, header, markup)
+    if notice is not None:
+        await notice.send(bot)
+
+
+async def on_likers(
+    query: CallbackQuery,
+    bot: Bot,
+    callback_data: PeopleAction,
+    session: AsyncSession,
+    state: FSMContext,
+    settings: BotSettings,
+) -> None:
+    await _show_likes(
+        query,
+        bot,
+        callback_data,
+        session,
+        state,
+        settings,
+        fetch=likes.likers,
+        header=LIKERS_HEADER,
+        empty=NO_LIKERS,
+        entry_action="liker",
+    )
+
+
+async def on_liker(
+    query: CallbackQuery,
+    bot: Bot,
+    callback_data: PeopleAction,
+    session: AsyncSession,
+    state: FSMContext,
+    settings: BotSettings,
+    avatars: Avatars,
+) -> None:
+    await _open_like(
+        query,
+        bot,
+        callback_data,
+        session,
+        state,
+        settings,
+        avatars,
+        find=likes.liker_profile,
+        header=LIKER_HEADER,
+    )
+
+
+async def on_liking(
+    query: CallbackQuery,
+    bot: Bot,
+    callback_data: PeopleAction,
+    session: AsyncSession,
+    state: FSMContext,
+    settings: BotSettings,
+) -> None:
+    await _show_likes(
+        query,
+        bot,
+        callback_data,
+        session,
+        state,
+        settings,
+        fetch=likes.liked,
+        header=LIKING_HEADER,
+        empty=NO_LIKING,
+        entry_action="liked",
+    )
+
+
+async def on_liked(
+    query: CallbackQuery,
+    bot: Bot,
+    callback_data: PeopleAction,
+    session: AsyncSession,
+    state: FSMContext,
+    settings: BotSettings,
+    avatars: Avatars,
+) -> None:
+    await _open_like(
+        query,
+        bot,
+        callback_data,
+        session,
+        state,
+        settings,
+        avatars,
+        find=likes.liked_profile,
+        header=LIKED_HEADER,
+    )
 
 
 async def on_userid(
@@ -427,7 +619,7 @@ async def on_userid(
         logger.warning("RealChat ID lookups unavailable")
         await message.answer(LOOKUPS_UNAVAILABLE)
         return
-    markup = await _card_safety(session, ctx.user.id, profile)
+    markup = await _card_buttons(session, ctx.user.id, profile)
     notice = await _visit(session, ctx.user.id, profile, _now())
     await session.commit()
     await send_card(bot, avatars, message.chat.id, profile, ID_HEADER, markup)
@@ -446,4 +638,8 @@ def create_router() -> Router:
     router.callback_query.register(on_open, PeopleAction.filter(F.action == "open"))
     router.callback_query.register(on_visitors, PeopleAction.filter(F.action == "visitors"))
     router.callback_query.register(on_visitor, PeopleAction.filter(F.action == "visitor"))
+    router.callback_query.register(on_likers, PeopleAction.filter(F.action == "likers"))
+    router.callback_query.register(on_liker, PeopleAction.filter(F.action == "liker"))
+    router.callback_query.register(on_liking, PeopleAction.filter(F.action == "liking"))
+    router.callback_query.register(on_liked, PeopleAction.filter(F.action == "liked"))
     return router

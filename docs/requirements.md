@@ -318,6 +318,8 @@ Prevent repeated requests from creating duplicate likes or inflating visitor cou
 
 Every profile has a visible, random RealChat ID that opens it with `/userid` (approved, D-054). It never changes while the account exists and is replaced when the account is deleted. Wrong lookups are rate-limited so IDs cannot be found by guessing. People met by ID can block and report each other without a shared chat.
 
+Likes (approved, D-056): one per pair, kept until removed or an account is deleted, shown in Liked you and You liked. A new like notifies the liked user unless like alerts are off, at most once per pair within an admin-set gap. A user can't like someone they blocked. Likes and visits from a blocked user still notify (amends D-053).
+
 ## 14. Progressive Nearby Discovery
 
 Nearby discovery should expand geographically based on available eligible profiles. Do not impose one fixed radius as the only discovery method.

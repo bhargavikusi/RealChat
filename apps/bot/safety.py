@@ -37,6 +37,7 @@ from apps.bot.chat import tell_partner_ended
 from apps.bot.endings import (
     ProfileSafetyAction,
     SafetyAction,
+    is_like_row,
     menu_price,
     profile_safety_keyboard,
     safety_keyboard,
@@ -157,10 +158,15 @@ def _skip_keyboard(conversation_id: int, report_id: int) -> InlineKeyboardMarkup
 
 
 async def _set_buttons(bot: Bot, query: CallbackQuery, markup: InlineKeyboardMarkup | None) -> None:
-    """Replace the buttons on the message that was tapped. Best effort: Telegram may refuse,
-    e.g. when they are unchanged."""
+    """Replace the buttons on the message that was tapped, keeping a card's like row
+    (D-056) above new ones. Best effort: Telegram may refuse, e.g. when they are
+    unchanged."""
     if query.message is None:
         return
+    current = query.message.reply_markup if isinstance(query.message, Message) else None
+    if markup is not None and current is not None:
+        kept = [row for row in current.inline_keyboard if is_like_row(row)]
+        markup = InlineKeyboardMarkup(inline_keyboard=[*kept, *markup.inline_keyboard])
     try:
         await bot.edit_message_reply_markup(
             chat_id=query.message.chat.id,
