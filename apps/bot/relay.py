@@ -96,13 +96,19 @@ _REFUSED_TYPES = {
 }
 
 
+def message_kind(message: Message) -> str:
+    """What kind of message this is, as stored ("other" for anything unsupported)."""
+    return _KINDS.get(ContentType(message.content_type), "other")
+
+
 def _media_seconds(message: Message) -> int | None:
     """The length of a video, voice, or video message, for the view-once timer."""
     media = message.video or message.voice or message.video_note
     return None if media is None else media.duration
 
 
-def _file_id(message: Message) -> str | None:
+def file_id(message: Message) -> str | None:
+    """The file identifier of a message's media, if it has any."""
     if message.photo:
         return message.photo[-1].file_id
     media = (
@@ -144,7 +150,9 @@ def _text_refusal(text: str | None, entities: list[MessageEntity] | None) -> Blo
     return None if text is None else blocked_text(text)
 
 
-def _refusal(message: Message) -> Blocked | None:
+def content_refusal(message: Message) -> Blocked | None:
+    """Why a message breaks the chat rules (D-042), or None. Also used for direct
+    messages (D-057)."""
     refused = _REFUSED_TYPES.get(ContentType(message.content_type))
     if refused is not None:
         return refused
@@ -156,7 +164,9 @@ def _refusal(message: Message) -> Blocked | None:
     )
 
 
-def _unreachable(error: TelegramAPIError) -> bool:
+def unreachable(error: TelegramAPIError) -> bool:
+    """Whether an error means the recipient's chat is gone (they blocked the bot or their
+    account was deleted), not that the message was bad."""
     if isinstance(error, TelegramForbiddenError):
         return True
     return any(marker in error.message.casefold() for marker in _GONE)
@@ -199,9 +209,9 @@ class Outgoing:
 def _outgoing(message: Message) -> Outgoing:
     return Outgoing(
         message_id=message.message_id,
-        kind=_KINDS.get(ContentType(message.content_type), "other"),
+        kind=message_kind(message),
         text=message.text or message.caption,
-        file_id=_file_id(message),
+        file_id=file_id(message),
         media_seconds=_media_seconds(message),
         replied_message_id=(
             None if message.reply_to_message is None else message.reply_to_message.message_id
@@ -229,7 +239,7 @@ async def on_message(
         # Messages are stored, so the current terms (which say so) come first.
         await prompt_next(bot, message.chat.id, session, ctx, state, settings)
         return
-    refusal = _refusal(message)
+    refusal = content_refusal(message)
     if refusal is not None:
         await session.commit()
         await message.answer(BLOCKED[refusal])
@@ -330,7 +340,7 @@ async def relay(
             )
     except TelegramAPIError as error:
         await chat.discard_message(session, claim)
-        if _unreachable(error):
+        if unreachable(error):
             await _end_unreachable(sender_chat_id, bot, session, sender_id, active)
             return None
         await session.commit()

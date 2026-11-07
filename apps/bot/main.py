@@ -19,6 +19,7 @@ from apps.bot import (
     admin,
     chat,
     coins,
+    direct,
     errors,
     likes,
     menu,
@@ -111,6 +112,9 @@ def create_dispatcher(
         people.create_router(),
         # Like and Unlike on cards (D-056).
         likes.create_router(),
+        # Direct messages (D-057): before relay, which skips messages while a step
+        # (such as writing a direct message) is waiting for an answer.
+        direct.create_router(),
         # Relay right after the chat buttons: it only takes messages from users in a
         # chat with no other step waiting for an answer, and passes the rest on.
         relay.create_router(),

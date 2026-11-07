@@ -279,6 +279,8 @@ Requirements:
 
 Do not interpret a Telegram API response as proof that the recipient has read the message. Define delivery only in terms the platform can actually verify.
 
+Approved flow (D-057): ✉️ Message on any other user's card (not the current chat partner), a preview before Send, the price (1 coin, admin setting) held on Send and taken once Telegram accepts the recipient's notice, released if it fails. The content is stored for the chat retention period, so it opens on tap; the sender is told when it is opened. A paid message allows one free reply. No messages either way while either user has blocked the other. Polls and dice can't be sent.
+
 ## 12. Paid Chat Requests
 
 Support a chat-request feature costing **2 coins per request**.

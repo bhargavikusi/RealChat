@@ -39,6 +39,8 @@ MENU_BUTTONS = [
     "🧑 Other genders · 2 coins",
 ]
 PRIVATE_CHAT_KEYS = [[PARTNER_PROFILE, PRIVATE_OFF], [END_CHAT]]
+# ✉️ Message on another user's card, at the default price (D-057).
+MESSAGE = "✉️ Message · 1 coin"
 
 
 class World:

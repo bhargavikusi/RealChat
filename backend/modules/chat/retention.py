@@ -1,4 +1,5 @@
-"""Deleting stored chat messages after the retention period (D-028, D-046).
+"""Deleting stored chat messages after the retention period (D-028, D-046), and direct
+messages after the same period (D-057).
 
 Runs in the worker. A stored message older than the retention period (admin setting,
 default 7 days) is deleted entirely: its text, edits, file identifier, and the record
@@ -24,6 +25,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from backend.modules.admin.settings import RuntimeSettings, SettingKey
 from backend.modules.chat.models import ChatMessage
+from backend.modules.direct_messages.service import delete_expired as delete_expired_direct
 from backend.modules.moderation.models import Report
 
 logger = logging.getLogger(__name__)
@@ -80,7 +82,8 @@ class ChatRetention:
         return deleted
 
     async def run(self, now: datetime, *, renew_lease: bool = False) -> int:
-        """Delete every expired message, batch by batch; returns how many were deleted.
+        """Delete every expired message, batch by batch; returns how many were deleted
+        (chat messages and direct messages together).
 
         With `renew_lease`, the run key's hour is renewed after every batch, so it does
         not lapse while a long run is still going.
@@ -101,5 +104,21 @@ class ChatRetention:
                 await self._redis.set(
                     RUN_KEY, now.isoformat(), ex=int(RETRY_INTERVAL.total_seconds())
                 )
-        logger.info("deleted expired chat messages", extra={"count": total})
-        return total
+        # Direct messages follow the same retention period (D-057).
+        direct = 0
+        while True:
+            async with self._sessions() as session:
+                deleted = await delete_expired_direct(session, cutoff, BATCH_SIZE)
+                await session.commit()
+            direct += deleted
+            if deleted < BATCH_SIZE:
+                break
+            if renew_lease:
+                await self._redis.set(
+                    RUN_KEY, now.isoformat(), ex=int(RETRY_INTERVAL.total_seconds())
+                )
+        logger.info(
+            "deleted expired chat messages",
+            extra={"count": total, "direct_messages": direct},
+        )
+        return total + direct

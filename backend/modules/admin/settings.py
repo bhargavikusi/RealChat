@@ -40,6 +40,7 @@ class SettingKey(StrEnum):
     VISITS_DAYS = "visits_days"
     USERID_MISSES_PER_HOUR = "userid_misses_per_hour"
     LIKE_NOTICE_GAP_HOURS = "like_notice_gap_hours"
+    DIRECT_MESSAGE_COINS = "direct_message_coins"
 
 
 @dataclass(frozen=True)
@@ -217,6 +218,14 @@ SPECS: dict[SettingKey, SettingSpec] = {
             default=1,
             minimum=1,
             maximum=720,
+        ),
+        SettingSpec(
+            SettingKey.DIRECT_MESSAGE_COINS,
+            "Price of a direct message",
+            "coins",
+            default=1,
+            minimum=1,
+            maximum=100,
         ),
     )
 }

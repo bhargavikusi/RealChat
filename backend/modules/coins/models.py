@@ -3,8 +3,8 @@
 Every change to a user's coins is a row in `coin_transactions`, which is append-only:
 database triggers reject updates, deletes, and truncation, and corrections are new,
 compensating entries. A balance is the sum of a user's entries. Coins set aside for a
-search are a `coin_holds` row; capturing a hold adds the spending entry, releasing it
-adds nothing. Both are kept when an account is deleted (D-050).
+search or a direct message are a `coin_holds` row; capturing a hold adds the spending
+entry, releasing it adds nothing. Both are kept when an account is deleted (D-050).
 """
 
 from datetime import datetime
@@ -36,13 +36,16 @@ TRANSACTION_KINDS = (
     "admin_correction",
     # Coins removed because the account was deleted (D-055).
     "account_deleted",
+    # A delivered direct message (D-057).
+    "direct_message",
 )
 # Kinds that add coins, and kinds that remove them; the database checks the sign.
 CREDIT_KINDS = ("welcome_bonus", "referral_reward", "daily_reward", "admin_grant")
-DEBIT_KINDS = ("paid_match", "admin_correction", "account_deleted")
+DEBIT_KINDS = ("paid_match", "admin_correction", "account_deleted", "direct_message")
 # Admin entries must say why.
 ADMIN_KINDS = ("admin_grant", "admin_correction")
-HOLD_PURPOSES = ("paid_match",)
+# Each is also the ledger kind of the entry that captures the hold.
+HOLD_PURPOSES = ("paid_match", "direct_message")
 HOLD_STATUSES = ("held", "captured", "released")
 
 
@@ -82,7 +85,10 @@ class CoinTransaction(Base):
             f"(kind IN ({', '.join(repr(k) for k in CREDIT_KINDS)})) = (amount > 0)",
             name="sign",
         ),
-        CheckConstraint("hold_id IS NULL OR kind = 'paid_match'", name="hold_kind"),
+        CheckConstraint(
+            f"hold_id IS NULL OR kind IN ({', '.join(repr(p) for p in HOLD_PURPOSES)})",
+            name="hold_kind",
+        ),
         CheckConstraint(
             f"kind NOT IN ({', '.join(repr(k) for k in ADMIN_KINDS)}) OR note IS NOT NULL",
             name="admin_note",

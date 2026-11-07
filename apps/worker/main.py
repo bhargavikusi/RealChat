@@ -31,6 +31,7 @@ from backend.modules.admin.settings import RuntimeSettings
 from backend.modules.chat.idle import IdleChats
 from backend.modules.chat.private import PrivateModeJob
 from backend.modules.chat.retention import ChatRetention
+from backend.modules.direct_messages.service import PendingSweep
 from backend.modules.matching.matcher import Matcher
 from backend.modules.people.visits import VisitRetention
 from backend.modules.users.terms import TERMS_VERSION
@@ -42,6 +43,8 @@ TICK_SECONDS = 1.0
 RETENTION_CHECK_SECONDS = 60.0
 DELETIONS_SECONDS = 1.0
 PRIVATE_MODE_SECONDS = 1.0
+# Direct messages left pending by an interrupted Send (D-057).
+PENDING_SWEEP_SECONDS = 60.0
 
 Job = Callable[[datetime], Awaitable[object]]
 
@@ -94,6 +97,7 @@ async def run() -> None:
     idle_chats = IdleChats(sessions, runtime_settings, notifier)
     retention = ChatRetention(redis, sessions, runtime_settings)
     visit_retention = VisitRetention(redis, sessions, runtime_settings)
+    pending_messages = PendingSweep(sessions)
     private_mode = PrivateModeJob(sessions, runtime_settings, PrivateModeNotifier(bot, sessions))
     deletions = TelegramDeletions(bot, sessions)
     stop = asyncio.Event()
@@ -112,6 +116,7 @@ async def run() -> None:
                 ("private mode deletions", deletions.tick, DELETIONS_SECONDS),
                 ("chat retention", retention.tick, RETENTION_CHECK_SECONDS),
                 ("visit retention", visit_retention.tick, RETENTION_CHECK_SECONDS),
+                ("pending direct messages", pending_messages.tick, PENDING_SWEEP_SECONDS),
             ),
             stop,
         )

@@ -94,6 +94,28 @@ The latest time one user opened another's profile card (D-053). One row per pair
 
 A check constraint rejects self-visits. The index on `(visited_user_id, last_visited_at)` serves Visited you, and the one on `last_visited_at` the retention job, which deletes visits older than the admin setting `visits_days` (default 30) once a day in batches. Account deletion removes the user's rows on both sides.
 
+### `direct_messages`
+
+Direct messages and their free replies (D-057). The content is kept so the recipient can open it whatever the sender does with their copy.
+
+| Column | Type | Notes |
+|---|---|---|
+| `id` | bigint identity | |
+| `sender_user_id`, `recipient_user_id` | bigint | Reference `users.id`, with `ON DELETE CASCADE`; never the same (constraint). |
+| `reply_to_id` | bigint, nullable | The paid message this is the free reply to. References `direct_messages.id`, with `ON DELETE SET NULL`. A partial unique index allows one reply per message. |
+| `idempotency_key` | varchar(128), unique | `<sender id>:<draft>`: one message per Send, so a repeated or retried Send finds the same row. |
+| `kind` | varchar(16) | `text`, `photo`, `video`, `animation`, `audio`, `voice`, `video_note`, `sticker`, or `document`. |
+| `text` | text, nullable | The text or caption. |
+| `entities` | jsonb, nullable | Its formatting, as Telegram message entities. |
+| `file_id` | varchar(256), nullable | The Telegram file identifier of the media; the bot never downloads it. |
+| `price` | integer | Coins it costs; 0 for a free reply. Only free replies have `reply_to_id` (constraint). |
+| `hold_id` | bigint, nullable | References `coin_holds.id`: set exactly when `price` is above 0 (constraint). |
+| `status` | varchar(16) | `pending` (held, notice on its way), `delivered` (notice accepted, coin taken), `failed` (hold released), or `viewed` (opened). |
+| `failure_reason` | varchar(16), nullable | `unreachable`, `error`, or `interrupted`; set exactly when `failed` (constraint). |
+| `created_at`, `delivered_at`, `viewed_at` | timestamptz | |
+
+Each status change is a conditional update from the expected status, so it happens once even when tried twice at the same moment. Sending locks both account rows `FOR KEY SHARE` first, as a visit does, so it never overlaps an account deletion. A partial index on `created_at` for `pending` rows serves the worker's sweep, which fails messages still pending after five minutes and releases their holds. The index on `created_at` serves the retention cleanup, which deletes messages older than the chat retention period (`chat_retention_days`) in the same daily run as chat messages; the ledger keeps the charge. Account deletion removes the user's rows on both sides; their held coins are released with the rest.
+
 ### `profile_likes`
 
 One user's like of another's profile (D-056). One row per pair, so a like is never counted twice. Unliking clears `liked_at` but keeps the row, so `notified_at` still spaces out like notices when the user likes again.
@@ -249,10 +271,10 @@ The coin ledger (D-050). Every change to a user's coins is one row; a balance is
 |---|---|---|
 | `id` | bigint identity | |
 | `user_id` | bigint | References `users.id`. |
-| `amount` | integer | Positive adds coins, negative removes them; never 0. A constraint ties the sign to the kind: rewards and admin grants add, paid matches, admin corrections, and deletion forfeits remove. |
-| `kind` | varchar(32) | `welcome_bonus`, `referral_reward`, `daily_reward`, `paid_match`, `admin_grant`, `admin_correction`, or `account_deleted` (the balance forfeited when the account is deleted, D-055). |
+| `amount` | integer | Positive adds coins, negative removes them; never 0. A constraint ties the sign to the kind: rewards and admin grants add, paid matches, direct messages, admin corrections, and deletion forfeits remove. |
+| `kind` | varchar(32) | `welcome_bonus`, `referral_reward`, `daily_reward`, `paid_match`, `admin_grant`, `admin_correction`, `account_deleted` (the balance forfeited when the account is deleted, D-055), or `direct_message` (a delivered direct message, D-057). |
 | `idempotency_key` | varchar(128), unique | One row per action: a retried or duplicated action records once. |
-| `hold_id` | bigint, nullable | References `coin_holds.id`: the hold this spending captured. Only `paid_match` rows may have one (constraint), and a partial unique index allows one row per hold. A trigger checks that the hold is captured, belongs to the same user, and that the amount is exactly minus the hold's amount. |
+| `hold_id` | bigint, nullable | References `coin_holds.id`: the hold this spending captured. Only rows whose kind is a hold purpose (`paid_match`, `direct_message`) may have one (constraint), and a partial unique index allows one row per hold. A trigger checks that the hold is captured, belongs to the same user, and that the amount is exactly minus the hold's amount. |
 | `note` | text, nullable | The reason for an admin grant or correction; required for those kinds (constraint). |
 | `created_at` | timestamptz | |
 
@@ -260,14 +282,14 @@ The index on `(user_id, id)` serves balances and history. A balance reads the le
 
 ### `coin_holds`
 
-Coins set aside for something that may still fail, such as a paid search (D-050).
+Coins set aside for something that may still fail: a paid search (D-050) or a direct message on its way (D-057).
 
 | Column | Type | Notes |
 |---|---|---|
 | `id` | bigint identity | |
 | `user_id` | bigint | References `users.id`. |
 | `amount` | integer | Positive. |
-| `purpose` | varchar(32) | `paid_match`: coins for a paid search, under the key `search:<user id>:<search token>`. |
+| `purpose` | varchar(32) | `paid_match`: coins for a paid search, under the key `search:<user id>:<search token>`. `direct_message`: the price of a direct message, under the key `dm:<user id>:<draft>`, captured once its notice is delivered and released if it fails. |
 | `idempotency_key` | varchar(128), unique | One hold per action. |
 | `status` | varchar(16) | `held` (default), `captured`, or `released`. |
 | `created_at`, `settled_at` | timestamptz | `settled_at` is set exactly when the status leaves `held` (constraint). |

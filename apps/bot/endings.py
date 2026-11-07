@@ -147,16 +147,50 @@ def like_row(public_id: str, liked: bool) -> list[InlineKeyboardButton]:
     ]
 
 
-def is_like_row(row: list[InlineKeyboardButton]) -> bool:
-    prefix = f"{LikeAction.__prefix__}{LikeAction.__separator__}"
+class DirectAction(CallbackData, prefix="dm"):
+    """Direct messages (D-057)."""
+
+    # "write" (from a card), "send" or "cancel" (a draft), "open" (a received message),
+    # or "reply" (its free reply)
+    action: str
+    profile: str = ""  # the RealChat ID a "write" button messages
+    draft: str = ""  # the draft a "send" or "cancel" button belongs to
+    message: int = 0  # the message an "open" or "reply" button belongs to
+
+
+MESSAGE_BUTTON = "✉️ Message · {price}"
+
+
+def message_row(public_id: str, price: int) -> list[InlineKeyboardButton]:
+    """✉️ Message on another user's card, under Like."""
+    return [
+        InlineKeyboardButton(
+            text=MESSAGE_BUTTON.format(price=coins_label(price)),
+            callback_data=DirectAction(action="write", profile=public_id).pack(),
+        )
+    ]
+
+
+def _has_prefix(row: list[InlineKeyboardButton], data: type[CallbackData]) -> bool:
+    prefix = f"{data.__prefix__}{data.__separator__}"
     return any((button.callback_data or "").startswith(prefix) for button in row)
 
 
+def is_like_row(row: list[InlineKeyboardButton]) -> bool:
+    return _has_prefix(row, LikeAction)
+
+
+def is_card_row(row: list[InlineKeyboardButton]) -> bool:
+    """A row a card has besides Block and Report: Like or Message."""
+    return _has_prefix(row, LikeAction) or _has_prefix(row, DirectAction)
+
+
 def card_keyboard(
-    like: list[InlineKeyboardButton], buttons: InlineKeyboardMarkup
+    rows: list[list[InlineKeyboardButton]], buttons: InlineKeyboardMarkup
 ) -> InlineKeyboardMarkup:
-    """Another user's card: the like row, then `buttons` (Block and Report)."""
-    return InlineKeyboardMarkup(inline_keyboard=[like, *buttons.inline_keyboard])
+    """Another user's card: `rows` (Like, and Message where offered), then `buttons`
+    (Block and Report)."""
+    return InlineKeyboardMarkup(inline_keyboard=[*rows, *buttons.inline_keyboard])
 
 
 def new_chat_menu(price: int) -> InlineKeyboardMarkup:
