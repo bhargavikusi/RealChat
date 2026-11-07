@@ -144,7 +144,7 @@ async def test_accepting_terms_reactivates_only_a_deleted_account(
 async def _open_delete_confirmation(chat: Chat) -> None:
     await chat.send("/profile")
     assert await chat.press(ac.ADVANCED_SETTINGS) == ac.ADVANCED_SETTINGS_TEXT
-    assert await chat.press(ac.DELETE_BUTTON) == ac.DELETE_CONFIRM
+    assert await chat.press(ac.DELETE_BUTTON) == ac.DELETE_CONFIRM.format(coins="10 coins")
 
 
 async def test_delete_account_from_the_profile_and_start_again(
@@ -241,7 +241,7 @@ async def test_restricted_users_are_stopped_but_keep_help_and_deletion(
 
     # The notice offers deletion, which erases the profile but keeps the restriction.
     await chat.send("/profile")
-    assert await chat.press(ac.DELETE_BUTTON) == ac.DELETE_CONFIRM
+    assert await chat.press(ac.DELETE_BUTTON) == ac.DELETE_CONFIRM.format(coins="10 coins")
     assert await chat.press(ac.CONFIRM_BUTTON) == ac.DELETED_RESTRICTED
     assert (await load_profile(session_factory)).nickname is None
     assert (await _user(session_factory)).status == status

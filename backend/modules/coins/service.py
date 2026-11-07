@@ -75,6 +75,7 @@ async def _record(
     *,
     hold_id: int | None = None,
     note: str | None = None,
+    created_at: datetime | None = None,
 ) -> bool:
     """Add a ledger entry unless one with `key` exists; returns whether it was added."""
     if kind not in TRANSACTION_KINDS:
@@ -90,6 +91,7 @@ async def _record(
             idempotency_key=key,
             hold_id=hold_id,
             note=note,
+            **({} if created_at is None else {"created_at": created_at}),
         )
         .on_conflict_do_nothing(index_elements=["idempotency_key"])
         .returning(CoinTransaction.id)
@@ -134,6 +136,29 @@ async def debit(
     if available < amount:
         raise InsufficientCoinsError(available, amount)
     return await _record(session, user_id, -amount, kind, key, note=note)
+
+
+async def forfeit_all(session: AsyncSession, user_id: int, now: datetime) -> int:
+    """Remove all of a deleted account's coins (D-055); returns how many were removed.
+
+    Coins on hold are released first, then the whole balance is removed by one
+    `account_deleted` entry dated `now`, the deletion time, keyed to it so the same
+    deletion never records twice. Nothing is recorded for a balance of zero. The
+    user's row is locked as for spending, so a spend, hold, or claim either finishes
+    first (and is forfeited too) or waits until the deletion has committed.
+    """
+    await _lock_user(session, user_id)
+    await session.execute(
+        update(CoinHold)
+        .where(CoinHold.user_id == user_id, CoinHold.status == "held")
+        .values(status="released", settled_at=now)
+    )
+    total = (await balance(session, user_id)).total
+    if total <= 0:
+        return 0
+    key = f"deleted:{user_id}:{now.isoformat()}"
+    added = await _record(session, user_id, -total, "account_deleted", key, created_at=now)
+    return total if added else 0
 
 
 @dataclass(frozen=True)
@@ -272,21 +297,27 @@ class Entry:
     created_at: datetime
 
 
-async def summary(session: AsyncSession, user_id: int, limit: int) -> tuple[Balance, list[Entry]]:
+async def summary(
+    session: AsyncSession, user_id: int, limit: int, since: datetime | None = None
+) -> tuple[Balance, list[Entry]]:
     """The balance and recent history from one consistent snapshot, so they agree.
 
     Call at the start of a transaction: it runs at REPEATABLE READ.
     """
     await session.connection(execution_options={"isolation_level": "REPEATABLE READ"})
-    return await balance(session, user_id), await history(session, user_id, limit)
+    return await balance(session, user_id), await history(session, user_id, limit, since)
 
 
-async def history(session: AsyncSession, user_id: int, limit: int) -> list[Entry]:
-    """The user's most recent ledger entries, newest first."""
-    rows = await session.execute(
-        select(CoinTransaction.amount, CoinTransaction.kind, CoinTransaction.created_at)
-        .where(CoinTransaction.user_id == user_id)
-        .order_by(CoinTransaction.id.desc())
-        .limit(limit)
+async def history(
+    session: AsyncSession, user_id: int, limit: int, since: datetime | None = None
+) -> list[Entry]:
+    """The user's most recent ledger entries, newest first; with `since`, only those
+    after it (the latest account deletion, so a returning user sees a fresh history,
+    D-055). Older entries stay in the ledger."""
+    query = select(CoinTransaction.amount, CoinTransaction.kind, CoinTransaction.created_at).where(
+        CoinTransaction.user_id == user_id
     )
+    if since is not None:
+        query = query.where(CoinTransaction.created_at > since)
+    rows = await session.execute(query.order_by(CoinTransaction.id.desc()).limit(limit))
     return [Entry(int(amount), kind, created_at) for amount, kind, created_at in rows]

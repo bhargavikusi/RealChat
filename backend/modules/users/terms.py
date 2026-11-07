@@ -8,7 +8,7 @@ message retention, are not given as numbers, so the text stays true when they ch
 (D-046).
 """
 
-TERMS_VERSION = "draft-12"
+TERMS_VERSION = "draft-13"
 
 TERMS_TEXT = """\
 DRAFT - not for launch
@@ -43,9 +43,11 @@ matched again in a random chat.
 for money or transferred to other users.
 • Accounts that break these rules may be restricted or banned.
 • You can delete your account at any time from your profile (Advanced settings). \
-Your profile is erased immediately. A minimal record (your Telegram user ID, account \
-status, and dates) is kept so that restrictions can't be avoided by signing up again. \
-Blocks and reports you made or received are kept too."""
+Your profile is erased immediately, and so are your coins and your invite link; a \
+new account doesn't get one-time rewards, like the welcome bonus, again. A minimal \
+record (your Telegram user ID, account status, and dates) is kept so that \
+restrictions can't be avoided by signing up again. Blocks and reports you made or \
+received are kept too."""
 
 TERMS_QUESTION = "Do you agree to these terms and the privacy notice?"
 

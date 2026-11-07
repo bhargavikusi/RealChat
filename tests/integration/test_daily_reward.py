@@ -6,7 +6,7 @@ from datetime import UTC, datetime, timedelta
 import pytest
 from aiogram.methods import EditMessageReplyMarkup
 from redis.asyncio import Redis
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from apps.bot import coins as bot_coins
@@ -17,6 +17,7 @@ from backend.modules.coins import rewards
 from backend.modules.coins import service as coins
 from backend.modules.coins.models import CoinTransaction
 from backend.modules.users import service as users
+from backend.modules.users.models import Profile
 from tests.support.chat import USER_ID, Chat, complete_onboarding
 
 Sessions = async_sessionmaker[AsyncSession]
@@ -98,8 +99,21 @@ async def test_users_who_have_not_finished_signing_up_cannot_claim(
 
 
 async def _user_id(sessions: Sessions) -> int:
+    """An onboarded user: only active, onboarded accounts can claim (D-055)."""
     async with sessions() as session:
         user = await users.get_or_create_user(session, USER_ID)
+        await session.execute(
+            update(Profile)
+            .where(Profile.user_id == user.id)
+            .values(
+                nickname="Night Owl",
+                age_at_entry=24,
+                age_entered_on=NOW.date(),
+                gender="female",
+                country_code="IN",
+                onboarding_completed_at=NOW,
+            )
+        )
         await session.commit()
         return user.id
 

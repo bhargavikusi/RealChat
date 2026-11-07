@@ -235,14 +235,14 @@ The coin ledger (D-050). Every change to a user's coins is one row; a balance is
 |---|---|---|
 | `id` | bigint identity | |
 | `user_id` | bigint | References `users.id`. |
-| `amount` | integer | Positive adds coins, negative removes them; never 0. A constraint ties the sign to the kind: rewards and admin grants add, paid matches and admin corrections remove. |
-| `kind` | varchar(32) | `welcome_bonus`, `referral_reward`, `daily_reward`, `paid_match`, `admin_grant`, or `admin_correction`. |
+| `amount` | integer | Positive adds coins, negative removes them; never 0. A constraint ties the sign to the kind: rewards and admin grants add, paid matches, admin corrections, and deletion forfeits remove. |
+| `kind` | varchar(32) | `welcome_bonus`, `referral_reward`, `daily_reward`, `paid_match`, `admin_grant`, `admin_correction`, or `account_deleted` (the balance forfeited when the account is deleted, D-055). |
 | `idempotency_key` | varchar(128), unique | One row per action: a retried or duplicated action records once. |
 | `hold_id` | bigint, nullable | References `coin_holds.id`: the hold this spending captured. Only `paid_match` rows may have one (constraint), and a partial unique index allows one row per hold. A trigger checks that the hold is captured, belongs to the same user, and that the amount is exactly minus the hold's amount. |
 | `note` | text, nullable | The reason for an admin grant or correction; required for those kinds (constraint). |
 | `created_at` | timestamptz | |
 
-The index on `(user_id, id)` serves balances and history. A balance reads the ledger total and the held coins in one statement, so both come from the same snapshot. Spending and holding lock the user's `users` row (`FOR NO KEY UPDATE`) while available coins are counted, so simultaneous spends cannot overdraw; adding coins needs no lock. `/coins` reads the balance and history at `REPEATABLE READ`, so they agree. Admin adjustments can carry an operator key (`--key`, 1 to 122 characters), so a rerun records once; reusing a key for a different account, amount, or reason is refused.
+The index on `(user_id, id)` serves balances and history. A balance reads the ledger total and the held coins in one statement, so both come from the same snapshot. Spending and holding lock the user's `users` row (`FOR NO KEY UPDATE`) while available coins are counted, so simultaneous spends cannot overdraw. The daily reward locks it too and is only granted to an active, onboarded account; other credits need no lock. Account deletion (D-055) locks the row for update, releases the account's held coins, and removes the whole balance with one `account_deleted` row keyed `deleted:<user id>:<deletion time>` and dated the deletion time; nothing is recorded for a zero balance. For a returning user, `/coins` lists only rows dated after the latest deletion; older rows stay. `/coins` reads the balance and history at `REPEATABLE READ`, so they agree. Admin adjustments can carry an operator key (`--key`, 1 to 122 characters), so a rerun records once; reusing a key for a different account, amount, or reason is refused.
 
 ### `coin_holds`
 
@@ -262,7 +262,7 @@ Available coins are the balance minus the user's `held` holds (a partial index s
 
 ### `invite_codes`
 
-Each user's personal invite code, used in their invite link `https://t.me/<bot>?start=inv_<code>` (D-050). The primary key is `user_id` (references `users.id`); `code` is 8 random URL-safe characters, unique, and carries nothing about the user. Created the first time the user opens /coins.
+Each user's personal invite code, used in their invite link `https://t.me/<bot>?start=inv_<code>` (D-050). The primary key is `user_id` (references `users.id`); `code` is 8 random URL-safe characters, unique, and carries nothing about the user. Created the first time the user opens /coins. Account deletion deletes the row, so old links credit nobody and a returning user gets a new code (D-055).
 
 ### `referrals`
 
@@ -275,7 +275,7 @@ Who invited a user (D-050).
 | `status` | varchar(16) | `pending` until the invitee completes their profile, then `rewarded` or `not_rewarded` (daily cap reached, reward off, the inviter's account not active, or the invitee ever deleted an account). A trigger allows only that one change and rejects deletion, so the history the daily cap counts cannot be rewritten. |
 | `created_at`, `settled_at` | timestamptz | `settled_at` is set exactly when the status leaves `pending` (constraint). |
 
-A referral is recorded only for an invitee who has never completed a profile and never deleted an account, checked with the invitee's `users` row locked (`FOR NO KEY UPDATE`), which account deletion and profile completion also lock. On completion, the pending row is locked, and the inviter's `users` row is locked (`FOR NO KEY UPDATE`) while their rewards for the day are counted, so simultaneous completions cannot pass the cap. The welcome bonus and the invite reward are ledger entries keyed `welcome:<user id>` and `referral:<invitee id>`, so each is granted once. A daily reward is keyed `daily:<user id>:<UTC date>`, so it is claimed once per user per day, even with simultaneous taps.
+A referral is recorded only for an invitee who has never completed a profile and never deleted an account, checked with the invitee's `users` row locked (`FOR NO KEY UPDATE`), which account deletion and profile completion also lock. On completion, the inviter's `users` row is locked (`FOR NO KEY UPDATE`) while their rewards for the day are counted, so simultaneous completions cannot pass the cap, and then the pending row is locked and read again. Following an invite also key-share-locks the inviter's row and reads the code again under it. Account deletion settles the deleted user's pending invites as `not_rewarded` with their row locked, so neither path can record or reward an invite for a deleted account, and both take the user row before the referral row, so they cannot deadlock with it. The welcome bonus and the invite reward are ledger entries keyed `welcome:<user id>` and `referral:<invitee id>`, so each is granted once. A daily reward is keyed `daily:<user id>:<UTC date>`, so it is claimed once per user per day, even with simultaneous taps.
 
 ## Where rules are enforced
 
