@@ -52,6 +52,15 @@ CAROL_ID = 6464
 ALICE = "Night Owl"
 BOB = "Moon Child"
 GAP = timedelta(hours=1)
+# Midday today: likes, labels, and the notice gap all read this one time, so a test never
+# straddles midnight, and the date stays recent for checks that read the real clock.
+NOW = datetime.now(UTC).replace(hour=12, minute=0, second=0, microsecond=0)
+
+
+@pytest.fixture(autouse=True)
+def clock(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(pp, "_now", lambda: NOW)
+    monkeypatch.setattr(lk, "_now", lambda: NOW)
 
 
 @pytest.fixture
@@ -169,7 +178,7 @@ async def test_concurrent_likes_add_one_like_and_claim_one_notice(
     world: World, session_factory: Sessions
 ) -> None:
     alice, bob = await world.user_id(USER_ID), await world.user_id(BOB_ID)
-    now = datetime.now(UTC)
+    now = NOW
     async with session_factory() as first, session_factory() as second:
         one = await likes.like(first, alice, bob, now, GAP)
         # The second like waits on the first's row until it commits.
@@ -187,7 +196,7 @@ async def test_concurrent_relikes_claim_one_notice_after_the_gap(
     world: World, session_factory: Sessions
 ) -> None:
     alice, bob = await world.user_id(USER_ID), await world.user_id(BOB_ID)
-    now = datetime.now(UTC)
+    now = NOW
     async with session_factory() as session:
         await likes.like(session, alice, bob, now - 2 * GAP, GAP)
         await likes.unlike(session, alice, bob)
@@ -441,7 +450,7 @@ async def test_lists_are_latest_first_and_skip_unavailable_accounts(
         await world.user_id(BOB_ID),
         await world.user_id(CAROL_ID),
     )
-    now = datetime.now(UTC)
+    now = NOW
     async with session_factory() as session:
         await likes.like(session, carol_id, bob, now - timedelta(days=3), GAP)
         await likes.like(session, alice, bob, now - timedelta(days=1), GAP)
@@ -458,7 +467,7 @@ async def test_lists_are_latest_first_and_skip_unavailable_accounts(
 
 async def test_lists_come_in_pages(world: World, session_factory: Sessions) -> None:
     bob = await world.user_id(BOB_ID)
-    now = datetime.now(UTC)
+    now = NOW
     async with session_factory() as session:
         for n in range(PAGE_SIZE + 1):
             user = await users.get_or_create_user(session, 9000 + n)
@@ -482,7 +491,7 @@ async def test_deleting_an_account_erases_its_likes_both_ways(
     world: World, session_factory: Sessions
 ) -> None:
     alice, bob = await world.user_id(USER_ID), await world.user_id(BOB_ID)
-    now = datetime.now(UTC)
+    now = NOW
     async with session_factory() as session:
         await likes.like(session, alice, bob, now, GAP)
         await likes.like(session, bob, alice, now, GAP)
@@ -494,11 +503,28 @@ async def test_deleting_an_account_erases_its_likes_both_ways(
     assert await open_list(world.alice, pp.LIKERS_BUTTON) == pp.NO_LIKERS
 
 
+async def test_a_likers_card_waits_for_an_account_deletion_in_progress(
+    world: World, session_factory: Sessions
+) -> None:
+    alice, bob = await world.user_id(USER_ID), await world.user_id(BOB_ID)
+    async with session_factory() as session:
+        await likes.like(session, alice, bob, NOW, GAP)
+        await session.commit()
+    async with session_factory() as deleting, session_factory() as reading:
+        await users.delete_account(deleting, alice, NOW)
+        pending = asyncio.create_task(likes.liker_profile(reading, bob, alice))
+        await wait_until_blocked(session_factory)
+        await deleting.commit()
+        found = await pending
+        await reading.commit()
+    assert found is None
+
+
 async def test_a_like_waits_for_an_account_deletion_in_progress(
     world: World, session_factory: Sessions
 ) -> None:
     alice, bob = await world.user_id(USER_ID), await world.user_id(BOB_ID)
-    now = datetime.now(UTC)
+    now = NOW
     async with session_factory() as deleting, session_factory() as liking:
         await users.delete_account(deleting, bob, now)
         pending = asyncio.create_task(likes.like(liking, alice, bob, now, GAP))

@@ -23,8 +23,8 @@ you've chatted with can still see your profile card for a while after the chat. 
 Your profile card shows your RealChat ID, and anyone who has it can open your \
 profile card. A new ID is given if you delete your account and come back. \
 When you view someone's profile card, they can see that you visited, and they may be \
-told. When you like someone's profile, they can see that you liked it until you remove \
-the like, and they may be told.
+told. When you like someone's profile, they can see that you liked it while the like \
+stands, and they may be told.
 • Messages pass through the RealChat bot. They are not end-to-end encrypted. \
 Chat messages are stored so that reports of abuse can be checked. They are deleted \
 automatically after a set period, unless they are part of a report that is still open. \

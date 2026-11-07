@@ -208,6 +208,7 @@ async def _profile(
         await session.execute(
             query.add_columns(Profile)
             .where(other == other_id)
+            .with_for_update(read=True, of=User)
             .execution_options(populate_existing=True)
         )
     ).first()
@@ -216,8 +217,12 @@ async def _profile(
 
 async def liker_profile(session: AsyncSession, viewer_id: int, liker_id: int) -> Profile | None:
     """The profile of someone who currently likes the viewer; None otherwise, so an old
-    or forged button opens nobody. Read in the same statement as the check, as for
-    visits."""
+    or forged button opens nobody.
+
+    Read in the same statement as the check, with the account row share-locked until the
+    transaction ends, as for /userid: an account deletion either finishes first, and
+    nobody is found, or waits until the card has been read.
+    """
     return await _profile(session, _likers(viewer_id), ProfileLike.liker_user_id, liker_id)
 
 

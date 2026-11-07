@@ -45,6 +45,10 @@ LIKE_NOTICE = "❤️ {nickname} liked your profile."
 PARTNER_LIKE_NOTICE = "❤️ Your chat partner liked your profile."
 
 
+def _now() -> datetime:
+    return datetime.now(UTC)
+
+
 class LikeNotice:
     """A like notice to send once the transaction is committed."""
 
@@ -114,7 +118,7 @@ async def on_like(
     hours = await runtime_settings.get(session, SettingKey.LIKE_NOTICE_GAP_HOURS)
     alerts = (await users.notification_settings(session, other_id))[Notification.LIKE_ALERTS]
     liked = await likes.like(
-        session, user_id, other_id, datetime.now(UTC), timedelta(hours=hours), announce=alerts
+        session, user_id, other_id, _now(), timedelta(hours=hours), announce=alerts
     )
     if liked.outcome in (LikeOutcome.UNAVAILABLE, LikeOutcome.BLOCKED):
         await session.commit()

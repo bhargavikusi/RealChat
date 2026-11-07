@@ -559,7 +559,7 @@ Work happens on short-lived issue branches, such as `feature/12-onboarding`, cre
 * Visits are free.
 * The draft terms say that visiting a profile card can be seen and notified (terms version `draft-11`).
 
-**Why:** Owner decisions (requirements §13). One entry per visitor keeps the list readable and visit counts from being inflated. A notice on every visit can be repeated by reopening a card; the per-user flood limit caps the rate, and blocking or turning visit alerts off stops it.
+**Why:** Owner decisions (requirements §13). One entry per visitor keeps the list readable and visit counts from being inflated. A notice on every visit can be repeated by reopening a card; the per-user flood limit caps the rate, and turning visit alerts off stops it. (Blocking the visitor also stopped it until D-056, which announces visits from blocked users too.)
 
 ### D-054 — RealChat IDs and /userid
 
@@ -602,14 +602,14 @@ Work happens on short-lived issue branches, such as `feature/12-onboarding`, cre
 * A like needs both accounts active with a finished profile. A user can't like someone they blocked; the button stays on the card and the tap is refused with a hint to unblock. A like given before blocking stays and can still be removed.
 * Each pair has at most one like. Repeated or concurrent taps never add a second like or a second notice.
 * A new like tells the liked user ("‹nickname› liked your profile", with a button to the liker's card), unless they turned like alerts off (D-052). A like from the current chat partner says "Your chat partner liked your profile" instead, with no button, since the partner's card is on the chat keyboard.
-* At most one like notice per pair within a gap: an admin runtime setting, default 1 hour (1–720 hours), so unliking and liking again can't repeat the notice. A like made while like alerts were off doesn't count toward the gap.
+* At most one like notice per pair within a gap: an admin runtime setting, default 1 hour (1–720 hours). Unliking and liking again within the gap works, but sends no new notice. A like made while like alerts were off doesn't count toward the gap.
 * Blocks hide nobody, as for visits: blocked people stay in both lists, marked 🚫 for the blocker. A like from someone the liked user blocked still sends its notice, and so does a visit (amends D-053).
 * People gains ❤️ **Liked you** and 💘 **You liked**: current likes, latest first, in pages of 10, without counts. Only accounts that can still use RealChat are listed. Opening a card from them is a visit, with the usual notice (D-053), while the like stands.
 * A like lasts until it is removed or either account is deleted; it does not expire. Account deletion erases the likes the account made and received.
 * Likes and the lists are free.
 * The draft terms say that likes can be seen and notified, and that blocking doesn't stop visit and like notices (terms version `draft-14`).
 
-**Why:** Owner decisions (requirements §13). A like is a deliberate choice, so it lasts until removed; the gap only stops rapid unlike/like toggling. Notices from blocked people were an explicit owner choice; turning the alerts off still stops them.
+**Why:** Owner decisions (requirements §13). A like is a deliberate choice, so it lasts until removed. Unliking and liking again is still possible at any time; the gap only keeps it from repeating the notice. Notices from blocked people were an explicit owner choice; turning the alerts off still stops them.
 
 ## Open
 
