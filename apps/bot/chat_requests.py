@@ -485,14 +485,18 @@ async def _connect(
     other_id = parties.recipient_id if actor_is_sender else parties.sender_id
     if connected.outcome == ConnectOutcome.UNAVAILABLE:
         nickname = await _nickname(session, other_id)
-        # A sender who didn't make this tap learns that their (paid) request is over.
-        sender_chat = None if actor_is_sender else await _chat_id(session, parties.sender_id)
+        # Whoever didn't make this tap learns that the request is over: the sender, who
+        # paid for it, or the recipient, who was waiting for the sender to switch.
+        other_chat = await _chat_id(session, other_id)
         recipient_nickname = await _nickname(session, parties.recipient_id)
+        sender_nickname = await _nickname(session, parties.sender_id)
         await session.commit()
         await query.answer(UNAVAILABLE_NOW.format(nickname=nickname), show_alert=True)
         await _remove_buttons(bot, query)
-        if sender_chat is not None:
-            await _tell(bot, sender_chat, NOT_CONNECTED.format(nickname=recipient_nickname))
+        if actor_is_sender:
+            await _tell(bot, other_chat, LAPSED_NOTICE.format(nickname=sender_nickname))
+        else:
+            await _tell(bot, other_chat, NOT_CONNECTED.format(nickname=recipient_nickname))
         return
     people = {
         user_id: (await _chat_id(session, user_id), await users.get_profile(session, user_id))

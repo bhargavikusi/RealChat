@@ -786,3 +786,22 @@ async def test_one_failing_notice_does_not_stop_the_others(
     job = requests.RequestJobs(session_factory, RuntimeSettings(ttl_seconds=0), Flaky())
     assert await job.tick(datetime.now(UTC)) == 2
     assert len(told) == 2
+
+
+async def test_a_waiting_recipient_is_told_when_the_switch_cannot_connect(
+    world: World, session_factory: Sessions
+) -> None:
+    await request(world.alice, session_factory, BOB_ID)
+    accept = notice_button(world.alice, cr.ACCEPT_BUTTON)
+    await search(world.alice)
+    await world.bob.press_data(accept)
+    switch = world.bob.session.last_buttons()[cr.SWITCH_BUTTON]
+    async with session_factory() as session:
+        await session.execute(
+            update(User).where(User.telegram_user_id == BOB_ID).values(status="suspended")
+        )
+        await session.commit()
+    await world.alice.press_data(switch)
+    assert answer(world.alice) == cr.UNAVAILABLE_NOW.format(nickname=BOB)
+    assert await statuses(session_factory) == ["closed"]
+    assert text_of(last_to(world.alice.session, BOB_ID)) == cr.LAPSED_NOTICE.format(nickname=ALICE)
