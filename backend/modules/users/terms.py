@@ -34,8 +34,9 @@ see your nickname and RealChat ID with it, and you're told when they open it. Te
 apps that honour RealChat's protection don't let them forward or save it. Direct \
 messages are stored so they can be opened, and deleted automatically after the same \
 set period as chat messages.
-• Your chat partner can't forward or save what you send. Some Telegram apps also \
-block screenshots of it, but not all of them do.
+• Telegram apps that honour RealChat's protection don't let your chat partner forward \
+or save what you send. Some Telegram apps also block screenshots of it, but not all of \
+them do.
 • To keep chats anonymous, contact cards and locations can't be sent, and messages \
 or captions containing links, phone numbers, or @usernames are not delivered.
 • Be respectful. Harassment, threats, hate, sexual content involving minors, spam, \
