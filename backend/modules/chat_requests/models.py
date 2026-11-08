@@ -58,8 +58,15 @@ class ChatRequest(Base):
         ),
         CheckConstraint("(status = 'failed') = (failure_reason IS NOT NULL)", name="failed_pair"),
         CheckConstraint("price > 0", name="price"),
+        # Delivered from `delivered` on; `closed` may also be a request closed while its
+        # notice was still on its way (the sender connected through another request).
         CheckConstraint(
-            "(status IN ('pending', 'failed')) = (delivered_at IS NULL)", name="delivered_pair"
+            "status NOT IN ('pending', 'failed') OR delivered_at IS NULL", name="undelivered"
+        ),
+        CheckConstraint(
+            "status NOT IN ('delivered', 'accepted', 'connected', 'declined', 'expired', "
+            "'lapsed') OR delivered_at IS NOT NULL",
+            name="delivered",
         ),
         # Accepted while the sender was busy: the time to switch counts from then.
         CheckConstraint("status <> 'accepted' OR accepted_at IS NOT NULL", name="accepted_at"),

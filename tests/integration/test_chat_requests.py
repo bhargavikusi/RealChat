@@ -649,4 +649,140 @@ async def test_a_block_after_sending_stops_the_connection(
     await world.bob.press_data(accept)
     assert answer(world.bob) == cr.UNAVAILABLE_NOW.format(nickname=ALICE)
     assert await statuses(session_factory) == ["closed"]
+    # The sender, who paid for it, is told it's over.
+    assert text_of(last_to(world.bob.session, USER_ID)) == cr.NOT_CONNECTED.format(nickname=BOB)
     assert await open_partner(session_factory, BOB_ID) is None
+
+
+# --- Review follow-ups ---------------------------------------------------------------------
+
+
+async def test_concurrent_sends_of_one_draft_keep_its_hold(
+    world: World, session_factory: Sessions
+) -> None:
+    alice, bob = await user_id(session_factory, USER_ID), await user_id(session_factory, BOB_ID)
+    now = datetime.now(UTC)
+    since = now - timedelta(minutes=10)
+    async with session_factory() as first, session_factory() as second:
+        one = await requests.send(first, alice, bob, "k", 2, since, now, sender_searching=False)
+        other = asyncio.create_task(
+            requests.send(second, alice, bob, "k", 2, since, now, sender_searching=False)
+        )
+        await wait_until_blocked(session_factory)
+        await first.commit()
+        two = await other
+        await second.commit()
+    # The account lock serializes the two: the second sees the first request waiting,
+    # takes no hold of its own, and leaves the first one's hold alone.
+    assert two.request_id is None and two.refusal == requests.Refusal.WAITING
+    assert await hold_statuses(session_factory) == ["held"]
+    assert one.request_id is not None
+    async with session_factory() as session:
+        assert await requests.delivered(session, one.request_id, now)
+        await session.commit()
+    assert await charges(session_factory) == 1
+
+
+async def test_connecting_closes_a_request_still_being_sent_without_a_charge(
+    world: World, session_factory: Sessions, carol: Chat
+) -> None:
+    await request(world.alice, session_factory, BOB_ID)
+    accept = notice_button(world.alice, cr.ACCEPT_BUTTON)
+    alice, carol_id = (
+        await user_id(session_factory, USER_ID),
+        await user_id(session_factory, CAROL_ID),
+    )
+    now = datetime.now(UTC)
+    async with session_factory() as session:
+        in_flight = await requests.send(
+            session,
+            alice,
+            carol_id,
+            "k",
+            2,
+            now - timedelta(minutes=10),
+            now,
+            sender_searching=False,
+        )
+        await session.commit()
+    assert in_flight.request_id is not None
+    await world.bob.press_data(accept)
+    assert await statuses(session_factory) == ["connected", "closed"]
+    assert await hold_statuses(session_factory) == ["captured", "released"]
+    async with session_factory() as session:
+        assert not await requests.delivered(session, in_flight.request_id, now)
+        await session.commit()
+    assert await charges(session_factory) == 1
+
+
+async def test_a_recipient_waiting_for_a_switch_is_told_when_the_sender_goes_elsewhere(
+    world: World, session_factory: Sessions, carol: Chat
+) -> None:
+    await request(world.alice, session_factory, BOB_ID)
+    bob_accept = notice_button(world.alice, cr.ACCEPT_BUTTON)
+    await carol.send("/profile")  # active
+    await request(world.alice, session_factory, CAROL_ID)
+    carol_accept = notice_button(world.alice, cr.ACCEPT_BUTTON)
+    await search(world.alice)
+    await world.bob.press_data(bob_accept)
+    await carol.press_data(carol_accept)
+    assert await statuses(session_factory) == ["accepted", "accepted"]
+    await world.alice.press_data(carol.session.last_buttons()[cr.SWITCH_BUTTON])
+    assert await statuses(session_factory) == ["closed", "connected"]
+    assert text_of(last_to(world.alice.session, BOB_ID)) == cr.LAPSED_NOTICE.format(nickname=ALICE)
+
+
+async def test_the_sender_is_told_when_an_interrupted_send_fails(
+    world: World, session_factory: Sessions
+) -> None:
+    alice, bob = await user_id(session_factory, USER_ID), await user_id(session_factory, BOB_ID)
+    now = datetime.now(UTC)
+    async with session_factory() as session:
+        await requests.send(
+            session, alice, bob, "k", 2, now - timedelta(minutes=10), now, sender_searching=False
+        )
+        await session.commit()
+    await jobs(session_factory, world.bob).tick(now + requests.STALE_AFTER + timedelta(seconds=5))
+    assert text_of(last_to(world.bob.session, USER_ID)) == cr.NOT_DELIVERED.format(nickname=BOB)
+
+
+async def test_answers_during_delivery_can_be_repeated(
+    world: World, session_factory: Sessions
+) -> None:
+    alice, bob = await user_id(session_factory, USER_ID), await user_id(session_factory, BOB_ID)
+    now = datetime.now(UTC)
+    async with session_factory() as session:
+        sent = await requests.send(
+            session, alice, bob, "k", 2, now - timedelta(minutes=10), now, sender_searching=False
+        )
+        await session.commit()
+    assert sent.request_id is not None
+    for action in ("accept", "decline"):
+        await world.bob.press_data(RequestAction(action=action, request=sent.request_id).pack())
+        assert answer(world.bob) == cr.RETRY
+    assert await statuses(session_factory) == ["pending"]
+
+
+async def test_one_failing_notice_does_not_stop_the_others(
+    world: World, session_factory: Sessions, carol: Chat
+) -> None:
+    await request(world.alice, session_factory, BOB_ID)
+    await carol.send("/profile")  # active
+    await request(world.alice, session_factory, CAROL_ID)
+    await move_back(session_factory, "delivered_at", timedelta(minutes=61))
+    told: list[int] = []
+
+    class Flaky:
+        async def failed(self, parties: requests.Parties) -> None: ...
+
+        async def lapsed(self, parties: requests.Parties) -> None: ...
+
+        async def expired(self, parties: requests.Parties) -> None:
+            if not told:
+                told.append(0)
+                raise RuntimeError("database hiccup")
+            told.append(parties.recipient_id)
+
+    job = requests.RequestJobs(session_factory, RuntimeSettings(ttl_seconds=0), Flaky())
+    assert await job.tick(datetime.now(UTC)) == 2
+    assert len(told) == 2

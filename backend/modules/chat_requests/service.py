@@ -31,6 +31,7 @@ from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from backend.core.logging import exception_summary
 from backend.modules.admin.settings import RuntimeSettings, SettingKey
 from backend.modules.chat import service as chat
 from backend.modules.chat_requests.models import WAITING_STATUSES, ChatRequest
@@ -86,10 +87,16 @@ class Connected:
     conversation_id: int | None = None
     # Chats that were ended to connect, as (user who left, the chat they left).
     ended: list[tuple[int, chat.ActiveChat]] = field(default_factory=list)
+    # The sender's other requests that were closed while their recipient waited for the
+    # sender to switch: those recipients are told.
+    closed_waiting: list[Parties] = field(default_factory=list)
+    # On UNAVAILABLE: the request that was closed, so its sender can be told.
+    closed: Parties | None = None
 
 
 async def _lock_ready(session: AsyncSession, first: int, second: int) -> bool:
-    """Lock both accounts FOR KEY SHARE, in id order, and check both can use RealChat.
+    """Lock both accounts (FOR NO KEY UPDATE, in id order, until the transaction ends)
+    and check both can use RealChat. A second request from the same sender waits here.
     Account deletion locks the account FOR UPDATE, so the two never overlap."""
     ready = await session.scalars(
         select(User.id)
@@ -194,11 +201,16 @@ async def send(
         .returning(ChatRequest.id)
     )
     if request_id is None:
-        await coins.release(session, hold_id, now)
         same = await session.scalar(
             select(ChatRequest.id).where(ChatRequest.idempotency_key == key)
         )
-        return Sent(int(same), already=True) if same is not None else Sent(None, Refusal.WAITING)
+        if same is not None:
+            # The same Send, recorded meanwhile: `hold` returned that Send's own hold,
+            # which must stay held.
+            return Sent(int(same), already=True)
+        # Another request to the same person: this Send's new hold goes back.
+        await coins.release(session, hold_id, now)
+        return Sent(None, Refusal.WAITING)
     return Sent(int(request_id))
 
 
@@ -211,7 +223,7 @@ async def sent_under(session: AsyncSession, key: str) -> bool:
 async def delivered(session: AsyncSession, request_id: int, now: datetime) -> bool:
     """The notice was delivered: take the price. Returns whether this call did it.
 
-    The sender's account is locked FOR KEY SHARE before the request, the order account
+    The sender's account is locked (FOR NO KEY UPDATE) before the request, the order account
     deletion uses, so the two never deadlock.
     """
     sender_id = await session.scalar(
@@ -248,10 +260,11 @@ async def failed(session: AsyncSession, request_id: int, reason: str, now: datet
     return True
 
 
-async def fail_stale(session: AsyncSession, before: datetime, now: datetime) -> int:
-    """Fail requests still pending since before `before`, releasing their holds. A
-    safety net for a bot stopped between recording a request and settling it: the price
-    is not taken, even if the notice did reach the recipient."""
+async def fail_stale(session: AsyncSession, before: datetime, now: datetime) -> list[Parties]:
+    """Fail requests still pending since before `before`, releasing their holds, and
+    return them so their senders can be told. A safety net for a bot stopped between
+    recording a request and settling it: the price is not taken, even if the notice did
+    reach the recipient."""
     stale = (
         select(ChatRequest.id)
         .where(ChatRequest.status == "pending", ChatRequest.created_at < before)
@@ -259,19 +272,33 @@ async def fail_stale(session: AsyncSession, before: datetime, now: datetime) -> 
         .cte("stale")
         .prefix_with("MATERIALIZED")
     )
-    holds = (
-        await session.scalars(
+    rows = (
+        await session.execute(
             update(ChatRequest)
             .where(ChatRequest.status == "pending", ChatRequest.id.in_(select(stale.c.id)))
             .values(status="failed", failure_reason="interrupted", settled_at=now)
-            .returning(ChatRequest.hold_id)
+            .returning(
+                ChatRequest.hold_id,
+                ChatRequest.id,
+                ChatRequest.sender_user_id,
+                ChatRequest.recipient_user_id,
+            )
         )
     ).all()
-    for hold_id in holds:
+    for hold_id, *_ in rows:
         await coins.release(session, hold_id, now)
-    if holds:
-        logger.warning("failed chat requests left pending", extra={"count": len(holds)})
-    return len(holds)
+    if rows:
+        logger.warning("failed chat requests left pending", extra={"count": len(rows)})
+    return [Parties(int(a), int(b), int(c)) for _, a, b, c in rows]
+
+
+async def status_of(session: AsyncSession, request_id: int, recipient_id: int) -> str | None:
+    """The status of a request sent to `recipient_id`, if it exists."""
+    return await session.scalar(
+        select(ChatRequest.status).where(
+            ChatRequest.id == request_id, ChatRequest.recipient_user_id == recipient_id
+        )
+    )
 
 
 async def answerable(
@@ -465,12 +492,16 @@ async def connect(
             .where(ChatRequest.id == request_id)
             .values(status="closed", settled_at=now)
         )
-        return Connected(ConnectOutcome.UNAVAILABLE)
+        return Connected(
+            ConnectOutcome.UNAVAILABLE, closed=Parties(request_id, sender_id, recipient_id)
+        )
     together = await chat.active_chat(session, sender_id)
     if together is not None and together.partner_id == recipient_id:
         # Matched with each other meanwhile: that chat is the one they asked for.
-        await _mark_connected(session, request_id, sender_id, together.conversation_id, now)
-        return Connected(ConnectOutcome.CONNECTED, together.conversation_id)
+        closed = await _mark_connected(
+            session, request_id, sender_id, together.conversation_id, now
+        )
+        return Connected(ConnectOutcome.CONNECTED, together.conversation_id, closed_waiting=closed)
     ended: list[tuple[int, chat.ActiveChat]] = []
     for user_id in (recipient_id, sender_id):
         left = await chat.end_conversation(session, user_id, now)
@@ -481,34 +512,54 @@ async def connect(
             conversation_id = await chat.start_conversation(session, sender_id, recipient_id)
     except IntegrityError:
         return Connected(ConnectOutcome.RACED)
-    await _mark_connected(session, request_id, sender_id, conversation_id, now)
-    return Connected(ConnectOutcome.CONNECTED, conversation_id, ended)
+    closed = await _mark_connected(session, request_id, sender_id, conversation_id, now)
+    return Connected(ConnectOutcome.CONNECTED, conversation_id, ended, closed)
 
 
 async def _mark_connected(
     session: AsyncSession, request_id: int, sender_id: int, conversation_id: int, now: datetime
-) -> None:
+) -> list[Parties]:
+    """Mark the request connected and close the sender's other waiting requests; returns
+    those whose recipient was waiting for the sender to switch."""
     await session.execute(
         update(ChatRequest)
         .where(ChatRequest.id == request_id)
         .values(status="connected", conversation_id=conversation_id, settled_at=now)
     )
-    # The sender's other requests can't be taken up any more.
-    await session.execute(
+    # The sender's other requests can't be taken up any more. One still on its way is
+    # closed with its hold released, so it is never charged once delivered.
+    closed = await session.execute(
         update(ChatRequest)
         .where(
             ChatRequest.sender_user_id == sender_id,
             ChatRequest.id != request_id,
-            ChatRequest.status.in_(("delivered", "accepted")),
+            ChatRequest.status.in_(WAITING_STATUSES),
         )
         .values(status="closed", settled_at=now)
+        .returning(
+            ChatRequest.id,
+            ChatRequest.sender_user_id,
+            ChatRequest.recipient_user_id,
+            ChatRequest.hold_id,
+            ChatRequest.delivered_at,
+            ChatRequest.accepted_at,
+        )
     )
+    waiting = []
+    for other_id, sender, recipient, hold_id, delivered_at, accepted_at in closed:
+        if delivered_at is None:
+            await coins.release(session, hold_id, now)
+        elif accepted_at is not None:
+            waiting.append(Parties(int(other_id), int(sender), int(recipient)))
+    return waiting
 
 
 # --- Worker ----------------------------------------------------------------------------
 
 
 class RequestNotifier(Protocol):
+    async def failed(self, parties: Parties) -> None: ...
+
     async def expired(self, parties: Parties) -> None: ...
 
     async def lapsed(self, parties: Parties) -> None: ...
@@ -533,12 +584,19 @@ class RequestJobs:
         async with self._sessions() as session:
             expiry = await self._runtime.get(session, SettingKey.CHAT_REQUEST_EXPIRY_MINUTES)
             window = await self._runtime.get(session, SettingKey.CHAT_REQUEST_SWITCH_SECONDS)
-            failed_now = await fail_stale(session, now - STALE_AFTER, now)
+            failed = await fail_stale(session, now - STALE_AFTER, now)
             expired = await expire_due(session, now - timedelta(minutes=expiry), now)
             lapsed = await lapse_due(session, now - timedelta(seconds=window), now)
             await session.commit()
-        for parties in expired:
-            await self._notifier.expired(parties)
-        for parties in lapsed:
-            await self._notifier.lapsed(parties)
-        return failed_now + len(expired) + len(lapsed)
+        notices = (
+            [(self._notifier.failed, parties) for parties in failed]
+            + [(self._notifier.expired, parties) for parties in expired]
+            + [(self._notifier.lapsed, parties) for parties in lapsed]
+        )
+        for notify, parties in notices:
+            # One notice failing never keeps the others from being sent.
+            try:
+                await notify(parties)
+            except Exception as exc:
+                logger.warning("could not send a chat request notice", extra=exception_summary(exc))
+        return len(failed) + len(expired) + len(lapsed)

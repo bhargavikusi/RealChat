@@ -73,7 +73,11 @@ REQUEST_NOTICE = (
 ACCEPT_BUTTON = "✅ Accept"
 DECLINE_BUTTON = "Decline"
 SENT = "💬 Chat request sent to {nickname}. {price} used. You'll be told when they answer."
-SENT_FREE = "💬 Chat request sent to {nickname}. You'll be told when they answer."
+# Delivered, but settled meanwhile without a charge: closed because the sender connected
+# through another request, or failed by the worker's sweep.
+NOT_SENT = "Your chat request to {nickname} was closed. No coins were taken."
+RETRY = "One moment, please try again."
+NOT_CONNECTED = "Your chat request to {nickname} couldn't connect."
 NOT_DELIVERED = "Your chat request couldn't be delivered to {nickname}. No coins were taken."
 GONE = "This chat request isn't available any more."
 DECLINED = "Declined."
@@ -283,12 +287,26 @@ async def on_send(
     text = (
         SENT.format(nickname=nickname, price=coins_label(price))
         if charged
-        else (SENT_FREE.format(nickname=nickname))
+        else (NOT_SENT.format(nickname=nickname))
     )
     await _tell(bot, query.from_user.id, text)
 
 
 # --- Answering -------------------------------------------------------------------------
+
+
+async def _not_answerable(
+    query: CallbackQuery, bot: Bot, session: AsyncSession, request_id: int, user_id: int
+) -> None:
+    """A request that can't be answered now. One whose delivery is still being recorded
+    (the notice arrived a moment ago) keeps its buttons, so the tap can be repeated."""
+    pending = await requests.status_of(session, request_id, user_id) == "pending"
+    await session.commit()
+    if pending:
+        await query.answer(RETRY)
+        return
+    await query.answer(GONE)
+    await _remove_buttons(bot, query)
 
 
 async def on_decline(
@@ -306,9 +324,7 @@ async def on_decline(
     since = _now() - timedelta(minutes=await _expiry(session, runtime_settings))
     declined = await requests.decline(session, callback_data.request, user_id, since, _now())
     if declined is None:
-        await session.commit()
-        await query.answer(GONE)
-        await _remove_buttons(bot, query)
+        await _not_answerable(query, bot, session, callback_data.request, user_id)
         return
     sender_chat = await _chat_id(session, declined.sender_id)
     nickname = await _nickname(session, user_id)
@@ -335,9 +351,7 @@ async def on_accept(
     since = _now() - timedelta(minutes=await _expiry(session, runtime_settings))
     parties = await requests.answerable(session, callback_data.request, user_id, since)
     if parties is None:
-        await session.commit()
-        await query.answer(GONE)
-        await _remove_buttons(bot, query)
+        await _not_answerable(query, bot, session, callback_data.request, user_id)
         return
     busy = await _busy(session, search_queue, user_id)
     if busy is not None and not callback_data.confirm:
@@ -471,14 +485,24 @@ async def _connect(
     other_id = parties.recipient_id if actor_is_sender else parties.sender_id
     if connected.outcome == ConnectOutcome.UNAVAILABLE:
         nickname = await _nickname(session, other_id)
+        # A sender who didn't make this tap learns that their (paid) request is over.
+        sender_chat = None if actor_is_sender else await _chat_id(session, parties.sender_id)
+        recipient_nickname = await _nickname(session, parties.recipient_id)
         await session.commit()
         await query.answer(UNAVAILABLE_NOW.format(nickname=nickname), show_alert=True)
         await _remove_buttons(bot, query)
+        if sender_chat is not None:
+            await _tell(bot, sender_chat, NOT_CONNECTED.format(nickname=recipient_nickname))
         return
     people = {
         user_id: (await _chat_id(session, user_id), await users.get_profile(session, user_id))
         for user_id in (parties.sender_id, parties.recipient_id)
     }
+    # Recipients of the sender's other requests who were waiting for them to switch.
+    left_waiting = [
+        await _chat_id(session, closed.recipient_id) for closed in connected.closed_waiting
+    ]
+    sender_nickname = str(people[parties.sender_id][1].nickname)
     await session.commit()
     await query.answer()
     await _remove_buttons(bot, query)
@@ -497,6 +521,8 @@ async def _connect(
             await send_card(bot, avatars, telegram_id, partner, header, chat_keyboard())
         except TelegramAPIError as exc:
             logger.warning("could not announce a chat request", extra=exception_summary(exc))
+    for chat_id in left_waiting:
+        await _tell(bot, chat_id, LAPSED_NOTICE.format(nickname=sender_nickname))
 
 
 # --- From the worker -------------------------------------------------------------------
@@ -516,6 +542,10 @@ class RequestNotices:
             nickname = await _nickname(session, user_ids[1])
             await session.commit()
         return chat_id, nickname
+
+    async def failed(self, parties: Parties) -> None:
+        chat_id, nickname = await self._names((parties.sender_id, parties.recipient_id))
+        await _tell(self._bot, chat_id, NOT_DELIVERED.format(nickname=nickname))
 
     async def expired(self, parties: Parties) -> None:
         chat_id, nickname = await self._names((parties.sender_id, parties.recipient_id))

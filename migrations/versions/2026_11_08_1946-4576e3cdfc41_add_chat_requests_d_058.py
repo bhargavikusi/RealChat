@@ -76,8 +76,13 @@ def upgrade() -> None:
             name=op.f("ck_chat_requests_settled_pair"),
         ),
         sa.CheckConstraint(
-            "(status IN ('pending', 'failed')) = (delivered_at IS NULL)",
-            name=op.f("ck_chat_requests_delivered_pair"),
+            "status NOT IN ('pending', 'failed') OR delivered_at IS NULL",
+            name=op.f("ck_chat_requests_undelivered"),
+        ),
+        sa.CheckConstraint(
+            "status NOT IN ('delivered', 'accepted', 'connected', 'declined', 'expired', "
+            "'lapsed') OR delivered_at IS NOT NULL",
+            name=op.f("ck_chat_requests_delivered"),
         ),
         sa.CheckConstraint(
             "failure_reason IS NULL OR failure_reason IN ('unreachable', 'error', 'interrupted')",
