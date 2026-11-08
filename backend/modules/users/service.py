@@ -202,11 +202,21 @@ async def delete_account(session: AsyncSession, user_id: int, now: datetime) -> 
             or_(ProfileLike.liker_user_id == user_id, ProfileLike.liked_user_id == user_id)
         )
     )
-    await session.execute(
-        delete(DirectMessage).where(
-            or_(DirectMessage.sender_user_id == user_id, DirectMessage.recipient_user_id == user_id)
-        )
+    # A message still pending holds its sender's coin: release it before the row goes,
+    # whichever of the two is deleting. The rows are locked first, so a delivery being
+    # settled right now either finishes before this or finds the message gone.
+    involved = or_(
+        DirectMessage.sender_user_id == user_id, DirectMessage.recipient_user_id == user_id
     )
+    pending_holds = await session.scalars(
+        select(DirectMessage.hold_id)
+        .where(involved, DirectMessage.status == "pending", DirectMessage.hold_id.is_not(None))
+        .with_for_update()
+    )
+    for hold_id in pending_holds.all():
+        if hold_id is not None:
+            await coins.release(session, hold_id, now)
+    await session.execute(delete(DirectMessage).where(involved))
     await _ensure_profile(session, user_id)
     user.coin_history_after_id = (await coins.forfeit_all(session, user_id, now)).history_after_id
     await rewards.retire_invites(session, user_id, now)

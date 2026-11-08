@@ -217,7 +217,20 @@ async def sent_under(session: AsyncSession, key: str) -> bool:
 async def delivered(session: AsyncSession, message_id: int, now: datetime) -> bool:
     """The notice was delivered: take the held coin. Returns whether this call did it
     (False if the message is no longer pending, e.g. the worker failed it meanwhile,
-    or it was deleted with an account)."""
+    or it was deleted with an account).
+
+    The sender's account row is locked FOR KEY SHARE before the message, the order
+    account deletion uses (account, then messages), so the two never deadlock: a
+    delivery waiting on the sender's deletion then finds the message gone.
+    """
+    sender_id = await session.scalar(
+        select(DirectMessage.sender_user_id).where(DirectMessage.id == message_id)
+    )
+    if sender_id is None:
+        return False
+    await session.execute(
+        select(User.id).where(User.id == sender_id).with_for_update(key_share=True)
+    )
     row = (
         await session.execute(
             update(DirectMessage)

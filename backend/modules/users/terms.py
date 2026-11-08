@@ -30,9 +30,10 @@ Chat messages are stored so that reports of abuse can be checked. They are delet
 automatically after a set period, unless they are part of a report that is still open. \
 Deleting them from RealChat doesn't remove them from your Telegram chat.
 • You can send a direct message to someone from their profile card, for coins. They \
-see your nickname and RealChat ID with it, can't forward or save it, and you're told \
-when they open it. Direct messages are stored so they can be opened, and deleted \
-automatically after the same set period as chat messages.
+see your nickname and RealChat ID with it, and you're told when they open it. Telegram \
+apps that honour RealChat's protection don't let them forward or save it. Direct \
+messages are stored so they can be opened, and deleted automatically after the same \
+set period as chat messages.
 • Your chat partner can't forward or save what you send. Some Telegram apps also \
 block screenshots of it, but not all of them do.
 • To keep chats anonymous, contact cards and locations can't be sent, and messages \

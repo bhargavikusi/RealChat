@@ -42,8 +42,50 @@ def _coin_checks(kinds: str, purposes: str) -> None:
         op.create_check_constraint(op.f(name), table, condition)
 
 
+HOLD_FUNCTION = """
+CREATE OR REPLACE FUNCTION coin_transactions_hold_matches() RETURNS trigger
+LANGUAGE plpgsql AS $$
+DECLARE
+    hold RECORD;
+BEGIN
+    SELECT user_id, amount, status, purpose INTO hold FROM coin_holds WHERE id = NEW.hold_id;
+    IF hold.status IS DISTINCT FROM 'captured'
+        OR hold.user_id <> NEW.user_id
+        OR NEW.amount <> -hold.amount
+        OR hold.purpose IS DISTINCT FROM NEW.kind
+    THEN
+        RAISE EXCEPTION 'a ledger entry does not match its coin hold'
+            USING ERRCODE = 'restrict_violation';
+    END IF;
+    RETURN NEW;
+END;
+$$
+"""
+# As created with the ledger, before there was more than one hold purpose.
+OLD_HOLD_FUNCTION = """
+CREATE OR REPLACE FUNCTION coin_transactions_hold_matches() RETURNS trigger
+LANGUAGE plpgsql AS $$
+DECLARE
+    hold RECORD;
+BEGIN
+    SELECT user_id, amount, status INTO hold FROM coin_holds WHERE id = NEW.hold_id;
+    IF hold.status IS DISTINCT FROM 'captured'
+        OR hold.user_id <> NEW.user_id
+        OR NEW.amount <> -hold.amount
+    THEN
+        RAISE EXCEPTION 'a ledger entry does not match its coin hold'
+            USING ERRCODE = 'restrict_violation';
+    END IF;
+    RETURN NEW;
+END;
+$$
+"""
+
+
 def upgrade() -> None:
     _coin_checks(NEW_KINDS, NEW_PURPOSES)
+    # With two hold purposes, a ledger entry must also be of its hold's purpose.
+    op.execute(HOLD_FUNCTION)
     op.create_table(
         "direct_messages",
         sa.Column("id", sa.BigInteger(), sa.Identity(always=False), nullable=False),
@@ -92,6 +134,20 @@ def upgrade() -> None:
             "reply_to_id IS NULL OR price = 0", name=op.f("ck_direct_messages_free_reply")
         ),
         sa.CheckConstraint(
+            "(kind = 'text') = (file_id IS NULL)", name=op.f("ck_direct_messages_content_file")
+        ),
+        sa.CheckConstraint(
+            "kind <> 'text' OR text IS NOT NULL", name=op.f("ck_direct_messages_content_text")
+        ),
+        sa.CheckConstraint(
+            "(status IN ('delivered', 'viewed')) = (delivered_at IS NOT NULL)",
+            name=op.f("ck_direct_messages_delivered_pair"),
+        ),
+        sa.CheckConstraint(
+            "(status = 'viewed') = (viewed_at IS NOT NULL)",
+            name=op.f("ck_direct_messages_viewed_pair"),
+        ),
+        sa.CheckConstraint(
             "sender_user_id <> recipient_user_id", name=op.f("ck_direct_messages_not_self")
         ),
         sa.ForeignKeyConstraint(
@@ -138,6 +194,13 @@ def upgrade() -> None:
         "ix_direct_messages_sender_user_id", "direct_messages", ["sender_user_id"], unique=False
     )
     op.create_index(
+        "uq_direct_messages_hold_id",
+        "direct_messages",
+        ["hold_id"],
+        unique=True,
+        postgresql_where=sa.text("hold_id IS NOT NULL"),
+    )
+    op.create_index(
         "uq_direct_messages_reply_to_id",
         "direct_messages",
         ["reply_to_id"],
@@ -152,6 +215,11 @@ def downgrade() -> None:
         table_name="direct_messages",
         postgresql_where=sa.text("reply_to_id IS NOT NULL"),
     )
+    op.drop_index(
+        "uq_direct_messages_hold_id",
+        table_name="direct_messages",
+        postgresql_where=sa.text("hold_id IS NOT NULL"),
+    )
     op.drop_index("ix_direct_messages_sender_user_id", table_name="direct_messages")
     op.drop_index("ix_direct_messages_recipient_user_id", table_name="direct_messages")
     op.drop_index(
@@ -161,6 +229,8 @@ def downgrade() -> None:
     )
     op.drop_index("ix_direct_messages_created_at", table_name="direct_messages")
     op.drop_table("direct_messages")
-    # The ledger is append-only, so this fails while direct message entries exist,
-    # rather than rewriting history.
+    # Ledger entries and holds are never deleted, so this fails while any
+    # `direct_message` ledger entry or hold exists (released ones included), rather than
+    # rewriting history.
     _coin_checks(OLD_KINDS, OLD_PURPOSES)
+    op.execute(OLD_HOLD_FUNCTION)

@@ -104,17 +104,17 @@ Direct messages and their free replies (D-057). The content is kept so the recip
 | `sender_user_id`, `recipient_user_id` | bigint | Reference `users.id`, with `ON DELETE CASCADE`; never the same (constraint). |
 | `reply_to_id` | bigint, nullable | The paid message this is the free reply to. References `direct_messages.id`, with `ON DELETE SET NULL`. A partial unique index allows one reply per message. |
 | `idempotency_key` | varchar(128), unique | `<sender id>:<draft>`: one message per Send, so a repeated or retried Send finds the same row. |
-| `kind` | varchar(16) | `text`, `photo`, `video`, `animation`, `audio`, `voice`, `video_note`, `sticker`, or `document`. |
+| `kind` | varchar(16) | `text`, `photo`, `video`, `animation`, `audio`, `voice`, `video_note`, `sticker`, or `document`. Text has `text` and no `file_id`; every other kind has a `file_id` (constraints). |
 | `text` | text, nullable | The text or caption. |
 | `entities` | jsonb, nullable | Its formatting, as Telegram message entities. |
 | `file_id` | varchar(256), nullable | The Telegram file identifier of the media; the bot never downloads it. |
 | `price` | integer | Coins it costs; 0 for a free reply. Only free replies have `reply_to_id` (constraint). |
-| `hold_id` | bigint, nullable | References `coin_holds.id`: set exactly when `price` is above 0 (constraint). |
-| `status` | varchar(16) | `pending` (held, notice on its way), `delivered` (notice accepted, coin taken), `failed` (hold released), or `viewed` (opened). |
+| `hold_id` | bigint, nullable | References `coin_holds.id`: set exactly when `price` is above 0 (constraint). A partial unique index lets a hold pay for one message. |
+| `status` | varchar(16) | `pending` (notice on its way; a paid message's coin is held), `delivered` (notice accepted; a paid message's coin is taken), `failed` (a paid message's hold is released), or `viewed` (opened). Free replies have no hold, so nothing is held, taken, or released for them. `delivered_at` is set exactly for `delivered` and `viewed`, and `viewed_at` exactly for `viewed` (constraints). |
 | `failure_reason` | varchar(16), nullable | `unreachable`, `error`, or `interrupted`; set exactly when `failed` (constraint). |
 | `created_at`, `delivered_at`, `viewed_at` | timestamptz | |
 
-Each status change is a conditional update from the expected status, so it happens once even when tried twice at the same moment. Sending locks both account rows `FOR KEY SHARE` first, as a visit does, so it never overlaps an account deletion. A partial index on `created_at` for `pending` rows serves the worker's sweep, which fails messages still pending after five minutes and releases their holds. The index on `created_at` serves the retention cleanup, which deletes messages older than the chat retention period (`chat_retention_days`) in the same daily run as chat messages; the ledger keeps the charge. Account deletion removes the user's rows on both sides; their held coins are released with the rest.
+Each status change is a conditional update from the expected status, so it happens once even when tried twice at the same moment. Sending locks both account rows `FOR KEY SHARE` first, as a visit does, so it never overlaps an account deletion. A partial index on `created_at` for `pending` rows serves the worker's sweep, which fails messages still pending after five minutes and releases their holds. The index on `created_at` serves the retention cleanup, which deletes messages older than the chat retention period (`chat_retention_days`) in the same daily run as chat messages; the ledger keeps the charge. Account deletion first locks the account's pending messages, sent or received, and releases their holds (so a sender's coin is returned when the recipient deletes), then removes the rows on both sides. Settling a delivery locks the sender's account row before the message, in the same order, so the two never deadlock.
 
 ### `profile_likes`
 
@@ -274,7 +274,7 @@ The coin ledger (D-050). Every change to a user's coins is one row; a balance is
 | `amount` | integer | Positive adds coins, negative removes them; never 0. A constraint ties the sign to the kind: rewards and admin grants add, paid matches, direct messages, admin corrections, and deletion forfeits remove. |
 | `kind` | varchar(32) | `welcome_bonus`, `referral_reward`, `daily_reward`, `paid_match`, `admin_grant`, `admin_correction`, `account_deleted` (the balance forfeited when the account is deleted, D-055), or `direct_message` (a delivered direct message, D-057). |
 | `idempotency_key` | varchar(128), unique | One row per action: a retried or duplicated action records once. |
-| `hold_id` | bigint, nullable | References `coin_holds.id`: the hold this spending captured. Only rows whose kind is a hold purpose (`paid_match`, `direct_message`) may have one (constraint), and a partial unique index allows one row per hold. A trigger checks that the hold is captured, belongs to the same user, and that the amount is exactly minus the hold's amount. |
+| `hold_id` | bigint, nullable | References `coin_holds.id`: the hold this spending captured. Only rows whose kind is a hold purpose (`paid_match`, `direct_message`) may have one (constraint), and a partial unique index allows one row per hold. A trigger checks that the hold is captured, belongs to the same user, is of the same purpose as the entry's kind, and that the amount is exactly minus the hold's amount. |
 | `note` | text, nullable | The reason for an admin grant or correction; required for those kinds (constraint). |
 | `created_at` | timestamptz | |
 

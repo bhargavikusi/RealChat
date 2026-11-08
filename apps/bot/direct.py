@@ -315,7 +315,8 @@ async def on_send(
     recipient_id = int(data["recipient"])
     reply_to = data.get("reply_to")
     content = Content(**data["content"])
-    price = await runtime_settings.get(session, SettingKey.DIRECT_MESSAGE_COINS)
+    # The price shown when writing began, so the user pays what they were told.
+    price = int(data.get("price") or 0)
     since = await _retention_start(session, runtime_settings)
     sent = await direct.send(
         session,

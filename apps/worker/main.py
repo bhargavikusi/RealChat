@@ -1,4 +1,4 @@
-"""Background worker: matching, idle chats, Private mode, and chat and visit retention.
+"""Background worker: matching, idle chats, Private mode, retention, and direct messages.
 
 Run with: uv run python -m apps.worker.main
 
@@ -9,7 +9,9 @@ locked row by row in PostgreSQL, so each is warned and ended once (D-027, D-032,
 D-039). Jobs that call Telegram or can run long have loops of their own, so they never
 hold up matching: ending Private mode sessions whose chat ended or that reached the
 time limit, and telling both users (D-047); deleting Private mode messages from
-Telegram; and deleting expired chat messages about once a day (D-046).
+Telegram; deleting expired chat messages and direct messages (D-046, D-057) and expired
+profile visits (D-053) about once a day; and failing direct messages left pending by an
+interrupted Send, releasing their held coins (D-057).
 """
 
 import asyncio

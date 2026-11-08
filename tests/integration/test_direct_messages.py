@@ -13,6 +13,8 @@ from aiogram.types import Dice, Message, Update
 from aiogram.types import User as TelegramUser
 from redis.asyncio import Redis
 from sqlalchemy import func, select, update
+from sqlalchemy import text as sql
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from apps.bot import direct as dm
@@ -294,13 +296,27 @@ async def test_the_price_is_an_admin_setting(world: World, session_factory: Sess
     assert await balance(session_factory, USER_ID) == before - 3
 
 
+async def test_the_price_shown_when_writing_is_the_price_charged(
+    world: World, session_factory: Sessions
+) -> None:
+    before = await balance(session_factory, USER_ID)
+    await compose(world.alice, session_factory, BOB_ID, "hello")
+    await set_setting(session_factory, SettingKey.DIRECT_MESSAGE_COINS, 5)
+    # As an admin's save does, so the bot reads the new price at once.
+    world.alice.dispatcher["runtime_settings"].invalidate()
+    await world.alice.press_data(own_buttons(world.alice)[dm.SEND_BUTTON])
+    assert own_text(world.alice) == dm.DELIVERED.format(nickname=BOB, price="1 coin")
+    assert await balance(session_factory, USER_ID) == before - 1
+
+
 async def test_not_enough_coins_is_refused_before_writing(
     world: World, session_factory: Sessions
 ) -> None:
     await set_setting(session_factory, SettingKey.DIRECT_MESSAGE_COINS, 11)
     await write_to(world.alice, session_factory, BOB_ID)
     assert answer(world.alice) == dm.NO_COINS.format(price="11 coins", available="10 coins")
-    assert await world.alice.send("hello") != dm.PREVIEW.format(nickname=BOB)
+    await world.alice.send("hello")
+    assert dm.PREVIEW.format(nickname=BOB) not in world.alice.session.sent_texts()
     assert await messages(session_factory) == []
 
 
@@ -625,3 +641,100 @@ async def test_a_send_waits_for_an_account_deletion_in_progress(
         await sending.commit()
     assert sent.refusal == Refusal.UNAVAILABLE
     assert await messages(session_factory) == [] and await hold_statuses(session_factory) == []
+
+
+async def test_deleting_the_recipient_releases_the_senders_pending_coin(
+    world: World, session_factory: Sessions
+) -> None:
+    alice, bob = await world.user_id(USER_ID), await world.user_id(BOB_ID)
+    async with session_factory() as session:
+        pending = await direct.send(session, alice, bob, TEXT, "pending", 1)
+        await session.commit()
+    assert pending.message_id is not None
+    async with session_factory() as session:
+        await users.delete_account(session, bob, datetime.now(UTC))
+        await session.commit()
+    assert await hold_statuses(session_factory) == ["released"]
+    assert await balance(session_factory, USER_ID) == 10
+
+
+async def test_a_delivery_waits_for_the_senders_account_deletion(
+    world: World, session_factory: Sessions
+) -> None:
+    alice, bob = await world.user_id(USER_ID), await world.user_id(BOB_ID)
+    async with session_factory() as session:
+        pending = await direct.send(session, alice, bob, TEXT, "pending", 1)
+        await session.commit()
+    assert pending.message_id is not None
+    async with session_factory() as deleting, session_factory() as delivering:
+        # The deletion holds the sender's account, as it does first, before reaching
+        # the messages; the delivery must wait there rather than lock the message and
+        # then wait for the account (a deadlock once the deletion reaches the message).
+        await users.lock_user(deleting, alice)
+        settled = asyncio.create_task(
+            direct.delivered(delivering, pending.message_id, datetime.now(UTC))
+        )
+        await wait_until_blocked(session_factory)
+        await users.delete_account(deleting, alice, datetime.now(UTC))
+        await deleting.commit()
+        assert not await settled
+        await delivering.commit()
+    assert await dm_charges(session_factory) == 0
+    assert await messages(session_factory) == []
+
+
+@pytest.mark.parametrize(
+    ("kind", "text", "file", "status", "delivered", "viewed", "constraint"),
+    [
+        ("text", "hi", "file", "delivered", True, False, "content_file"),
+        ("photo", None, None, "delivered", True, False, "content_file"),
+        ("text", None, None, "delivered", True, False, "content_text"),
+        ("text", "hi", None, "delivered", False, False, "delivered_pair"),
+        ("text", "hi", None, "pending", True, False, "delivered_pair"),
+        ("text", "hi", None, "delivered", True, True, "viewed_pair"),
+        ("text", "hi", None, "viewed", True, False, "viewed_pair"),
+    ],
+)
+async def test_the_database_keeps_messages_consistent(
+    world: World,
+    session_factory: Sessions,
+    kind: str,
+    text: str | None,
+    file: str | None,
+    status: str,
+    delivered: bool,
+    viewed: bool,
+    constraint: str,
+) -> None:
+    alice, bob = await world.user_id(USER_ID), await world.user_id(BOB_ID)
+    statement = sql(
+        "INSERT INTO direct_messages (sender_user_id, recipient_user_id, idempotency_key, "
+        "price, kind, text, file_id, status, delivered_at, viewed_at) "
+        "VALUES (:a, :b, 'k', 0, :kind, :text, :file, :status, "
+        "CASE WHEN :delivered THEN now() END, CASE WHEN :viewed THEN now() END)"
+    )
+    values = {"kind": kind, "text": text, "file": file, "status": status}
+    async with session_factory() as session:
+        with pytest.raises(IntegrityError, match=f"ck_direct_messages_{constraint}"):
+            await session.execute(
+                statement,
+                {"a": alice, "b": bob, **values, "delivered": delivered, "viewed": viewed},
+            )
+
+
+async def test_a_hold_pays_for_one_message(world: World, session_factory: Sessions) -> None:
+    alice, bob = await world.user_id(USER_ID), await world.user_id(BOB_ID)
+    async with session_factory() as session:
+        sent = await direct.send(session, alice, bob, TEXT, "first", 1)
+        await session.commit()
+    async with session_factory() as session:
+        with pytest.raises(IntegrityError, match="uq_direct_messages_hold_id"):
+            await session.execute(
+                sql(
+                    "INSERT INTO direct_messages (sender_user_id, recipient_user_id, "
+                    "idempotency_key, price, hold_id, kind, text) "
+                    "SELECT :a, :b, 'second', 1, hold_id, 'text', 'hi' "
+                    "FROM direct_messages WHERE id = :m"
+                ),
+                {"a": alice, "b": bob, "m": sent.message_id},
+            )

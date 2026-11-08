@@ -71,6 +71,22 @@ class DirectMessage(Base):
         CheckConstraint("(price > 0) = (hold_id IS NOT NULL)", name="hold_pair"),
         # Only free replies point at a message.
         CheckConstraint("reply_to_id IS NULL OR price = 0", name="free_reply"),
+        # Text has text and no file; every other kind has a file.
+        CheckConstraint("(kind = 'text') = (file_id IS NULL)", name="content_file"),
+        CheckConstraint("kind <> 'text' OR text IS NOT NULL", name="content_text"),
+        # The times match the status.
+        CheckConstraint(
+            "(status IN ('delivered', 'viewed')) = (delivered_at IS NOT NULL)",
+            name="delivered_pair",
+        ),
+        CheckConstraint("(status = 'viewed') = (viewed_at IS NOT NULL)", name="viewed_pair"),
+        # A hold pays for one message.
+        Index(
+            "uq_direct_messages_hold_id",
+            "hold_id",
+            unique=True,
+            postgresql_where=text("hold_id IS NOT NULL"),
+        ),
         # One free reply per message.
         Index(
             "uq_direct_messages_reply_to_id",
