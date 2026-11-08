@@ -52,6 +52,7 @@ from apps.bot.endings import (
     like_row,
     message_row,
     profile_safety_keyboard,
+    request_row,
     safety_keyboard,
 )
 from apps.bot.onboarding import Context, load_context, prompt_next
@@ -265,14 +266,19 @@ async def ready_user(
 async def _card_rows(
     session: AsyncSession, user_id: int, other: Profile, runtime_settings: RuntimeSettings
 ) -> list[list[InlineKeyboardButton]]:
-    """Like (or Unlike), and ✉️ Message (D-057) unless the card's owner blocked the
-    user or the two are chatting now. The service checks again when it is tapped."""
+    """Like (or Unlike), and ✉️ Message (D-057) and 💬 Chat request (D-058) unless the
+    card's owner blocked the user or the two are chatting now. The services check again
+    when they are tapped."""
     rows = [like_row(other.public_id, await likes.is_liked(session, user_id, other.user_id))]
     active = await chat.active_chat(session, user_id)
     chatting = active is not None and active.partner_id == other.user_id
     if not chatting and not await moderation.is_blocked(session, other.user_id, user_id):
         price = await runtime_settings.get(session, SettingKey.DIRECT_MESSAGE_COINS)
         rows.append(message_row(other.public_id, price))
+        # Offered whatever the person is doing; the tap says if they can't take one now,
+        # so the card never shows their activity (D-058).
+        request_price = await runtime_settings.get(session, SettingKey.CHAT_REQUEST_COINS)
+        rows.append(request_row(other.public_id, request_price))
     return rows
 
 

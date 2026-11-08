@@ -18,6 +18,7 @@ from apps.bot import (
     account,
     admin,
     chat,
+    chat_requests,
     coins,
     direct,
     errors,
@@ -115,6 +116,8 @@ def create_dispatcher(
         # Direct messages (D-057): before relay, which skips messages while a step
         # (such as writing a direct message) is waiting for an answer.
         direct.create_router(),
+        # Chat requests (D-058).
+        chat_requests.create_router(),
         # Relay right after the chat buttons: it only takes messages from users in a
         # chat with no other step waiting for an answer, and passes the rest on.
         relay.create_router(),

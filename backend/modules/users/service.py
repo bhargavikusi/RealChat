@@ -14,6 +14,7 @@ from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.modules.admin.models import AdminAuditEntry
+from backend.modules.chat_requests.models import ChatRequest
 from backend.modules.coins import rewards
 from backend.modules.coins import service as coins
 from backend.modules.direct_messages.models import DirectMessage
@@ -173,10 +174,11 @@ async def delete_account(session: AsyncSession, user_id: int, now: datetime) -> 
     """Erase a user's personal data and keep a minimal account record (D-016, D-025).
 
     Erased: every profile field (the profile is replaced by an empty one with a new
-    RealChat ID, so the old ID finds nobody, D-054), the age
-    and gender change history, notification settings, profile visits and likes made or
-    received (D-053, D-056), direct messages sent or received (D-057), and terms acceptances, so a
-    returning user starts a fresh onboarding with the default settings. Coins are
+    RealChat ID, so the old ID finds nobody, D-054), the age and gender change history,
+    notification settings, profile visits and likes made or received (D-053, D-056),
+    direct messages and chat requests sent or received (D-057, D-058; held coins of
+    those still pending are released), and terms acceptances, so a returning user
+    starts a fresh onboarding with the default settings. Coins are
     forfeited (held coins released, then the balance removed by one ledger entry), the
     invite code is retired, and pending invites are settled as not rewarded (D-055).
     Kept: the Telegram user ID, the status, timestamps, and the coin ledger. An
@@ -217,6 +219,16 @@ async def delete_account(session: AsyncSession, user_id: int, now: datetime) -> 
         if hold_id is not None:
             await coins.release(session, hold_id, now)
     await session.execute(delete(DirectMessage).where(involved))
+    # Chat requests sent or received go the same way (D-058).
+    requested = or_(ChatRequest.sender_user_id == user_id, ChatRequest.recipient_user_id == user_id)
+    request_holds = await session.scalars(
+        select(ChatRequest.hold_id)
+        .where(requested, ChatRequest.status == "pending")
+        .with_for_update()
+    )
+    for hold_id in request_holds.all():
+        await coins.release(session, hold_id, now)
+    await session.execute(delete(ChatRequest).where(requested))
     await _ensure_profile(session, user_id)
     user.coin_history_after_id = (await coins.forfeit_all(session, user_id, now)).history_after_id
     await rewards.retire_invites(session, user_id, now)

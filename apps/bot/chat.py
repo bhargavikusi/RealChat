@@ -182,11 +182,11 @@ async def _start_search(
             ctx.user.id, time.time(), search_id_for(token, wants)
         )
     except BaseException:
-        await _release_search_hold(session, ctx.user.id, token)
+        await release_search_hold(session, ctx.user.id, token)
         raise
     if not created:
         # Already searching: that search goes on, and this hold is given back.
-        await _release_search_hold(session, ctx.user.id, token)
+        await release_search_hold(session, ctx.user.id, token)
         await _tell_already_searching(bot, chat_id, search_id)
         return
     await bot.send_message(
@@ -206,7 +206,7 @@ async def _tell_already_searching(bot: Bot, chat_id: int, search_id: str) -> Non
     )
 
 
-async def _release_search_hold(session: AsyncSession, user_id: int, token: str) -> bool:
+async def release_search_hold(session: AsyncSession, user_id: int, token: str) -> bool:
     """Give back the coins held for a paid search; returns whether any were."""
     hold_id = await coins.hold_id_for(session, search_hold_key(user_id, token))
     released = hold_id is not None and await coins.release(session, hold_id, datetime.now(UTC))
@@ -293,7 +293,7 @@ async def on_cancel_search(
         return
     await query.answer()
     search = parse_search(callback_data.search)
-    refunded = search.wants is not None and await _release_search_hold(
+    refunded = search.wants is not None and await release_search_hold(
         session, user.id, search.token
     )
     text = f"{SEARCH_CANCELLED} {COINS_RETURNED}" if refunded else SEARCH_CANCELLED

@@ -41,6 +41,10 @@ class SettingKey(StrEnum):
     USERID_MISSES_PER_HOUR = "userid_misses_per_hour"
     LIKE_NOTICE_GAP_HOURS = "like_notice_gap_hours"
     DIRECT_MESSAGE_COINS = "direct_message_coins"
+    CHAT_REQUEST_COINS = "chat_request_coins"
+    CHAT_REQUEST_ACTIVE_MINUTES = "chat_request_active_minutes"
+    CHAT_REQUEST_EXPIRY_MINUTES = "chat_request_expiry_minutes"
+    CHAT_REQUEST_SWITCH_SECONDS = "chat_request_switch_seconds"
 
 
 @dataclass(frozen=True)
@@ -226,6 +230,38 @@ SPECS: dict[SettingKey, SettingSpec] = {
             default=1,
             minimum=1,
             maximum=100,
+        ),
+        SettingSpec(
+            SettingKey.CHAT_REQUEST_COINS,
+            "Price of a chat request",
+            "coins",
+            default=2,
+            minimum=1,
+            maximum=100,
+        ),
+        SettingSpec(
+            SettingKey.CHAT_REQUEST_ACTIVE_MINUTES,
+            "Chat requests: recipient active within",
+            "minutes",
+            default=10,
+            minimum=1,
+            maximum=60,
+        ),
+        SettingSpec(
+            SettingKey.CHAT_REQUEST_EXPIRY_MINUTES,
+            "Chat requests: time to accept",
+            "minutes",
+            default=60,
+            minimum=5,
+            maximum=1_440,
+        ),
+        SettingSpec(
+            SettingKey.CHAT_REQUEST_SWITCH_SECONDS,
+            "Chat requests: time for a busy sender to switch",
+            "seconds",
+            default=90,
+            minimum=30,
+            maximum=600,
         ),
     )
 }

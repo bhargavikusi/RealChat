@@ -39,6 +39,7 @@ from tests.support.db import wait_until_blocked
 from tests.support.world import (
     BOB_ID,
     MESSAGE,
+    REQUEST,
     World,
     buttons,
     last_to,
@@ -193,7 +194,7 @@ async def test_both_forms_open_the_card_as_a_visit(
     await world.alice.send(form.format(id=bob_id, upper=bob_id.upper()))
     card = last_to(world.alice.session, USER_ID)
     assert text_of(card).startswith(f"{pp.ID_HEADER}\n\n👤 {BOB}")
-    assert buttons(card) == [LIKE_BUTTON, MESSAGE, BLOCK_BUTTON, REPORT_BUTTON]
+    assert buttons(card) == [LIKE_BUTTON, MESSAGE, REQUEST, BLOCK_BUTTON, REPORT_BUTTON]
     alice, bob = await world.user_id(USER_ID), await world.user_id(BOB_ID)
     assert await visit_pairs(session_factory) == {(alice, bob)}
     assert notices_to(world.alice, BOB_ID) == [f"👀 {ALICE} viewed your profile."]
@@ -409,6 +410,7 @@ async def test_block_and_unblock_someone_met_by_id(world: World, session_factory
     assert buttons(last_to(world.alice.session, USER_ID)) == [
         LIKE_BUTTON,
         MESSAGE,
+        REQUEST,
         UNBLOCK_BUTTON,
         REPORT_BUTTON,
     ]
