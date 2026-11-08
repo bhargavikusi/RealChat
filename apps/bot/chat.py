@@ -327,7 +327,8 @@ async def on_partner_profile(
         partner,
         PARTNER_HEADER,
         card_keyboard(
-            like_row(partner.public_id, liked), safety_keyboard(active.conversation_id, blocked)
+            [like_row(partner.public_id, liked)],
+            safety_keyboard(active.conversation_id, blocked),
         ),
     )
 

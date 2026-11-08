@@ -47,11 +47,18 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from apps.bot.avatars import Avatars
 from apps.bot.cards import send_card
-from apps.bot.endings import card_keyboard, like_row, profile_safety_keyboard, safety_keyboard
+from apps.bot.endings import (
+    card_keyboard,
+    like_row,
+    message_row,
+    profile_safety_keyboard,
+    safety_keyboard,
+)
 from apps.bot.onboarding import Context, load_context, prompt_next
 from backend.config.settings import BotSettings
 from backend.core.logging import exception_summary
 from backend.modules.admin.settings import RuntimeSettings, SettingKey
+from backend.modules.chat import service as chat
 from backend.modules.moderation import service as moderation
 from backend.modules.people import likes, visits
 from backend.modules.people import service as people
@@ -255,16 +262,24 @@ async def ready_user(
     return None
 
 
-async def _like_row(
-    session: AsyncSession, user_id: int, other: Profile
-) -> list[InlineKeyboardButton]:
-    return like_row(other.public_id, await likes.is_liked(session, user_id, other.user_id))
+async def _card_rows(
+    session: AsyncSession, user_id: int, other: Profile, runtime_settings: RuntimeSettings
+) -> list[list[InlineKeyboardButton]]:
+    """Like (or Unlike), and ✉️ Message (D-057) unless the card's owner blocked the
+    user or the two are chatting now. The service checks again when it is tapped."""
+    rows = [like_row(other.public_id, await likes.is_liked(session, user_id, other.user_id))]
+    active = await chat.active_chat(session, user_id)
+    chatting = active is not None and active.partner_id == other.user_id
+    if not chatting and not await moderation.is_blocked(session, other.user_id, user_id):
+        price = await runtime_settings.get(session, SettingKey.DIRECT_MESSAGE_COINS)
+        rows.append(message_row(other.public_id, price))
+    return rows
 
 
 async def _card_buttons(
-    session: AsyncSession, user_id: int, other: Profile
+    session: AsyncSession, user_id: int, other: Profile, runtime_settings: RuntimeSettings
 ) -> InlineKeyboardMarkup:
-    """Like (or Unlike), then Block (or Unblock) and Report on another user's card: for
+    """Like and Message, then Block (or Unblock) and Report on another user's card: for
     the latest chat the two shared, or for the profile if they never chatted (D-054)."""
     blocked = await moderation.is_blocked(session, user_id, other.user_id)
     conversation_id = await visits.latest_conversation(session, user_id, other.user_id)
@@ -273,7 +288,7 @@ async def _card_buttons(
         if conversation_id is None
         else safety_keyboard(conversation_id, blocked)
     )
-    return card_keyboard(await _like_row(session, user_id, other), safety)
+    return card_keyboard(await _card_rows(session, user_id, other, runtime_settings), safety)
 
 
 async def on_menu(
@@ -351,7 +366,8 @@ async def on_open(
         return
     blocked = await moderation.is_blocked(session, user_id, profile.user_id)
     markup = card_keyboard(
-        await _like_row(session, user_id, profile), safety_keyboard(conversation_id, blocked)
+        await _card_rows(session, user_id, profile, runtime_settings),
+        safety_keyboard(conversation_id, blocked),
     )
     notice = await _visit(session, user_id, profile, _now())
     await session.commit()
@@ -410,7 +426,7 @@ async def on_visitor(
         await session.commit()
         await query.answer(NOT_AVAILABLE)
         return
-    markup = await _card_buttons(session, user_id, profile)
+    markup = await _card_buttons(session, user_id, profile, runtime_settings)
     notice = await _visit(session, user_id, profile, now)
     await session.commit()
     await query.answer()
@@ -461,6 +477,7 @@ async def _open_like(
     session: AsyncSession,
     state: FSMContext,
     settings: BotSettings,
+    runtime_settings: RuntimeSettings,
     avatars: Avatars,
     *,
     find: LikedProfile,
@@ -475,7 +492,7 @@ async def _open_like(
         await session.commit()
         await query.answer(NOT_AVAILABLE)
         return
-    markup = await _card_buttons(session, user_id, profile)
+    markup = await _card_buttons(session, user_id, profile, runtime_settings)
     notice = await _visit(session, user_id, profile, _now())
     await session.commit()
     await query.answer()
@@ -513,6 +530,7 @@ async def on_liker(
     session: AsyncSession,
     state: FSMContext,
     settings: BotSettings,
+    runtime_settings: RuntimeSettings,
     avatars: Avatars,
 ) -> None:
     await _open_like(
@@ -522,6 +540,7 @@ async def on_liker(
         session,
         state,
         settings,
+        runtime_settings,
         avatars,
         find=likes.liker_profile,
         header=LIKER_HEADER,
@@ -557,6 +576,7 @@ async def on_liked(
     session: AsyncSession,
     state: FSMContext,
     settings: BotSettings,
+    runtime_settings: RuntimeSettings,
     avatars: Avatars,
 ) -> None:
     await _open_like(
@@ -566,6 +586,7 @@ async def on_liked(
         session,
         state,
         settings,
+        runtime_settings,
         avatars,
         find=likes.liked_profile,
         header=LIKED_HEADER,
@@ -619,7 +640,7 @@ async def on_userid(
         logger.warning("RealChat ID lookups unavailable")
         await message.answer(LOOKUPS_UNAVAILABLE)
         return
-    markup = await _card_buttons(session, ctx.user.id, profile)
+    markup = await _card_buttons(session, ctx.user.id, profile, runtime_settings)
     notice = await _visit(session, ctx.user.id, profile, _now())
     await session.commit()
     await send_card(bot, avatars, message.chat.id, profile, ID_HEADER, markup)

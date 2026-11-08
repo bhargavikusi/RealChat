@@ -38,6 +38,7 @@ from tests.support.chat import USER_ID, Chat, complete_onboarding
 from tests.support.db import wait_until_blocked
 from tests.support.world import (
     BOB_ID,
+    MESSAGE,
     World,
     buttons,
     last_to,
@@ -149,13 +150,14 @@ async def test_a_card_offers_like_and_liking_tells_the_liked_user(
     markup = card_markup(world.alice)
     assert buttons(last_to(world.alice.session, USER_ID)) == [
         LIKE_BUTTON,
+        MESSAGE,
         BLOCK_BUTTON,
         REPORT_BUTTON,
     ]
     await world.alice.press_on(markup, LIKE_BUTTON)
     assert answer(world.alice) == lk.LIKED
     # The same card now offers Unlike, keeping Block and Report.
-    assert last_edit(world.alice) == [UNLIKE_BUTTON, BLOCK_BUTTON, REPORT_BUTTON]
+    assert last_edit(world.alice) == [UNLIKE_BUTTON, MESSAGE, BLOCK_BUTTON, REPORT_BUTTON]
     alice, bob = await world.user_id(USER_ID), await world.user_id(BOB_ID)
     assert await like_rows(session_factory) == [(alice, bob, True)]
     notice = last_to(world.alice.session, BOB_ID)
@@ -222,7 +224,7 @@ async def test_unliking_is_silent_and_the_card_offers_like_again(
     sent_to_bob = len(world.alice.session.sent_to(BOB_ID))
     await world.alice.press_on(markup, UNLIKE_BUTTON)
     assert answer(world.alice) == lk.UNLIKED
-    assert last_edit(world.alice) == [LIKE_BUTTON, BLOCK_BUTTON, REPORT_BUTTON]
+    assert last_edit(world.alice) == [LIKE_BUTTON, MESSAGE, BLOCK_BUTTON, REPORT_BUTTON]
     assert len(world.alice.session.sent_to(BOB_ID)) == sent_to_bob
     alice, bob = await world.user_id(USER_ID), await world.user_id(BOB_ID)
     assert await like_rows(session_factory) == [(alice, bob, False)]
@@ -293,7 +295,7 @@ async def test_the_notice_button_opens_the_likers_card_as_a_visit(
     await world.bob.press_data(data)
     card = last_to(world.bob.session, BOB_ID)
     assert text_of(card).startswith(f"{pp.LIKER_HEADER}\n\n👤 {ALICE}")
-    assert buttons(card) == [LIKE_BUTTON, BLOCK_BUTTON, REPORT_BUTTON]
+    assert buttons(card) == [LIKE_BUTTON, MESSAGE, BLOCK_BUTTON, REPORT_BUTTON]
     assert f"👀 {BOB} viewed your profile." in map(text_of, world.bob.session.sent_to(USER_ID))
     # Once Alice unlikes, the button opens nobody.
     await world.alice.press_data(await like_data(session_factory, BOB_ID, "unlike"))
@@ -357,7 +359,7 @@ async def test_blocking_from_a_card_keeps_its_like_button(
     await alice_opens_bob(world, session_factory)
     await world.alice.press_on(card_markup(world.alice), BLOCK_BUTTON)
     assert answer(world.alice) == sf.BLOCKED
-    assert last_edit(world.alice) == [LIKE_BUTTON, UNBLOCK_BUTTON, REPORT_BUTTON]
+    assert last_edit(world.alice) == [LIKE_BUTTON, MESSAGE, UNBLOCK_BUTTON, REPORT_BUTTON]
 
 
 async def test_a_forged_button_cannot_like_yourself(
@@ -430,7 +432,7 @@ async def test_both_lists_show_current_likes_and_open_cards(
     await world.alice.press(f"{BOB} · today")
     card = last_to(world.alice.session, USER_ID)
     assert text_of(card).startswith(f"{pp.LIKED_HEADER}\n\n👤 {BOB}")
-    assert buttons(card) == [UNLIKE_BUTTON, BLOCK_BUTTON, REPORT_BUTTON]
+    assert buttons(card) == [UNLIKE_BUTTON, MESSAGE, BLOCK_BUTTON, REPORT_BUTTON]
     # Unliked: gone from both lists, and the old entry opens nobody.
     await world.alice.press_data(await like_data(session_factory, BOB_ID, "unlike"))
     assert await open_list(world.bob, pp.LIKERS_BUTTON) == pp.NO_LIKERS

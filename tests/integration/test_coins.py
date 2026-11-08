@@ -583,3 +583,23 @@ async def test_an_admin_key_is_for_one_adjustment(
     assert await admin_cli.run(command, session_factory) == 1
     assert error in capsys.readouterr().err
     assert (await _balance(session_factory, user_id)).total == 5
+
+
+async def test_a_ledger_entry_must_be_of_its_holds_purpose(
+    session_factory: Sessions, user_id: int
+) -> None:
+    await _credit(session_factory, user_id, 5, "funds")
+    async with session_factory() as session:
+        hold_id = await coins.hold(session, user_id, 1, "direct_message", "dm")
+        await session.commit()
+    async with session_factory() as session:
+        await session.execute(
+            text("UPDATE coin_holds SET status = 'captured', settled_at = now() WHERE id = :h"),
+            {"h": hold_id},
+        )
+        with pytest.raises(DBAPIError, match="does not match its coin hold") as raised:
+            await session.execute(
+                text(_INSERT + "VALUES (:u, -1, 'paid_match', 'wrong', :h, NULL)"),
+                {"u": user_id, "h": hold_id},
+            )
+    assert sqlstate(raised) == RESTRICT_VIOLATION

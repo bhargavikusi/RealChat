@@ -611,6 +611,22 @@ Work happens on short-lived issue branches, such as `feature/12-onboarding`, cre
 
 **Why:** Owner decisions (requirements §13). A like is a deliberate choice, so it lasts until removed. Unliking and liking again is still possible at any time; the gap only keeps it from repeating the notice. Notices from blocked people were an explicit owner choice; turning the alerts off still stops them.
 
+### D-057 — Direct messages
+
+**Date:** 2026-11-07
+**Decision:**
+
+* Every other user's card has ✉️ **Message · ‹price›** under Like, for anyone whose card the user can open (Past chats, Visited you, the like lists, /userid). It is not offered to the current chat partner, and is hidden from someone the card's owner blocked.
+* Tapping it asks for the message, showing the price. The message is checked against the chat rules (D-042) and shown back as a preview, exactly as the recipient will see it, with ✅ Send and Cancel. Sending another message replaces the preview. Text, photos, videos, animations, audio, voice messages, video messages, stickers, and files can be sent. (Only text and photos have been checked end to end so far; the other kinds share the same sending code and need a check against Telegram before launch.) Polls and dice are refused, because their content can't be kept and shown again unchanged.
+* The price is an admin runtime setting, default 1 coin (1–100). On Send it is held. The recipient gets "✉️ Message from ‹nickname› · /userid_‹id›" with 📩 Open. The coin is taken once Telegram accepts that notice; if Telegram refuses it, the hold is released, the reason is recorded, and the sender is told no coin was taken. A repeated Send sends and charges nothing more; to try again after a failure, the sender writes the message again. If sending is interrupted (the bot stops before settling), the worker fails the message after a few minutes and releases the hold, without charging, even if the notice did arrive.
+* The content is stored, so Open shows it whatever the sender does with their copy. It is sent protected, so Telegram apps that honour that setting block forwarding and saving it. The first Open tells the sender "‹nickname› opened your message", once. Telegram doesn't report reading; opening the message is the only signal used.
+* A paid message offers the recipient ↩️ **Reply (free)** once. The reply goes through the same preview, notice, and Open, at no cost, and has no free reply of its own.
+* Nobody can message, or freely reply to, someone who blocked them or whom they blocked; the blocker is asked to unblock first. Refused attempts take no coin. Messages already delivered still open. Silent mode does not stop direct messages (D-052). Block and Report stay on the profile card, which the notice's /userid link opens.
+* Direct messages are kept for the chat message retention period (D-046), counted from sending, then deleted by the daily cleanup, even while a report about the sender is open: reports are about the profile and never attach a direct message, so moderators don't see its content. After that they can't be opened or replied to; the charge stays in the ledger. Account deletion erases the messages an account sent and received.
+* The draft terms describe direct messages: the nickname and ID shown, the opened notice, storage, and blocks (terms version `draft-15`).
+
+**Why:** Owner decisions (requirements §11). Charging on the notice Telegram confirms is the only delivery the platform can verify. A preview lets the sender check the message before paying; keeping the content makes Open reliable; one free reply lets the recipient answer without making the exchange free.
+
 ## Open
 
 Each of these needs the owner's decision. Until then, the behavior stays configurable and is not presented to users as final.

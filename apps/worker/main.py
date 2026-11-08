@@ -1,4 +1,4 @@
-"""Background worker: matching, idle chats, Private mode, and chat and visit retention.
+"""Background worker: matching, idle chats, Private mode, retention, and direct messages.
 
 Run with: uv run python -m apps.worker.main
 
@@ -9,7 +9,9 @@ locked row by row in PostgreSQL, so each is warned and ended once (D-027, D-032,
 D-039). Jobs that call Telegram or can run long have loops of their own, so they never
 hold up matching: ending Private mode sessions whose chat ended or that reached the
 time limit, and telling both users (D-047); deleting Private mode messages from
-Telegram; and deleting expired chat messages about once a day (D-046).
+Telegram; deleting expired chat messages and direct messages (D-046, D-057) and expired
+profile visits (D-053) about once a day; and failing direct messages left pending by an
+interrupted Send, releasing their held coins (D-057).
 """
 
 import asyncio
@@ -31,6 +33,7 @@ from backend.modules.admin.settings import RuntimeSettings
 from backend.modules.chat.idle import IdleChats
 from backend.modules.chat.private import PrivateModeJob
 from backend.modules.chat.retention import ChatRetention
+from backend.modules.direct_messages.service import PendingSweep
 from backend.modules.matching.matcher import Matcher
 from backend.modules.people.visits import VisitRetention
 from backend.modules.users.terms import TERMS_VERSION
@@ -42,6 +45,8 @@ TICK_SECONDS = 1.0
 RETENTION_CHECK_SECONDS = 60.0
 DELETIONS_SECONDS = 1.0
 PRIVATE_MODE_SECONDS = 1.0
+# Direct messages left pending by an interrupted Send (D-057).
+PENDING_SWEEP_SECONDS = 60.0
 
 Job = Callable[[datetime], Awaitable[object]]
 
@@ -94,6 +99,7 @@ async def run() -> None:
     idle_chats = IdleChats(sessions, runtime_settings, notifier)
     retention = ChatRetention(redis, sessions, runtime_settings)
     visit_retention = VisitRetention(redis, sessions, runtime_settings)
+    pending_messages = PendingSweep(sessions)
     private_mode = PrivateModeJob(sessions, runtime_settings, PrivateModeNotifier(bot, sessions))
     deletions = TelegramDeletions(bot, sessions)
     stop = asyncio.Event()
@@ -112,6 +118,7 @@ async def run() -> None:
                 ("private mode deletions", deletions.tick, DELETIONS_SECONDS),
                 ("chat retention", retention.tick, RETENTION_CHECK_SECONDS),
                 ("visit retention", visit_retention.tick, RETENTION_CHECK_SECONDS),
+                ("pending direct messages", pending_messages.tick, PENDING_SWEEP_SECONDS),
             ),
             stop,
         )

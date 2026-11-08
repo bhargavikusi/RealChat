@@ -16,6 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from backend.modules.admin.models import AdminAuditEntry
 from backend.modules.coins import rewards
 from backend.modules.coins import service as coins
+from backend.modules.direct_messages.models import DirectMessage
 from backend.modules.people.models import ProfileLike, ProfileVisit
 from backend.modules.users import public_ids, validation
 from backend.modules.users.models import (
@@ -174,7 +175,7 @@ async def delete_account(session: AsyncSession, user_id: int, now: datetime) -> 
     Erased: every profile field (the profile is replaced by an empty one with a new
     RealChat ID, so the old ID finds nobody, D-054), the age
     and gender change history, notification settings, profile visits and likes made or
-    received (D-053, D-056), and terms acceptances, so a
+    received (D-053, D-056), direct messages sent or received (D-057), and terms acceptances, so a
     returning user starts a fresh onboarding with the default settings. Coins are
     forfeited (held coins released, then the balance removed by one ledger entry), the
     invite code is retired, and pending invites are settled as not rewarded (D-055).
@@ -201,6 +202,21 @@ async def delete_account(session: AsyncSession, user_id: int, now: datetime) -> 
             or_(ProfileLike.liker_user_id == user_id, ProfileLike.liked_user_id == user_id)
         )
     )
+    # A message still pending holds its sender's coin: release it before the row goes,
+    # whichever of the two is deleting. The rows are locked first, so a delivery being
+    # settled right now either finishes before this or finds the message gone.
+    involved = or_(
+        DirectMessage.sender_user_id == user_id, DirectMessage.recipient_user_id == user_id
+    )
+    pending_holds = await session.scalars(
+        select(DirectMessage.hold_id)
+        .where(involved, DirectMessage.status == "pending", DirectMessage.hold_id.is_not(None))
+        .with_for_update()
+    )
+    for hold_id in pending_holds.all():
+        if hold_id is not None:
+            await coins.release(session, hold_id, now)
+    await session.execute(delete(DirectMessage).where(involved))
     await _ensure_profile(session, user_id)
     user.coin_history_after_id = (await coins.forfeit_all(session, user_id, now)).history_after_id
     await rewards.retire_invites(session, user_id, now)
