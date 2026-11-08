@@ -35,6 +35,10 @@ def test_approved_defaults() -> None:
         SettingKey.USERID_MISSES_PER_HOUR: 10,
         SettingKey.LIKE_NOTICE_GAP_HOURS: 1,
         SettingKey.DIRECT_MESSAGE_COINS: 1,
+        SettingKey.CHAT_REQUEST_COINS: 2,
+        SettingKey.CHAT_REQUEST_ACTIVE_MINUTES: 10,
+        SettingKey.CHAT_REQUEST_EXPIRY_MINUTES: 60,
+        SettingKey.CHAT_REQUEST_SWITCH_SECONDS: 90,
     }
 
 

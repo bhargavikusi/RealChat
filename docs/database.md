@@ -69,7 +69,7 @@ The index on `(user_id, field, changed_at)` serves the "latest change of this fi
 
 ### `notification_settings`
 
-A user's notification settings (D-052). One row per user, created the first time they change a setting; a user without a row has every default. The notes below say what each setting is for. Each takes effect only once the feature it controls exists: chat requests (Silent mode) and reminders are not built yet, so those values are stored but not read. Visit and like alerts are in use.
+A user's notification settings (D-052). One row per user, created the first time they change a setting; a user without a row has every default. The notes below say what each setting is for. Each takes effect only once the feature it controls exists: reminders are not built yet, so that value is stored but not read. Silent mode (chat requests) and visit and like alerts are in use.
 
 | Column | Type | Notes |
 |---|---|---|
@@ -115,6 +115,24 @@ Direct messages and their free replies (D-057). The content is kept so the recip
 | `created_at`, `delivered_at`, `viewed_at` | timestamptz | |
 
 Each status change is a conditional update from the expected status, so it happens once even when tried twice at the same moment. Sending locks both account rows `FOR KEY SHARE` first, as a visit does, so it never overlaps an account deletion. A partial index on `created_at` for `pending` rows serves the worker's sweep, which fails messages still pending after five minutes and releases their holds. The index on `created_at` serves the retention cleanup, which deletes messages older than the chat retention period (`chat_retention_days`) in the same daily run as chat messages; the ledger keeps the charge. Account deletion first locks the account's pending messages, sent or received, and releases their holds (so a sender's coin is returned when the recipient deletes), then removes the rows on both sides. Settling a delivery locks the sender's account row before the message, in the same order, so the two never deadlock.
+
+### `chat_requests`
+
+Chat requests (D-058). No message content is stored.
+
+| Column | Type | Notes |
+|---|---|---|
+| `id` | bigint identity | |
+| `sender_user_id`, `recipient_user_id` | bigint | Reference `users.id`, with `ON DELETE CASCADE`; never the same (constraint). |
+| `idempotency_key` | varchar(128), unique | `<sender id>:<draft>`: one request per Send. |
+| `price` | integer | Positive. |
+| `hold_id` | bigint, unique | References `coin_holds.id`: the held price, captured on delivery and released if the notice fails. |
+| `status` | varchar(16) | `pending` (held, notice on its way), `delivered` (price taken, waiting for an answer), `accepted` (accepted while the sender was busy, waiting for them to switch), `connected`, `declined`, `expired`, `lapsed` (the busy sender stayed or didn't answer), `closed` (the sender connected elsewhere, possibly while this request's notice was still on its way, in which case its hold is released; or someone could no longer chat), or `failed` (hold released). |
+| `failure_reason` | varchar(16), nullable | `unreachable`, `error`, or `interrupted`; set exactly when `failed` (constraint). |
+| `conversation_id` | bigint, nullable, unique | References `conversations.id`; set exactly when `connected` (constraint). |
+| `created_at`, `delivered_at`, `accepted_at`, `settled_at` | timestamptz | `delivered_at` is unset for `pending` and `failed`, and set for `delivered` and every later state except `closed`, which may come before delivery; `accepted` needs `accepted_at`; `settled_at` is set exactly when it stopped waiting (constraints). |
+
+A partial unique index on `(sender_user_id, recipient_user_id)` for waiting requests (`pending`, `delivered`, `accepted`) allows one per pair. Partial indexes on `created_at` (pending), `delivered_at` (delivered), and `accepted_at` (accepted) serve the worker, which fails interrupted sends after five minutes, expires unanswered requests after `chat_request_expiry_minutes`, and lapses unanswered switches after `chat_request_switch_seconds`. Each status change is a conditional update from the expected status. Sending locks both account rows (`FOR NO KEY UPDATE`, so one sender's requests are recorded one at a time); settling a delivery locks the sender's row first; connecting share-locks both account rows, then the request row, then ends any open chats and inserts the conversation (the open-participant unique index refuses a second chat for either user). That is the order account deletion uses, so none of them deadlock with it. Account deletion releases the holds of the account's pending requests and removes its rows on both sides.
 
 ### `profile_likes`
 
@@ -271,10 +289,10 @@ The coin ledger (D-050). Every change to a user's coins is one row; a balance is
 |---|---|---|
 | `id` | bigint identity | |
 | `user_id` | bigint | References `users.id`. |
-| `amount` | integer | Positive adds coins, negative removes them; never 0. A constraint ties the sign to the kind: rewards and admin grants add, paid matches, direct messages, admin corrections, and deletion forfeits remove. |
-| `kind` | varchar(32) | `welcome_bonus`, `referral_reward`, `daily_reward`, `paid_match`, `admin_grant`, `admin_correction`, `account_deleted` (the balance forfeited when the account is deleted, D-055), or `direct_message` (a delivered direct message, D-057). |
+| `amount` | integer | Positive adds coins, negative removes them; never 0. A constraint ties the sign to the kind: rewards and admin grants add, paid matches, direct messages, chat requests, admin corrections, and deletion forfeits remove. |
+| `kind` | varchar(32) | `welcome_bonus`, `referral_reward`, `daily_reward`, `paid_match`, `admin_grant`, `admin_correction`, `account_deleted` (the balance forfeited when the account is deleted, D-055), `direct_message` (a delivered direct message, D-057), or `chat_request` (a delivered chat request, D-058). |
 | `idempotency_key` | varchar(128), unique | One row per action: a retried or duplicated action records once. |
-| `hold_id` | bigint, nullable | References `coin_holds.id`: the hold this spending captured. Only rows whose kind is a hold purpose (`paid_match`, `direct_message`) may have one (constraint), and a partial unique index allows one row per hold. A trigger checks that the hold is captured, belongs to the same user, is of the same purpose as the entry's kind, and that the amount is exactly minus the hold's amount. |
+| `hold_id` | bigint, nullable | References `coin_holds.id`: the hold this spending captured. Only rows whose kind is a hold purpose (`paid_match`, `direct_message`, `chat_request`) may have one (constraint), and a partial unique index allows one row per hold. A trigger checks that the hold is captured, belongs to the same user, is of the same purpose as the entry's kind, and that the amount is exactly minus the hold's amount. |
 | `note` | text, nullable | The reason for an admin grant or correction; required for those kinds (constraint). |
 | `created_at` | timestamptz | |
 
@@ -282,14 +300,14 @@ The index on `(user_id, id)` serves balances and history. A balance reads the le
 
 ### `coin_holds`
 
-Coins set aside for something that may still fail: a paid search (D-050) or a direct message on its way (D-057).
+Coins set aside for something that may still fail: a paid search (D-050), or a direct message or chat request on its way (D-057, D-058).
 
 | Column | Type | Notes |
 |---|---|---|
 | `id` | bigint identity | |
 | `user_id` | bigint | References `users.id`. |
 | `amount` | integer | Positive. |
-| `purpose` | varchar(32) | `paid_match`: coins for a paid search, under the key `search:<user id>:<search token>`. `direct_message`: the price of a direct message, under the key `dm:<user id>:<draft>`, captured once its notice is delivered and released if it fails. |
+| `purpose` | varchar(32) | `paid_match`: coins for a paid search, under the key `search:<user id>:<search token>`. `direct_message`: the price of a direct message, under the key `dm:<user id>:<draft>`, captured once its notice is delivered and released if it fails. `chat_request`: the price of a chat request, under the key `creq:<user id>:<draft>`, the same way. |
 | `idempotency_key` | varchar(128), unique | One hold per action. |
 | `status` | varchar(16) | `held` (default), `captured`, or `released`. |
 | `created_at`, `settled_at` | timestamptz | `settled_at` is set exactly when the status leaves `held` (constraint). |

@@ -290,13 +290,15 @@ A request is sent to another eligible user, who can accept or decline it. Reques
 The owner has explicitly chosen this refund rule:
 
 * Accepted request: retain the charge according to the defined successful-request flow.
-* Declined request: refund the 2 coins.
-* Expired request: refund the 2 coins.
-* Undeliverable request: refund the 2 coins if payment was already captured.
+* ~~Declined request: refund the 2 coins.~~ Amended by owner decision D-058: a delivered request is not refunded.
+* ~~Expired request: refund the 2 coins.~~ Amended by owner decision D-058: a delivered request is not refunded.
+* Undeliverable request: never charged. The price is held when the request is sent and only taken once Telegram accepts the recipient's notice (D-058).
 * Cancelled before the request is successfully sent: do not charge.
 * Duplicate request events: do not duplicate the charge or refund.
 
 Use atomic database transactions and idempotency keys. A request must not be accepted twice or create multiple conversations accidentally.
+
+Approved flow (D-058): 💬 Chat request on any other user's card. When the request is sent, the recipient must have been active in RealChat within 10 minutes, not be chatting, and not be in Silent mode; the sender must not be chatting or searching; neither may have blocked the other. The price (2 coins, admin setting) is taken once the notice is delivered and never returned. The recipient answers within an hour (admin setting). Either may have started a chat or search by the time it is accepted: a busy recipient confirms first, and a sender who became busy after sending has 90 seconds (admin setting) to switch, or the request lapses. A sender may have several requests waiting, one per person; the first connection closes the others.
 
 Define and test all request state transitions.
 

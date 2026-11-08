@@ -3,8 +3,9 @@
 Every change to a user's coins is a row in `coin_transactions`, which is append-only:
 database triggers reject updates, deletes, and truncation, and corrections are new,
 compensating entries. A balance is the sum of a user's entries. Coins set aside for a
-search or a direct message are a `coin_holds` row; capturing a hold adds the spending
-entry, releasing it adds nothing. Both are kept when an account is deleted (D-050).
+search, a direct message, or a chat request are a `coin_holds` row; capturing a hold
+adds the spending entry, releasing it adds nothing. Both are kept when an account is
+deleted (D-050).
 """
 
 from datetime import datetime
@@ -38,14 +39,22 @@ TRANSACTION_KINDS = (
     "account_deleted",
     # A delivered direct message (D-057).
     "direct_message",
+    # A delivered chat request (D-058).
+    "chat_request",
 )
 # Kinds that add coins, and kinds that remove them; the database checks the sign.
 CREDIT_KINDS = ("welcome_bonus", "referral_reward", "daily_reward", "admin_grant")
-DEBIT_KINDS = ("paid_match", "admin_correction", "account_deleted", "direct_message")
+DEBIT_KINDS = (
+    "paid_match",
+    "admin_correction",
+    "account_deleted",
+    "direct_message",
+    "chat_request",
+)
 # Admin entries must say why.
 ADMIN_KINDS = ("admin_grant", "admin_correction")
 # Each is also the ledger kind of the entry that captures the hold.
-HOLD_PURPOSES = ("paid_match", "direct_message")
+HOLD_PURPOSES = ("paid_match", "direct_message", "chat_request")
 HOLD_STATUSES = ("held", "captured", "released")
 
 

@@ -171,6 +171,32 @@ def message_row(public_id: str, price: int) -> list[InlineKeyboardButton]:
     ]
 
 
+class RequestAction(CallbackData, prefix="creq"):
+    """Chat requests (D-058)."""
+
+    # "ask" (from a card), "send" or "cancel" (the confirmation), "accept", "decline",
+    # "switch" or "stay" (a busy sender's answer)
+    action: str
+    profile: str = ""  # the RealChat ID an "ask" or "send" button names
+    draft: str = ""  # the confirmation a "send" button belongs to
+    request: int = 0  # the request an answer belongs to
+    confirm: int = 0  # 1 once a busy recipient confirmed ending their chat or search
+    price: int = 0  # the price a "send" button was shown with
+
+
+REQUEST_BUTTON = "💬 Chat request · {price}"
+
+
+def request_row(public_id: str, price: int) -> list[InlineKeyboardButton]:
+    """💬 Chat request on another user's card, under Message."""
+    return [
+        InlineKeyboardButton(
+            text=REQUEST_BUTTON.format(price=coins_label(price)),
+            callback_data=RequestAction(action="ask", profile=public_id).pack(),
+        )
+    ]
+
+
 def _has_prefix(row: list[InlineKeyboardButton], data: type[CallbackData]) -> bool:
     prefix = f"{data.__prefix__}{data.__separator__}"
     return any((button.callback_data or "").startswith(prefix) for button in row)
@@ -181,15 +207,15 @@ def is_like_row(row: list[InlineKeyboardButton]) -> bool:
 
 
 def is_card_row(row: list[InlineKeyboardButton]) -> bool:
-    """A row a card has besides Block and Report: Like or Message."""
-    return _has_prefix(row, LikeAction) or _has_prefix(row, DirectAction)
+    """A row a card has besides Block and Report: Like, Message, or Chat request."""
+    return any(_has_prefix(row, data) for data in (LikeAction, DirectAction, RequestAction))
 
 
 def card_keyboard(
     rows: list[list[InlineKeyboardButton]], buttons: InlineKeyboardMarkup
 ) -> InlineKeyboardMarkup:
-    """Another user's card: `rows` (Like, and Message where offered), then `buttons`
-    (Block and Report)."""
+    """Another user's card: `rows` (Like, and Message and Chat request where offered),
+    then `buttons` (Block and Report)."""
     return InlineKeyboardMarkup(inline_keyboard=[*rows, *buttons.inline_keyboard])
 
 

@@ -8,7 +8,7 @@ message retention, are not given as numbers, so the text stays true when they ch
 (D-046).
 """
 
-TERMS_VERSION = "draft-15"
+TERMS_VERSION = "draft-16"
 
 TERMS_TEXT = """\
 DRAFT - not for launch
@@ -34,6 +34,11 @@ see your nickname and RealChat ID with it, and you're told when they open it. Te
 apps that honour RealChat's protection don't let them forward or save it. Direct \
 messages are stored so they can be opened, and deleted automatically after the same \
 set period as chat messages.
+• You can send someone a chat request from their profile card, for coins, when they \
+were recently active in RealChat. They see your nickname and RealChat ID. The coins \
+are taken once the request is delivered and aren't returned if it's declined, expires, \
+or you don't switch to them when they accept. If either of you is in a chat when it's \
+accepted, that chat ends.
 • Telegram apps that honour RealChat's protection don't let your chat partner forward \
 or save what you send. Some Telegram apps also block screenshots of it, but not all of \
 them do.
@@ -46,7 +51,8 @@ and anyone whose profile card you opened, or who opened yours, from their card. 
 Blocking or reporting someone you're chatting with ends the chat, and they are only \
 told that the chat ended. Reporting also blocks them. Blocking doesn't stop you being \
 matched again in a random chat, or being told when they visit or like your profile. \
-Neither of you can send the other direct messages while either has blocked the other.
+Neither of you can send the other direct messages or chat requests while either has \
+blocked the other.
 • Coins are a virtual in-app currency. They have no cash value and can't be exchanged \
 for money or transferred to other users.
 • Accounts that break these rules may be restricted or banned.

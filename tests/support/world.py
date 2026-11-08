@@ -41,6 +41,8 @@ MENU_BUTTONS = [
 PRIVATE_CHAT_KEYS = [[PARTNER_PROFILE, PRIVATE_OFF], [END_CHAT]]
 # ✉️ Message on another user's card, at the default price (D-057).
 MESSAGE = "✉️ Message · 1 coin"
+# 💬 Chat request on another user's card, at the default price (D-058).
+REQUEST = "💬 Chat request · 2 coins"
 
 
 class World:

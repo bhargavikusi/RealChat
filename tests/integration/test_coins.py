@@ -311,7 +311,7 @@ async def test_coins_shows_balance_held_coins_and_history(
         "💰 Your coins",
         "",
         "Balance: 15",
-        "Held for a search: 2",
+        "On hold: 2",
         "Available: 13",
         "",
         "Recent activity:",

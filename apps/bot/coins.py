@@ -40,6 +40,7 @@ LABELS = {
     # Never shown to the user: a returning user's history starts after the deletion.
     "account_deleted": "Removed when the account was deleted",
     "direct_message": "Direct message",
+    "chat_request": "Chat request",
 }
 NO_ACTIVITY = "No coin activity yet."
 DAILY_AVAILABLE = "🎁 Daily reward: {amount} today."
@@ -94,7 +95,8 @@ def invite_lines(link: str, amount: int, cap: int) -> list[str]:
 def coins_text(balance: coins.Balance, entries: list[Entry]) -> str:
     lines = ["💰 Your coins", "", f"Balance: {balance.total}"]
     if balance.held:
-        lines += [f"Held for a search: {balance.held}", f"Available: {balance.available}"]
+        # Coins held for a search, a direct message, or a chat request on its way.
+        lines += [f"On hold: {balance.held}", f"Available: {balance.available}"]
     lines += ["", "Recent activity:"]
     lines += [
         f"{entry.amount:+d}  {LABELS[entry.kind]} · {entry.created_at:%d %b}" for entry in entries

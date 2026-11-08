@@ -627,6 +627,24 @@ Work happens on short-lived issue branches, such as `feature/12-onboarding`, cre
 
 **Why:** Owner decisions (requirements §11). Charging on the notice Telegram confirms is the only delivery the platform can verify. A preview lets the sender check the message before paying; keeping the content makes Open reliable; one free reply lets the recipient answer without making the exchange free.
 
+### D-058 — Chat requests
+
+**Date:** 2026-11-08
+**Decision:**
+
+* Every other user's card has 💬 **Chat request · ‹price›** under Message, on the same cards and with the same exceptions (not the current chat partner; hidden from someone the card's owner blocked). It is shown whatever the person is doing; whether they can take a request is only checked on the tap, so a card never reveals activity, chats, or Silent mode.
+* A request can be sent when the recipient used RealChat within the last 10 minutes (admin runtime setting, 1–60), is not in a chat, and is not in Silent mode (D-052); the sender is not in a chat or searching; and neither has blocked the other. A refusal says only that the person can't take a request right now, and charges nothing. A sender may have several requests waiting, but only one per recipient.
+* The tap shows the price (2 coins, admin runtime setting, 1–100) and that it is taken once the request is delivered and never returned, with Send and Cancel. On Send the price is held and the recipient gets "‹nickname› · /userid_‹id› wants to chat with you" with ✅ Accept and Decline. The price is taken once Telegram accepts that notice; if Telegram refuses it, the hold is released and the sender is told. A repeated Send sends and charges nothing more; Send is refused if the price changed since it was shown. An interrupted send is failed by the worker after a few minutes, uncharged, and the sender is told. An Accept or Decline tapped while the delivery is still being recorded asks to try again.
+* **No refund once delivered** (amends requirements §12): not for a decline, an expiry, or a sender who doesn't switch.
+* The recipient has 60 minutes (admin runtime setting, 5–1440) to answer. Decline tells the sender; an unanswered request expires and the sender is told.
+* Accept by a recipient who is chatting or searching asks them to confirm that it ends their chat or search. A free sender is connected at once. A sender who is chatting or searching is asked to 🔀 Switch or Stay, and the recipient sees that they're waiting; Stay, or no answer within 90 seconds (admin runtime setting, 30–600), lapses the request and tells the recipient.
+* Connecting ends any chat either user is in (the partner left behind is told, as for any ending) and their searches (a paid search's held coins are returned), creates the conversation, and announces it to both with the chat keyboard. Both must still be able to chat (active, onboarded, current terms, no block either way); otherwise the request closes and its sender is told. When one of a sender's requests connects, their other waiting requests close: one still being sent is never charged, and a recipient who was waiting for the sender to switch is told.
+* Each request is accepted at most once and creates at most one conversation; every step is a conditional update, and the conversation is created under the same unique index on open chats as matching. If one of them was matched meanwhile, nothing changes and they're told.
+* Account deletion erases the requests an account sent and received, releasing the holds of those still pending.
+* The draft terms describe chat requests and their no-refund rule (terms version `draft-16`).
+
+**Why:** Owner decisions (requirements §12, amended). Checking availability only on the tap keeps RealChat activity private. Charging on delivery matches what the platform can verify; the no-refund rule for delivered requests is the owner's. Several waiting requests let a sender reach more than one person, with the first acceptance winning.
+
 ## Open
 
 Each of these needs the owner's decision. Until then, the behavior stays configurable and is not presented to users as final.

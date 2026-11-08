@@ -39,6 +39,7 @@ from tests.support.db import wait_until_blocked
 from tests.support.world import (
     BOB_ID,
     MESSAGE,
+    REQUEST,
     World,
     buttons,
     last_to,
@@ -405,6 +406,7 @@ async def test_cards_offer_message_except_to_the_current_partner(
     assert buttons(last_to(world.alice.session, USER_ID)) == [
         LIKE_BUTTON,
         MESSAGE,
+        REQUEST,
         BLOCK_BUTTON,
         REPORT_BUTTON,
     ]
