@@ -47,6 +47,7 @@ class SettingKey(StrEnum):
     CHAT_REQUEST_SWITCH_SECONDS = "chat_request_switch_seconds"
     ACTIVITY_ALERT_COINS = "activity_alert_coins"
     ACTIVITY_ALERT_DAYS = "activity_alert_days"
+    REMINDER_LOCAL_HOUR = "reminder_local_hour"
 
 
 @dataclass(frozen=True)
@@ -280,6 +281,14 @@ SPECS: dict[SettingKey, SettingSpec] = {
             default=7,
             minimum=1,
             maximum=30,
+        ),
+        SettingSpec(
+            SettingKey.REMINDER_LOCAL_HOUR,
+            "Daily reward reminder: local hour without a claim to go by",
+            "o'clock",
+            default=18,
+            minimum=0,
+            maximum=23,
         ),
     )
 }

@@ -13,7 +13,8 @@ Telegram; deleting expired chat messages and direct messages (D-046, D-057) and 
 profile visits (D-053) about once a day; and failing direct messages left pending by an
 interrupted Send, releasing their held coins (D-057); and settling chat requests that
 were not answered in time or were interrupted, telling the users (D-058); and firing or
-refunding activity alerts, telling the buyers (D-059).
+refunding activity alerts, telling the buyers (D-059); and sending daily reward
+reminders that are due (D-060).
 """
 
 import asyncio
@@ -29,6 +30,7 @@ from apps.bot.chat import ChatNotifier
 from apps.bot.chat_requests import RequestNotices
 from apps.bot.main import create_bot
 from apps.bot.private import PrivateModeNotifier, TelegramDeletions
+from apps.bot.reminders import ReminderMessages
 from backend.config.settings import load_bot_settings
 from backend.core.logging import configure_logging, exception_summary
 from backend.core.redis import create_redis
@@ -42,6 +44,7 @@ from backend.modules.chat_requests.service import RequestJobs
 from backend.modules.direct_messages.service import PendingSweep
 from backend.modules.matching.matcher import Matcher
 from backend.modules.people.visits import VisitRetention
+from backend.modules.reminders.service import ReminderJob
 from backend.modules.users.terms import TERMS_VERSION
 
 logger = logging.getLogger(__name__)
@@ -57,6 +60,8 @@ PENDING_SWEEP_SECONDS = 60.0
 CHAT_REQUESTS_SECONDS = 5.0
 # Firing and refunding activity alerts (D-059).
 ACTIVITY_ALERTS_SECONDS = 5.0
+# Daily reward reminders that are due (D-060).
+REMINDERS_SECONDS = 60.0
 
 Job = Callable[[datetime], Awaitable[object]]
 
@@ -114,6 +119,7 @@ async def run() -> None:
     activity_alerts = AlertJobs(
         sessions, runtime_settings, AlertNotices(bot, sessions, runtime_settings)
     )
+    reminders = ReminderJob(sessions, runtime_settings, ReminderMessages(bot), TERMS_VERSION)
     private_mode = PrivateModeJob(sessions, runtime_settings, PrivateModeNotifier(bot, sessions))
     deletions = TelegramDeletions(bot, sessions)
     stop = asyncio.Event()
@@ -135,6 +141,7 @@ async def run() -> None:
                 ("pending direct messages", pending_messages.tick, PENDING_SWEEP_SECONDS),
                 ("chat requests", chat_requests.tick, CHAT_REQUESTS_SECONDS),
                 ("activity alerts", activity_alerts.tick, ACTIVITY_ALERTS_SECONDS),
+                ("daily reward reminders", reminders.tick, REMINDERS_SECONDS),
             ),
             stop,
         )
