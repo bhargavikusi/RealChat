@@ -69,7 +69,7 @@ The index on `(user_id, field, changed_at)` serves the "latest change of this fi
 
 ### `notification_settings`
 
-A user's notification settings (D-052). One row per user, created the first time they change a setting; a user without a row has every default. The notes below say what each setting is for. Each takes effect only once the feature it controls exists: reminders are not built yet, so that value is stored but not read. Silent mode (chat requests), visit and like alerts, and activity alerts about the user are in use.
+A user's notification settings (D-052). One row per user, created the first time they change a setting; a user without a row has every default. The notes below say what each setting is for. Every setting is in use: Silent mode (chat requests), visit and like alerts, reminders (daily reward reminders), and activity alerts about the user.
 
 | Column | Type | Notes |
 |---|---|---|
@@ -134,6 +134,10 @@ Chat requests (D-058). No message content is stored.
 | `created_at`, `delivered_at`, `accepted_at`, `settled_at` | timestamptz | `delivered_at` is unset for `pending` and `failed`, and set for `delivered` and every later state except `closed`, which may come before delivery; `accepted` needs `accepted_at`; `settled_at` is set exactly when it stopped waiting (constraints). |
 
 A partial unique index on `(sender_user_id, recipient_user_id)` for waiting requests (`pending`, `delivered`, `accepted`) allows one per pair. Partial indexes on `created_at` (pending), `delivered_at` (delivered), and `accepted_at` (accepted) serve the worker, which fails interrupted sends after five minutes, expires unanswered requests after `chat_request_expiry_minutes`, and lapses unanswered switches after `chat_request_switch_seconds`. Each status change is a conditional update from the expected status. Sending locks both account rows (`FOR NO KEY UPDATE`, so one sender's requests are recorded one at a time); settling a delivery locks the sender's row first; connecting share-locks both account rows, then the request row, then ends any open chats and inserts the conversation (the open-participant unique index refuses a second chat for either user). That is the order account deletion uses, so none of them deadlock with it. Account deletion releases the holds of the account's pending requests and removes its rows on both sides.
+
+### `daily_reminders`
+
+Daily reward reminders (D-060): at most one per user per UTC day. The primary key is `(user_id, day)` (`user_id` references `users.id`, with `ON DELETE CASCADE`; `day` is the UTC day reminded about). `status` is `sending` (recorded before the message goes out, so a restart never sends it twice), `sent`, `unreachable` (the user blocked the bot or is gone), or `failed`. `created_at` is when it was sent, used to keep two reminders at least 20 hours apart and to skip unreachable users until they use RealChat again. An index on `day` serves the worker's cleanup of rows older than 30 days. Account deletion removes the user's rows.
 
 ### `activity_alerts`
 

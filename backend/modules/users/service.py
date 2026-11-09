@@ -20,6 +20,7 @@ from backend.modules.coins import rewards
 from backend.modules.coins import service as coins
 from backend.modules.direct_messages.models import DirectMessage
 from backend.modules.people.models import ProfileLike, ProfileVisit
+from backend.modules.reminders.models import DailyReminder
 from backend.modules.users import public_ids, validation
 from backend.modules.users.models import (
     RESTRICTED_STATUSES,
@@ -178,8 +179,8 @@ async def delete_account(session: AsyncSession, user_id: int, now: datetime) -> 
     RealChat ID, so the old ID finds nobody, D-054), the age and gender change history,
     notification settings, profile visits and likes made or received (D-053, D-056),
     direct messages and chat requests sent or received (D-057, D-058; held coins of
-    those still pending are released), activity alerts it bought (D-059), and terms
-    acceptances, so a returning user
+    those still pending are released), activity alerts it bought (D-059), daily reward
+    reminders sent (D-060), and terms acceptances, so a returning user
     starts a fresh onboarding with the default settings. Coins are
     forfeited (held coins released, then the balance removed by one ledger entry), the
     invite code is retired, and pending invites are settled as not rewarded (D-055).
@@ -234,6 +235,7 @@ async def delete_account(session: AsyncSession, user_id: int, now: datetime) -> 
     # Alerts the account bought go (its coins are forfeited below); alerts about it stay
     # until the worker refunds their buyers (D-059).
     await session.execute(delete(ActivityAlert).where(ActivityAlert.buyer_user_id == user_id))
+    await session.execute(delete(DailyReminder).where(DailyReminder.user_id == user_id))
     await _ensure_profile(session, user_id)
     user.coin_history_after_id = (await coins.forfeit_all(session, user_id, now)).history_after_id
     await rewards.retire_invites(session, user_id, now)

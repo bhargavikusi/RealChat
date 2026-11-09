@@ -540,7 +540,7 @@ Work happens on short-lived issue branches, such as `feature/12-onboarding`, cre
 * Advanced settings (on the profile card) holds the notification settings, each a one-tap button that shows its current value:
   * 🤫 **Silent mode**, off by default: nobody can send the user chat requests. Direct messages still arrive.
   * 👀 **Visit alerts** and ❤️ **Like alerts**, on by default: notices when someone visits or likes the profile.
-  * ⏰ **Reminders**, on by default: general reminders, such as the daily reward while it is offered.
+  * ⏰ **Reminders**, on by default: general reminders, such as the daily reward while it is offered. Daily reward reminders are sent from D-060.
   * 🔔 **Activity alerts about me**, on by default: whether others can buy activity alerts about the user (added by D-059).
 * Advanced settings also keeps Delete account (and Admin settings for admins), and gains ◀️ Back to the profile card. VIP options join it with the VIP work. More categories may be split out before launch.
 * Each setting is enforced by the feature it controls, as those features ship.
@@ -661,6 +661,20 @@ Work happens on short-lived issue branches, such as `feature/12-onboarding`, cre
 * The draft terms describe activity alerts and the opt-out (terms version `draft-17`).
 
 **Why:** Owner decisions (requirements §15). Telegram doesn't let bots see online status, so the alert is defined by RealChat activity and labelled so. One alert per coin with a refund keeps the purchase clear; the opt-out and blocks are the privacy and anti-harassment controls §15 asks for.
+
+### D-060 — Daily reward reminders
+
+**Date:** 2026-11-09
+**Decision:**
+
+* While the daily reward is on (D-050), the worker reminds users who have ⏰ Reminders on (D-052) and could claim it (an active account, onboarding finished, the current terms accepted) but haven't claimed it this UTC day: "🎁 Your daily reward is waiting: ‹amount›." with 🎁 Claim (the same claim as in /coins) and 🔕 Turn off reminders. Everyone with Reminders on is reminded, however long since they last used RealChat.
+* **Timing follows the user's rhythm first:** the time of day of their latest daily reward claim since their latest account deletion. Without one, a local hour (admin runtime setting, default 18:00) in their country's main time zone, from the `tzdata` country table (a short list names the main zone of large multi-zone countries; otherwise the first listed). This is an approximation for multi-zone countries.
+* At most one reminder per user per UTC day, and at least 20 hours between two, so a local evening that spans midnight UTC never gets two. The reminder is recorded before it is sent, so a restart or a second worker never sends it twice.
+* A user whose last reminder couldn't reach them (they blocked the bot) is skipped until they use RealChat again. Reminders go out in batches of up to 100 a minute, paced well under Telegram's limit.
+* Reminder records are kept for 30 days. Account deletion erases them.
+* The draft terms mention reminders and how to turn them off (terms version `draft-18`).
+
+**Why:** Owner decisions. The user's own claim time is the best signal of when they come by; their country's evening is the fallback. Activity-based and promotional reminders are out of scope (planned with discovery and announcements).
 
 ## Open
 

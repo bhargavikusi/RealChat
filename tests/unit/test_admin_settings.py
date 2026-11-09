@@ -41,6 +41,7 @@ def test_approved_defaults() -> None:
         SettingKey.CHAT_REQUEST_SWITCH_SECONDS: 90,
         SettingKey.ACTIVITY_ALERT_COINS: 1,
         SettingKey.ACTIVITY_ALERT_DAYS: 7,
+        SettingKey.REMINDER_LOCAL_HOUR: 18,
     }
 
 
