@@ -67,7 +67,8 @@ class Sent:
 
 
 async def _lock_ready(session: AsyncSession, first: int, second: int) -> bool:
-    """Lock both accounts FOR KEY SHARE, in id order, and check both can use RealChat.
+    """Lock both accounts (FOR NO KEY UPDATE, in id order, until the transaction ends)
+    and check both can use RealChat.
 
     Account deletion locks the account FOR UPDATE, so a message and a deletion never
     overlap: one waiting on a deletion sees the account gone and is refused.
@@ -219,7 +220,7 @@ async def delivered(session: AsyncSession, message_id: int, now: datetime) -> bo
     (False if the message is no longer pending, e.g. the worker failed it meanwhile,
     or it was deleted with an account).
 
-    The sender's account row is locked FOR KEY SHARE before the message, the order
+    The sender's account row is locked (FOR NO KEY UPDATE) before the message, the order
     account deletion uses (account, then messages), so the two never deadlock: a
     delivery waiting on the sender's deletion then finds the message gone.
     """
