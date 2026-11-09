@@ -332,9 +332,59 @@ async def test_a_run_that_saw_the_user_before_another_recorded_sends_nothing(
     # Another run recorded today's reminder meanwhile.
     await reminded(session_factory, TODAY, EVENING - timedelta(hours=21), status="sending")
 
-    async def stale(*args: object) -> list[reminders.Candidate]:
-        return seen
+    async def stale(*args: object, after: int = 0, **kwargs: object) -> list[reminders.Candidate]:
+        return [candidate for candidate in seen if candidate.user_id > after]
 
     monkeypatch.setattr(reminders, "candidates", stale)
     assert await job(session_factory, chat).tick(EVENING) == 0
     assert reminders_sent(chat) == []
+
+
+async def _stale_candidates(sessions: Sessions, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Make the next run work from candidates read now, as if it read them just before
+    whatever the test does next."""
+    async with sessions() as session:
+        seen = await reminders.candidates(session, EVENING, TERMS_VERSION)
+        await session.commit()
+
+    async def stale(*args: object, after: int = 0, **kwargs: object) -> list[reminders.Candidate]:
+        return [candidate for candidate in seen if candidate.user_id > after]
+
+    monkeypatch.setattr(reminders, "candidates", stale)
+
+
+async def test_a_claim_made_while_the_batch_was_prepared_stops_the_reminder(
+    chat: Chat, session_factory: Sessions, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    await _stale_candidates(session_factory, monkeypatch)
+    await claim_at(session_factory, datetime.combine(TODAY, time(12, 40), tzinfo=UTC))
+    assert await job(session_factory, chat).tick(EVENING) == 0
+    assert reminders_sent(chat) == []
+
+
+async def test_an_account_deleted_while_the_batch_was_prepared_is_not_reminded(
+    chat: Chat, session_factory: Sessions, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    await _stale_candidates(session_factory, monkeypatch)
+    async with session_factory() as session:
+        await users.delete_account(session, await user_id(session_factory), datetime.now(UTC))
+        await session.commit()
+    assert await job(session_factory, chat).tick(EVENING) == 0
+    async with session_factory() as session:
+        assert list(await session.scalars(select(DailyReminder.day))) == []
+
+
+async def test_candidates_are_read_in_pages_up_to_the_batch(
+    chat: Chat,
+    session_factory: Sessions,
+    bot_settings: BotSettings,
+    redis: Redis,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    for telegram_id in (6464, 7575):
+        await complete_onboarding(Chat(bot_settings, redis, session_factory, user_id=telegram_id))
+    monkeypatch.setattr(reminders, "PAGE_SIZE", 1)
+    monkeypatch.setattr(reminders, "BATCH_SIZE", 2)
+    reminder_job = job(session_factory, chat)
+    assert await reminder_job.tick(EVENING) == 2
+    assert await reminder_job.tick(EVENING) == 1

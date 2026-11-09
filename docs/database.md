@@ -137,7 +137,7 @@ A partial unique index on `(sender_user_id, recipient_user_id)` for waiting requ
 
 ### `daily_reminders`
 
-Daily reward reminders (D-060): at most one per user per UTC day. The primary key is `(user_id, day)` (`user_id` references `users.id`, with `ON DELETE CASCADE`; `day` is the UTC day reminded about). `status` is `sending` (recorded before the message goes out, so a restart never sends it twice), `sent`, `unreachable` (the user blocked the bot or is gone), or `failed`. `created_at` is when it was sent, used to keep two reminders at least 20 hours apart and to skip unreachable users until they use RealChat again. An index on `day` serves the worker's cleanup of rows older than 30 days. Account deletion removes the user's rows.
+Daily reward reminders (D-060): at most one per user per UTC day. The primary key is `(user_id, day)` (`user_id` references `users.id`, with `ON DELETE CASCADE`; `day` is the UTC day reminded about). `status` is `sending` (recorded before the message goes out, so a restart never sends it twice), `sent`, `unreachable` (the user blocked the bot or is gone), or `failed`. `created_at` is when the reminder was recorded, just before it was sent; it is the time used to keep two reminders at least 20 hours apart and to skip unreachable users until they use RealChat again. The row is recorded only after the user's account row is locked and every condition re-checked, so a claim or an account deletion made meanwhile wins. An index on `day` serves the worker's cleanup of rows older than 30 days. Account deletion removes the user's rows.
 
 ### `activity_alerts`
 

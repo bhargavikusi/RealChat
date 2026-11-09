@@ -17,9 +17,9 @@ import logging
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
-from typing import Protocol
+from typing import Any, Protocol
 
-from sqlalchemy import delete, exists, func, select, true, update
+from sqlalchemy import Select, delete, exists, func, select, true, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
@@ -36,6 +36,8 @@ MIN_GAP = timedelta(hours=20)
 # Reminder rows are kept this long, then deleted.
 KEEP_FOR = timedelta(days=30)
 BATCH_SIZE = 100
+# Candidates are read this many at a time.
+PAGE_SIZE = 500
 # Between two sends: well under Telegram's limit of about 30 messages a second.
 PAUSE_SECONDS = 0.05
 
@@ -55,9 +57,9 @@ def _start_of_day(now: datetime) -> datetime:
     return datetime.combine(now.astimezone(UTC).date(), datetime.min.time(), tzinfo=UTC)
 
 
-async def candidates(session: AsyncSession, now: datetime, terms_version: str) -> list[Candidate]:
+def _eligible(now: datetime, terms_version: str) -> Select[Any]:
     """Users who could be reminded today, before timing: eligible, Reminders on, today's
-    reward not claimed, and not yet reminded today."""
+    reward not claimed, and not yet reminded today, with what timing needs."""
     after = func.coalesce(User.coin_history_after_id, 0)
     claims = select(CoinTransaction.created_at).where(
         CoinTransaction.user_id == User.id,
@@ -85,7 +87,7 @@ async def candidates(session: AsyncSession, now: datetime, terms_version: str) -
         .scalar_subquery(),
         true(),
     )
-    rows = await session.execute(
+    return (
         select(
             User.id,
             User.telegram_user_id,
@@ -105,7 +107,21 @@ async def candidates(session: AsyncSession, now: datetime, terms_version: str) -
             ~claimed_today,
             ~reminded_today,
         )
-        .order_by(User.id)
+    )
+
+
+async def candidates(
+    session: AsyncSession,
+    now: datetime,
+    terms_version: str,
+    *,
+    after: int = 0,
+    limit: int = PAGE_SIZE,
+) -> list[Candidate]:
+    """One page of users who could be reminded today (see `_eligible`), by user id after
+    `after`, so a run never holds every user in memory."""
+    rows = await session.execute(
+        _eligible(now, terms_version).where(User.id > after).order_by(User.id).limit(limit)
     )
     return [Candidate(*row) for row in rows]
 
@@ -128,8 +144,20 @@ def is_due(candidate: Candidate, now: datetime, local_hour: int) -> bool:
     return local.hour >= local_hour
 
 
-async def claim_day(session: AsyncSession, user_id: int, now: datetime) -> bool:
-    """Record today's reminder, at `now`, before it is sent; False if one already was."""
+async def claim_day(session: AsyncSession, user_id: int, now: datetime, terms_version: str) -> bool:
+    """Record today's reminder, at `now`, before it is sent. False if one already was,
+    or the user can no longer be reminded.
+
+    The user's row is locked first, as claiming the reward and deleting the account
+    lock it, and every condition is checked again under the lock: a user who claimed
+    meanwhile, or whose account was deleted, is never reminded.
+    """
+    await session.execute(select(User.id).where(User.id == user_id).with_for_update(key_share=True))
+    still = await session.scalar(
+        select(_eligible(now, terms_version).where(User.id == user_id).exists())
+    )
+    if not still:
+        return False
     recorded = await session.scalar(
         insert(DailyReminder)
         .values(user_id=user_id, day=now.astimezone(UTC).date(), created_at=now)
@@ -170,13 +198,24 @@ class ReminderJob:
             on = await self._runtime.get(session, SettingKey.DAILY_REWARD_ON)
             amount = await self._runtime.get(session, SettingKey.DAILY_REWARD_COINS)
             hour = await self._runtime.get(session, SettingKey.REMINDER_LOCAL_HOUR)
-            found = await candidates(session, now, self._terms_version) if on else []
             await session.commit()
-        due = [candidate for candidate in found if is_due(candidate, now, hour)][:BATCH_SIZE]
+        due: list[Candidate] = []
+        after = 0
+        while on and len(due) < BATCH_SIZE:
+            async with self._sessions() as session:
+                page = await candidates(
+                    session, now, self._terms_version, after=after, limit=PAGE_SIZE
+                )
+                await session.commit()
+            due += [candidate for candidate in page if is_due(candidate, now, hour)]
+            if len(page) < PAGE_SIZE:
+                break
+            after = page[-1].user_id
+        due = due[:BATCH_SIZE]
         sent = 0
         for candidate in due:
             async with self._sessions() as session:
-                claimed = await claim_day(session, candidate.user_id, now)
+                claimed = await claim_day(session, candidate.user_id, now, self._terms_version)
                 await session.commit()
             if not claimed:
                 continue
