@@ -41,6 +41,8 @@ LABELS = {
     "account_deleted": "Removed when the account was deleted",
     "direct_message": "Direct message",
     "chat_request": "Chat request",
+    "activity_alert": "Activity alert",
+    "activity_alert_refund": "Activity alert returned",
 }
 NO_ACTIVITY = "No coin activity yet."
 DAILY_AVAILABLE = "🎁 Daily reward: {amount} today."

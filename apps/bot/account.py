@@ -105,6 +105,7 @@ NOTIFICATION_LABELS = {
     Notification.VISIT_ALERTS: "👀 Visit alerts",
     Notification.LIKE_ALERTS: "❤️ Like alerts",
     Notification.REMINDERS: "⏰ Reminders",
+    Notification.ACTIVITY_ALERTS: "🔔 Activity alerts about me",
 }
 SILENT_MODE_ON = "Silent mode is on: nobody can send you chat requests. Messages still arrive."
 SILENT_MODE_OFF = "Silent mode is off."

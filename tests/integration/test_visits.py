@@ -27,6 +27,7 @@ from backend.modules.users.service import Notification
 from tests.support.chat import USER_ID, Chat, complete_onboarding
 from tests.support.db import wait_until_blocked
 from tests.support.world import (
+    ALERT,
     BOB_ID,
     MESSAGE,
     REQUEST,
@@ -145,7 +146,7 @@ async def test_visited_you_lists_the_visitor_whose_card_opens(world: World) -> N
     await world.bob.press(f"{ALICE} · today")
     card = last_to(world.bob.session, BOB_ID)
     assert text_of(card).startswith(f"{pp.VISITOR_HEADER}\n\n👤 {ALICE}")
-    assert buttons(card) == [LIKE_BUTTON, MESSAGE, REQUEST, BLOCK_BUTTON, REPORT_BUTTON]
+    assert buttons(card) == [LIKE_BUTTON, MESSAGE, REQUEST, ALERT, BLOCK_BUTTON, REPORT_BUTTON]
     # Opening a visitor's card is a visit too, so Alice is told.
     assert notices_to(world.bob, USER_ID) == [f"👀 {BOB} viewed your profile."]
 
@@ -416,5 +417,5 @@ async def test_block_and_report_ignore_chats_from_before_an_account_deletion(
     assert text_of(card).startswith(pp.VISITOR_HEADER)
     # The old chat is ignored: Block and Report are for the profile (D-054).
     data = own_buttons(world.alice)
-    assert list(data) == [LIKE_BUTTON, MESSAGE, REQUEST, BLOCK_BUTTON, REPORT_BUTTON]
+    assert list(data) == [LIKE_BUTTON, MESSAGE, REQUEST, ALERT, BLOCK_BUTTON, REPORT_BUTTON]
     assert data[BLOCK_BUTTON].startswith("psafety:") and data[REPORT_BUTTON].startswith("psafety:")

@@ -45,6 +45,8 @@ class SettingKey(StrEnum):
     CHAT_REQUEST_ACTIVE_MINUTES = "chat_request_active_minutes"
     CHAT_REQUEST_EXPIRY_MINUTES = "chat_request_expiry_minutes"
     CHAT_REQUEST_SWITCH_SECONDS = "chat_request_switch_seconds"
+    ACTIVITY_ALERT_COINS = "activity_alert_coins"
+    ACTIVITY_ALERT_DAYS = "activity_alert_days"
 
 
 @dataclass(frozen=True)
@@ -262,6 +264,22 @@ SPECS: dict[SettingKey, SettingSpec] = {
             default=90,
             minimum=30,
             maximum=600,
+        ),
+        SettingSpec(
+            SettingKey.ACTIVITY_ALERT_COINS,
+            "Price of an activity alert",
+            "coins",
+            default=1,
+            minimum=1,
+            maximum=100,
+        ),
+        SettingSpec(
+            SettingKey.ACTIVITY_ALERT_DAYS,
+            "Activity alerts: days before a refund",
+            "days",
+            default=7,
+            minimum=1,
+            maximum=30,
         ),
     )
 }

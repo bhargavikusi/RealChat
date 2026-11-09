@@ -16,6 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from apps.bot import (
     account,
+    activity_alerts,
     admin,
     chat,
     chat_requests,
@@ -118,6 +119,8 @@ def create_dispatcher(
         direct.create_router(),
         # Chat requests (D-058).
         chat_requests.create_router(),
+        # Activity alerts (D-059).
+        activity_alerts.create_router(),
         # Relay right after the chat buttons: it only takes messages from users in a
         # chat with no other step waiting for an answer, and passes the rest on.
         relay.create_router(),

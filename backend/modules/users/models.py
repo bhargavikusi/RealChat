@@ -180,6 +180,8 @@ class NotificationSettings(Base):
     visit_alerts: Mapped[bool] = mapped_column(Boolean, server_default="true")
     like_alerts: Mapped[bool] = mapped_column(Boolean, server_default="true")
     reminders: Mapped[bool] = mapped_column(Boolean, server_default="true")
+    # Others may buy alerts for when this user is active in RealChat (D-059).
+    activity_alerts: Mapped[bool] = mapped_column(Boolean, server_default="true")
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )

@@ -13,6 +13,7 @@ from sqlalchemy import delete, func, or_, select, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from backend.modules.activity_alerts.models import ActivityAlert
 from backend.modules.admin.models import AdminAuditEntry
 from backend.modules.chat_requests.models import ChatRequest
 from backend.modules.coins import rewards
@@ -177,7 +178,8 @@ async def delete_account(session: AsyncSession, user_id: int, now: datetime) -> 
     RealChat ID, so the old ID finds nobody, D-054), the age and gender change history,
     notification settings, profile visits and likes made or received (D-053, D-056),
     direct messages and chat requests sent or received (D-057, D-058; held coins of
-    those still pending are released), and terms acceptances, so a returning user
+    those still pending are released), activity alerts it bought (D-059), and terms
+    acceptances, so a returning user
     starts a fresh onboarding with the default settings. Coins are
     forfeited (held coins released, then the balance removed by one ledger entry), the
     invite code is retired, and pending invites are settled as not rewarded (D-055).
@@ -229,6 +231,9 @@ async def delete_account(session: AsyncSession, user_id: int, now: datetime) -> 
     for hold_id in request_holds.all():
         await coins.release(session, hold_id, now)
     await session.execute(delete(ChatRequest).where(requested))
+    # Alerts the account bought go (its coins are forfeited below); alerts about it stay
+    # until the worker refunds their buyers (D-059).
+    await session.execute(delete(ActivityAlert).where(ActivityAlert.buyer_user_id == user_id))
     await _ensure_profile(session, user_id)
     user.coin_history_after_id = (await coins.forfeit_all(session, user_id, now)).history_after_id
     await rewards.retire_invites(session, user_id, now)
@@ -255,6 +260,7 @@ class Notification(StrEnum):
     VISIT_ALERTS = "visit_alerts"
     LIKE_ALERTS = "like_alerts"
     REMINDERS = "reminders"
+    ACTIVITY_ALERTS = "activity_alerts"
 
 
 NOTIFICATION_DEFAULTS = {
@@ -262,6 +268,7 @@ NOTIFICATION_DEFAULTS = {
     Notification.VISIT_ALERTS: True,
     Notification.LIKE_ALERTS: True,
     Notification.REMINDERS: True,
+    Notification.ACTIVITY_ALERTS: True,
 }
 
 

@@ -366,6 +366,8 @@ Allow users to manage notification preferences. Apply privacy settings, opt-outs
 
 Do not charge users for notifications that cannot be activated.
 
+Approved (D-059): 🔔 Alert when active on a profile card buys one alert, for 1 coin (admin setting), the next time the person uses RealChat within 7 days (admin setting); the coin is returned if that doesn't happen, on a block either way, if the person opts out, or if their account becomes unavailable. People can turn off activity alerts about themselves. It is labelled as RealChat activity, never Telegram presence.
+
 ## 16. Virtual Coin Economy
 
 Implement a reliable virtual-currency system.
