@@ -42,7 +42,8 @@ accepted, that chat ends.
 • You can pay coins for one alert the next time someone uses RealChat. Unless you \
 turn this off in Advanced settings, others can set such an alert about you; you're \
 not told who. It's based on your use of RealChat, never your Telegram online status. \
-The coins come back if the alert can't be sent within a set period.
+The coins come back if the alert can't be sent within a set period, but not if you \
+cancel it.
 • Telegram apps that honour RealChat's protection don't let your chat partner forward \
 or save what you send. Some Telegram apps also block screenshots of it, but not all of \
 them do.

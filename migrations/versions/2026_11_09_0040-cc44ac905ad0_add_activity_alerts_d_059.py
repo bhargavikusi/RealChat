@@ -111,6 +111,9 @@ def upgrade() -> None:
         unique=True,
         postgresql_where=sa.text("status = 'active'"),
     )
+    op.create_index(
+        "ix_activity_alerts_buyer_user_id", "activity_alerts", ["buyer_user_id"], unique=False
+    )
     op.add_column(
         "notification_settings",
         sa.Column("activity_alerts", sa.Boolean(), server_default="true", nullable=False),
@@ -134,6 +137,7 @@ def downgrade() -> None:
         table_name="activity_alerts",
         postgresql_where=sa.text("status = 'active'"),
     )
+    op.drop_index("ix_activity_alerts_buyer_user_id", table_name="activity_alerts")
     op.drop_table("activity_alerts")
     # The ledger is append-only, so this fails while any activity alert entry exists,
     # rather than rewriting history.

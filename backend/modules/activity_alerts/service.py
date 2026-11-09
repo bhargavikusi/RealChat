@@ -63,19 +63,28 @@ class Settled:
     target_id: int
     price: int
     reason: str | None = None  # the refund reason; None when it fired
+    # When it fired: the person as they were then, so a deletion made just afterwards
+    # never puts a returning account's identity in the alert.
+    nickname: str | None = None
+    public_id: str | None = None
 
 
-async def _ready(session: AsyncSession, user_id: int) -> bool:
-    found = await session.scalar(
+async def _lock_ready(session: AsyncSession, first: int, second: int) -> bool:
+    """Lock both accounts (FOR NO KEY UPDATE, in id order, until the transaction ends)
+    and check both can use RealChat. Account deletion locks the account FOR UPDATE, so a
+    purchase never charges for someone being deleted: it waits, then sees them gone."""
+    ready = await session.scalars(
         select(User.id)
         .join(Profile, Profile.user_id == User.id)
         .where(
-            User.id == user_id,
+            User.id.in_((first, second)),
             User.status == "active",
             Profile.onboarding_completed_at.is_not(None),
         )
+        .order_by(User.id)
+        .with_for_update(key_share=True, of=User)
     )
-    return found is not None
+    return len(ready.all()) == 2
 
 
 async def pending(session: AsyncSession, buyer_id: int, target_id: int) -> int | None:
@@ -90,10 +99,9 @@ async def pending(session: AsyncSession, buyer_id: int, target_id: int) -> int |
 
 
 async def refusal(session: AsyncSession, buyer_id: int, target_id: int) -> Refusal | None:
-    """Why `buyer_id` can't buy an alert for `target_id` now, or None if they can."""
-    if buyer_id == target_id or not (
-        await _ready(session, buyer_id) and await _ready(session, target_id)
-    ):
+    """Why `buyer_id` can't buy an alert for `target_id` now, or None if they can. Locks
+    both accounts (see `_lock_ready`)."""
+    if buyer_id == target_id or not await _lock_ready(session, buyer_id, target_id):
         return Refusal.UNAVAILABLE
     if await moderation.is_blocked(session, buyer_id, target_id):
         return Refusal.YOU_BLOCKED
@@ -159,9 +167,10 @@ async def bought_under(session: AsyncSession, key: str) -> bool:
     return found is not None
 
 
-async def cancel(session: AsyncSession, alert_id: int, buyer_id: int, now: datetime) -> bool:
-    """The buyer cancels an active alert, without a refund. Returns whether it did."""
-    cancelled = await session.scalar(
+async def cancel(session: AsyncSession, alert_id: int, buyer_id: int, now: datetime) -> int | None:
+    """The buyer cancels an active alert, without a refund. Returns the person it was
+    for if this call cancelled it."""
+    return await session.scalar(
         update(ActivityAlert)
         .where(
             ActivityAlert.id == alert_id,
@@ -169,9 +178,8 @@ async def cancel(session: AsyncSession, alert_id: int, buyer_id: int, now: datet
             ActivityAlert.status == "active",
         )
         .values(status="cancelled", settled_at=now)
-        .returning(ActivityAlert.id)
+        .returning(ActivityAlert.target_user_id)
     )
-    return cancelled is not None
 
 
 # --- The worker ------------------------------------------------------------------------
@@ -217,16 +225,28 @@ def _target_gone(target: type[User]) -> ColumnElement[bool]:
 
 
 async def fire_due(session: AsyncSession, now: datetime, days: int) -> list[Settled]:
-    """Fire every active alert, still within its `days`, whose person used RealChat after
-    it was bought, unless it is due a refund instead. Returns those fired."""
-    target = aliased(User)
+    """Fire every active alert whose person used RealChat after it was bought and within
+    its `days`, unless it is due a refund instead. Returns those fired, with the person's
+    nickname and RealChat ID as they are now, read in the same transaction.
+
+    An alert still within its period fires on any later activity; one whose period has
+    passed still fires if the activity recorded falls inside it (the worker ran late).
+    Alerts of a buyer who can no longer use RealChat are left alone.
+    """
+    target, buyer = aliased(User), aliased(User)
+    window = timedelta(days=days)
     due = (
         select(ActivityAlert.id)
         .join(target, target.id == ActivityAlert.target_user_id)
+        .join(buyer, buyer.id == ActivityAlert.buyer_user_id)
         .where(
             ActivityAlert.status == "active",
-            ActivityAlert.created_at >= now - timedelta(days=days),
+            buyer.status == "active",
             target.last_active_at > ActivityAlert.created_at,
+            or_(
+                ActivityAlert.created_at >= now - window,
+                target.last_active_at <= ActivityAlert.created_at + window,
+            ),
             ~_target_gone(target),
             ~_blocked_either_way(),
             ~_opted_out(),
@@ -247,7 +267,32 @@ async def fire_due(session: AsyncSession, now: datetime, days: int) -> list[Sett
             ActivityAlert.price,
         )
     )
-    return [Settled(int(a), int(b), int(c), int(d)) for a, b, c, d in rows]
+    fired = [Settled(int(a), int(b), int(c), int(d)) for a, b, c, d in rows]
+    if not fired:
+        return []
+    # Share-locked, so an account deletion in progress finishes first; a person deleted
+    # meanwhile is left unnamed rather than shown as their returning account.
+    names = {
+        int(user_id): (nickname, public_id) if status == "active" else (None, None)
+        for user_id, nickname, public_id, status in await session.execute(
+            select(Profile.user_id, Profile.nickname, Profile.public_id, User.status)
+            .join(User, User.id == Profile.user_id)
+            .where(Profile.user_id.in_({alert.target_id for alert in fired}))
+            .with_for_update(read=True, of=User)
+            .execution_options(populate_existing=True)
+        )
+    }
+    return [
+        Settled(
+            alert.alert_id,
+            alert.buyer_id,
+            alert.target_id,
+            alert.price,
+            nickname=names[alert.target_id][0],
+            public_id=names[alert.target_id][1],
+        )
+        for alert in fired
+    ]
 
 
 async def refund_candidates(

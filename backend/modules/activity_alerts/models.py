@@ -65,6 +65,8 @@ class ActivityAlert(Base):
             "created_at",
             postgresql_where=text("status = 'active'"),
         ),
+        # Account deletion removes every alert the account bought.
+        Index("ix_activity_alerts_buyer_user_id", "buyer_user_id"),
     )
 
     id: Mapped[int] = mapped_column(BigInteger, Identity(), primary_key=True)

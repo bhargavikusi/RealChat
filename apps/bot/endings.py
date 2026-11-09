@@ -229,6 +229,10 @@ def _has_prefix(row: list[InlineKeyboardButton], data: type[CallbackData]) -> bo
     return any((button.callback_data or "").startswith(prefix) for button in row)
 
 
+def is_alert_row(row: list[InlineKeyboardButton]) -> bool:
+    return _has_prefix(row, AlertAction)
+
+
 def is_like_row(row: list[InlineKeyboardButton]) -> bool:
     return _has_prefix(row, LikeAction)
 

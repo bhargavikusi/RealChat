@@ -21,10 +21,10 @@ from aiogram import Bot, F, Router
 from aiogram.enums import ChatType
 from aiogram.exceptions import TelegramAPIError
 from aiogram.fsm.context import FSMContext
-from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup
+from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from apps.bot.endings import AlertAction, coins_label
+from apps.bot.endings import AlertAction, alert_row, coins_label, is_alert_row
 from apps.bot.people import NOT_AVAILABLE, days_label, ready_user
 from backend.config.settings import BotSettings
 from backend.core.logging import exception_summary
@@ -62,6 +62,11 @@ NOT_SET = "This alert isn't set any more."
 FIRED = (
     "🔔 {nickname} is using RealChat now · /userid_{public_id}\n"
     "This is activity in RealChat, not Telegram online status."
+)
+# The person deleted their account just as the alert fired.
+FIRED_GONE = (
+    "🔔 The person you set an alert for used RealChat, but their account is no longer "
+    "available. This is activity in RealChat, not Telegram online status."
 )
 REFUND_EXPIRED = (
     "🔔 {nickname} didn't use RealChat within {days}, so your alert ended. {price} returned."
@@ -205,13 +210,41 @@ async def on_cancel(
     session: AsyncSession,
     state: FSMContext,
     settings: BotSettings,
+    runtime_settings: RuntimeSettings,
 ) -> None:
     user_id = await ready_user(query, bot, session, state, settings)
     if user_id is None:
         return
-    cancelled = await alerts.cancel(session, callback_data.alert, user_id, _now())
+    target_id = await alerts.cancel(session, callback_data.alert, user_id, _now())
+    if target_id is None:
+        await session.commit()
+        await query.answer(NOT_SET)
+        return
+    public_id = (await users.get_profile(session, target_id)).public_id
+    price = await runtime_settings.get(session, SettingKey.ACTIVITY_ALERT_COINS)
     await session.commit()
-    await query.answer(CANCELLED if cancelled else NOT_SET)
+    await query.answer(CANCELLED)
+    await _offer_again(bot, query, public_id, price)
+
+
+async def _offer_again(bot: Bot, query: CallbackQuery, public_id: str, price: int) -> None:
+    """Turn the card's Cancel back into Alert when active, keeping its other buttons.
+    Best effort: Telegram may refuse, e.g. for an old message."""
+    message = query.message
+    if not isinstance(message, Message) or message.reply_markup is None:
+        return
+    rows = [
+        alert_row(public_id, price, None) if is_alert_row(row) else row
+        for row in message.reply_markup.inline_keyboard
+    ]
+    try:
+        await bot.edit_message_reply_markup(
+            chat_id=message.chat.id,
+            message_id=message.message_id,
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=rows),
+        )
+    except TelegramAPIError as exc:
+        logger.info("could not update buttons", extra=exception_summary(exc))
 
 
 class AlertNotices:
@@ -235,15 +268,22 @@ class AlertNotices:
 
     async def fired(self, alert: Settled) -> None:
         async with self._sessions() as session:
-            chat_id = (await users.get_user(session, alert.buyer_id)).telegram_user_id
-            profile = await users.get_profile(session, alert.target_id)
+            buyer = await users.get_user(session, alert.buyer_id)
             await session.commit()
-        text = FIRED.format(nickname=profile.nickname or SOMEONE, public_id=profile.public_id)
-        await self._send(chat_id, text)
+        if buyer.status != "active":
+            return  # the buyer deleted their account (or was restricted) meanwhile
+        # The person as they were when it fired, never as they are now.
+        text = (
+            FIRED.format(nickname=alert.nickname, public_id=alert.public_id)
+            if alert.nickname and alert.public_id
+            else FIRED_GONE
+        )
+        await self._send(buyer.telegram_user_id, text)
 
     async def refunded(self, alert: Settled) -> None:
         async with self._sessions() as session:
-            chat_id = (await users.get_user(session, alert.buyer_id)).telegram_user_id
+            buyer = await users.get_user(session, alert.buyer_id)
+            chat_id = buyer.telegram_user_id
             nickname = await _nickname(session, alert.target_id)
             days = await self._runtime.get(session, SettingKey.ACTIVITY_ALERT_DAYS)
             await session.commit()

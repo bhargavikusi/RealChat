@@ -4,6 +4,8 @@ import asyncio
 from datetime import UTC, datetime, timedelta
 
 import pytest
+from aiogram.methods import EditMessageReplyMarkup
+from aiogram.types import InlineKeyboardMarkup
 from redis.asyncio import Redis
 from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -483,3 +485,104 @@ async def test_asking_again_while_an_alert_is_set_is_refused(
     await ask(world.alice, session_factory, BOB_ID)
     assert answer(world.alice) == aa.REFUSALS[Refusal.PENDING].format(nickname=BOB)
     assert await entries(session_factory, "activity_alert") == 1
+
+
+# --- Review follow-ups ---------------------------------------------------------------------
+
+
+async def test_a_purchase_waits_for_the_persons_deletion_and_charges_nothing(
+    world: World, session_factory: Sessions
+) -> None:
+    alice, bob = await user_id(session_factory, USER_ID), await user_id(session_factory, BOB_ID)
+    async with session_factory() as deleting, session_factory() as buying:
+        await users.delete_account(deleting, bob, now())
+        pending = asyncio.create_task(alerts.buy(buying, alice, bob, "k", 1, now()))
+        await wait_until_blocked(session_factory)
+        await deleting.commit()
+        bought = await pending
+        await buying.commit()
+    assert bought.refusal == Refusal.UNAVAILABLE
+    assert await rows(session_factory) == []
+    assert await entries(session_factory, "activity_alert") == 0
+
+
+async def test_cancelling_from_the_card_offers_the_alert_again(
+    world: World, session_factory: Sessions
+) -> None:
+    await buy(world.alice, session_factory, BOB_ID)
+    await world.alice.send(f"/userid_{await public_id(session_factory, BOB_ID)}")
+    markup = last_to(world.alice.session, USER_ID).reply_markup
+    assert isinstance(markup, InlineKeyboardMarkup)
+    before = [b.text for row in markup.inline_keyboard for b in row]
+    await world.alice.press_on(markup, ALERT_SET_BUTTON)
+    edits = [m for m in world.alice.session.requests if isinstance(m, EditMessageReplyMarkup)]
+    edited = edits[-1].reply_markup
+    assert isinstance(edited, InlineKeyboardMarkup)
+    after = [b.text for row in edited.inline_keyboard for b in row]
+    assert after == [ALERT if text == ALERT_SET_BUTTON else text for text in before]
+
+
+async def test_the_alert_names_the_person_as_they_were_when_it_fired(
+    world: World, session_factory: Sessions
+) -> None:
+    bob_public = await public_id(session_factory, BOB_ID)
+    await buy(world.alice, session_factory, BOB_ID)
+    await bob_uses_realchat(session_factory)
+    async with session_factory() as session:
+        (fired,) = await alerts.fire_due(session, now(), 7)
+        await session.commit()
+    # Bob deletes his account before the notice goes out.
+    async with session_factory() as session:
+        await users.delete_account(session, await user_id(session_factory, BOB_ID), now())
+        await session.commit()
+    runtime = RuntimeSettings(ttl_seconds=0)
+    await aa.AlertNotices(world.bob.bot, session_factory, runtime).fired(fired)
+    assert text_of(last_to(world.bob.session, USER_ID)) == aa.FIRED.format(
+        nickname=BOB, public_id=bob_public
+    )
+
+
+async def test_an_alert_about_someone_just_deleted_names_nobody(
+    world: World, session_factory: Sessions
+) -> None:
+    alice, bob = await user_id(session_factory, USER_ID), await user_id(session_factory, BOB_ID)
+    runtime = RuntimeSettings(ttl_seconds=0)
+    gone = alerts.Settled(1, alice, bob, 1)
+    await aa.AlertNotices(world.bob.bot, session_factory, runtime).fired(gone)
+    assert text_of(last_to(world.bob.session, USER_ID)) == aa.FIRED_GONE
+
+
+async def test_activity_inside_the_period_fires_even_when_seen_late(
+    world: World, session_factory: Sessions
+) -> None:
+    await buy(world.alice, session_factory, BOB_ID)
+    await bob_uses_realchat(session_factory, after=timedelta(days=1))
+    await move_back(session_factory, timedelta(days=8))
+    assert await jobs(session_factory, world.bob).tick(now()) == 1
+    assert await rows(session_factory) == [("fired", None)]
+
+
+async def test_an_unavailable_buyers_alert_does_not_fire(
+    world: World, session_factory: Sessions
+) -> None:
+    await buy(world.alice, session_factory, BOB_ID)
+    await set_status(session_factory, USER_ID, "suspended")
+    await bob_uses_realchat(session_factory)
+    assert await jobs(session_factory, world.bob).tick(now()) == 0
+    assert await rows(session_factory) == [("active", None)]
+
+
+async def test_no_notice_to_a_buyer_deleted_after_it_fired(
+    world: World, session_factory: Sessions
+) -> None:
+    await buy(world.alice, session_factory, BOB_ID)
+    await bob_uses_realchat(session_factory)
+    async with session_factory() as session:
+        (fired,) = await alerts.fire_due(session, now(), 7)
+        await session.commit()
+    async with session_factory() as session:
+        await users.delete_account(session, await user_id(session_factory, USER_ID), now())
+        await session.commit()
+    runtime = RuntimeSettings(ttl_seconds=0)
+    await aa.AlertNotices(world.bob.bot, session_factory, runtime).fired(fired)
+    assert world.bob.session.sent_to(USER_ID) == []
