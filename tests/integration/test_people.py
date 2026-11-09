@@ -1,5 +1,6 @@
 """People: past chat partners (D-051), and RealChat activity."""
 
+import asyncio
 from datetime import UTC, datetime, timedelta
 
 import pytest
@@ -21,6 +22,7 @@ from backend.modules.people import service as people
 from backend.modules.users import service as users
 from backend.modules.users.models import Profile, User
 from tests.support.chat import USER_ID, Chat, complete_onboarding
+from tests.support.db import wait_until_blocked
 from tests.support.world import (
     ALERT,
     BOB_ID,
@@ -410,3 +412,19 @@ async def test_only_active_accounts_have_activity_recorded(session_factory: Sess
         await users.record_activity(session, USER_ID, NOW, ACTIVITY_INTERVAL)
         await session.commit()
     assert await last_active(session_factory, USER_ID) == NOW - timedelta(days=1)
+
+
+async def test_a_past_partners_card_waits_for_their_account_deletion(
+    world: World, session_factory: Sessions
+) -> None:
+    conversation_id = await chatted(world)
+    alice, bob = await world.user_id(USER_ID), await world.user_id(BOB_ID)
+    since = datetime.now(UTC) - timedelta(days=10)
+    async with session_factory() as deleting, session_factory() as reading:
+        await users.delete_account(deleting, bob, datetime.now(UTC))
+        pending = asyncio.create_task(people.past_partner(reading, alice, conversation_id, since))
+        await wait_until_blocked(session_factory)
+        await deleting.commit()
+        found = await pending
+        await reading.commit()
+    assert found is None

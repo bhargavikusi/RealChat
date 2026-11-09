@@ -128,12 +128,15 @@ async def visitor_profile(
     """The profile of someone who visited the viewer within the retention period.
 
     None otherwise, so an old or forged button opens nobody. Read in the same statement
-    as the check, so an account deleted meanwhile is never shown half-erased.
+    as the check, with the visitor's account row share-locked until the transaction ends,
+    as for /userid: an account deletion either finishes first, and nobody is found, or
+    waits until the card has been read.
     """
     query = (
         _eligible_visits(viewer_id, since)
         .add_columns(Profile)
         .where(ProfileVisit.visitor_user_id == visitor_id)
+        .with_for_update(read=True, of=User)
         .execution_options(populate_existing=True)
     )
     found = (await session.execute(query)).first()

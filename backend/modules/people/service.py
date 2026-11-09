@@ -41,10 +41,15 @@ class PastChats:
     has_next: bool
 
 
-def _past_conversations(viewer_id: int, since: datetime) -> Select[int, int, datetime | None]:
+def _past_conversations(
+    viewer_id: int, since: datetime, *, lock_partner: bool = False
+) -> Select[int, int, datetime | None]:
     """(partner, conversation, ended_at) for every conversation of the viewer's that
     counts as a past chat: ended at/after `since`, after both users' latest account
-    deletion, with a partner who can still use RealChat and no open chat between them."""
+    deletion, with a partner who can still use RealChat and no open chat between them.
+
+    With `lock_partner`, the partner's account row is share-locked until the transaction
+    ends (see `past_partner`)."""
     me, other = aliased(Participant), aliased(Participant)
     viewer, partner = aliased(User), aliased(User)
     mine, theirs = aliased(Participant), aliased(Participant)
@@ -55,7 +60,7 @@ def _past_conversations(viewer_id: int, since: datetime) -> Select[int, int, dat
         theirs.user_id == other.user_id,
         theirs.left_at.is_(None),
     )
-    return (
+    query = (
         select(other.user_id, Conversation.id, Conversation.ended_at)
         .join(me, and_(me.conversation_id == other.conversation_id, me.user_id == viewer_id))
         .join(Conversation, Conversation.id == other.conversation_id)
@@ -72,6 +77,7 @@ def _past_conversations(viewer_id: int, since: datetime) -> Select[int, int, dat
             ~chatting_now,
         )
     )
+    return query.with_for_update(read=True, of=partner) if lock_partner else query
 
 
 def blocked_by(
@@ -123,11 +129,12 @@ async def past_partner(
 
     None for a conversation the viewer was not in, one outside the window, or a partner
     who is no longer listed, so an old or forged button opens nobody. The profile is read
-    in the same statement as the check, so an account deleted meanwhile is never shown
-    half-erased.
+    in the same statement as the check, with the partner's account row share-locked until
+    the transaction ends, as for /userid: an account deletion either finishes first, and
+    nobody is found, or waits until the card has been read.
     """
     rows = (
-        _past_conversations(viewer_id, since)
+        _past_conversations(viewer_id, since, lock_partner=True)
         .add_columns(Profile)
         .where(Conversation.id == conversation_id)
         .execution_options(populate_existing=True)

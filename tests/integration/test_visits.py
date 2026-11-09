@@ -419,3 +419,21 @@ async def test_block_and_report_ignore_chats_from_before_an_account_deletion(
     data = own_buttons(world.alice)
     assert list(data) == [LIKE_BUTTON, MESSAGE, REQUEST, ALERT, BLOCK_BUTTON, REPORT_BUTTON]
     assert data[BLOCK_BUTTON].startswith("psafety:") and data[REPORT_BUTTON].startswith("psafety:")
+
+
+async def test_a_visitors_card_waits_for_their_account_deletion(
+    world: World, session_factory: Sessions
+) -> None:
+    alice, bob = await world.user_id(USER_ID), await world.user_id(BOB_ID)
+    async with session_factory() as session:
+        await visits.record_visit(session, alice, bob, datetime.now(UTC))
+        await session.commit()
+    since = datetime.now(UTC) - timedelta(days=30)
+    async with session_factory() as deleting, session_factory() as reading:
+        await users.delete_account(deleting, alice, datetime.now(UTC))
+        pending = asyncio.create_task(visits.visitor_profile(reading, bob, alice, since))
+        await wait_until_blocked(session_factory)
+        await deleting.commit()
+        found = await pending
+        await reading.commit()
+    assert found is None
