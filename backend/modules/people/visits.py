@@ -52,8 +52,9 @@ async def record_visit(
     """Record that `visitor_id` opened `visited_id`'s card at `now`; returns whether it
     was recorded (not for a self-visit, or when either account is no longer active).
 
-    Both accounts are locked FOR KEY SHARE (in id order) and must still be active. Account
-    deletion locks the account row FOR UPDATE, so a visit and a deletion never overlap:
+    Both accounts are locked FOR NO KEY UPDATE (in id order, until the transaction ends)
+    and must still be active. Account deletion locks the account row FOR UPDATE, so a
+    visit and a deletion never overlap:
     a visit waiting on a deletion sees the account deleted and is skipped, instead of
     leaving a row behind the deletion's cleanup.
     """

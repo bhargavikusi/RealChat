@@ -65,8 +65,9 @@ async def like(
 ) -> Liked:
     """`liker_id` likes `liked_id`'s profile.
 
-    Both accounts are locked FOR KEY SHARE (in id order) and must be active with a
-    finished profile, so a like and an account deletion never overlap, as for visits.
+    Both accounts are locked FOR NO KEY UPDATE (in id order, until the transaction ends)
+    and must be active with a finished profile, so a like and an account deletion never
+    overlap, as for visits.
     A repeated or concurrent like changes nothing. With `announce` (the liked user wants
     like alerts), a new like claims the pair's notice unless one was sent within
     `notice_gap`.
