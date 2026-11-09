@@ -3,6 +3,7 @@
 Alembic's env.py imports this; add each new model module here.
 """
 
+from backend.modules.activity_alerts import models as activity_alerts  # noqa: F401
 from backend.modules.admin import models as admin  # noqa: F401
 from backend.modules.chat import models as chat  # noqa: F401
 from backend.modules.chat_requests import models as chat_requests  # noqa: F401

@@ -41,15 +41,25 @@ TRANSACTION_KINDS = (
     "direct_message",
     # A delivered chat request (D-058).
     "chat_request",
+    # An activity alert bought, and its refund when it never fires (D-059).
+    "activity_alert",
+    "activity_alert_refund",
 )
 # Kinds that add coins, and kinds that remove them; the database checks the sign.
-CREDIT_KINDS = ("welcome_bonus", "referral_reward", "daily_reward", "admin_grant")
+CREDIT_KINDS = (
+    "welcome_bonus",
+    "referral_reward",
+    "daily_reward",
+    "admin_grant",
+    "activity_alert_refund",
+)
 DEBIT_KINDS = (
     "paid_match",
     "admin_correction",
     "account_deleted",
     "direct_message",
     "chat_request",
+    "activity_alert",
 )
 # Admin entries must say why.
 ADMIN_KINDS = ("admin_grant", "admin_correction")

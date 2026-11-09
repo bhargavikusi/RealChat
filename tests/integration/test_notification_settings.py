@@ -26,6 +26,7 @@ DEFAULT_BUTTONS = [
     "👀 Visit alerts: On",
     "❤️ Like alerts: On",
     "⏰ Reminders: On",
+    "🔔 Activity alerts about me: On",
     ac.DELETE_BUTTON,
     ac.BACK_BUTTON,
 ]
@@ -62,6 +63,7 @@ async def test_defaults_without_any_change(chat: Chat, session_factory: Sessions
         Notification.VISIT_ALERTS: True,
         Notification.LIKE_ALERTS: True,
         Notification.REMINDERS: True,
+        Notification.ACTIVITY_ALERTS: True,
     }
     async with session_factory() as session:
         assert await session.scalar(select(func.count()).select_from(NotificationSettings)) == 0

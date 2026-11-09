@@ -37,6 +37,7 @@ from backend.modules.users.service import Notification
 from tests.support.chat import USER_ID, Chat
 from tests.support.db import wait_until_blocked
 from tests.support.world import (
+    ALERT,
     BOB_ID,
     MESSAGE,
     REQUEST,
@@ -407,6 +408,7 @@ async def test_cards_offer_message_except_to_the_current_partner(
         LIKE_BUTTON,
         MESSAGE,
         REQUEST,
+        ALERT,
         BLOCK_BUTTON,
         REPORT_BUTTON,
     ]

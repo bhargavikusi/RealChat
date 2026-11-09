@@ -197,6 +197,33 @@ def request_row(public_id: str, price: int) -> list[InlineKeyboardButton]:
     ]
 
 
+class AlertAction(CallbackData, prefix="alert"):
+    """Activity alerts (D-059)."""
+
+    # "ask" (from a card), "buy" or "dismiss" (the confirmation), or "cancel" (an alert
+    # that is set)
+    action: str
+    profile: str = ""  # the RealChat ID an "ask" or "buy" button names
+    draft: str = ""  # the confirmation a "buy" button belongs to
+    price: int = 0  # the price a "buy" button was shown with
+    alert: int = 0  # the alert a "cancel" button belongs to
+
+
+ALERT_BUTTON = "🔔 Alert when active · {price}"
+ALERT_SET_BUTTON = "🔔 Alert set · Cancel"
+
+
+def alert_row(public_id: str, price: int, pending: int | None) -> list[InlineKeyboardButton]:
+    """🔔 Alert when active on another user's card, or Cancel for an alert that is set."""
+    data = (
+        AlertAction(action="ask", profile=public_id)
+        if pending is None
+        else AlertAction(action="cancel", alert=pending)
+    )
+    text = ALERT_BUTTON.format(price=coins_label(price)) if pending is None else ALERT_SET_BUTTON
+    return [InlineKeyboardButton(text=text, callback_data=data.pack())]
+
+
 def _has_prefix(row: list[InlineKeyboardButton], data: type[CallbackData]) -> bool:
     prefix = f"{data.__prefix__}{data.__separator__}"
     return any((button.callback_data or "").startswith(prefix) for button in row)
@@ -207,8 +234,10 @@ def is_like_row(row: list[InlineKeyboardButton]) -> bool:
 
 
 def is_card_row(row: list[InlineKeyboardButton]) -> bool:
-    """A row a card has besides Block and Report: Like, Message, or Chat request."""
-    return any(_has_prefix(row, data) for data in (LikeAction, DirectAction, RequestAction))
+    """A row a card has besides Block and Report: Like, Message, Chat request, or Alert."""
+    return any(
+        _has_prefix(row, data) for data in (LikeAction, DirectAction, RequestAction, AlertAction)
+    )
 
 
 def card_keyboard(

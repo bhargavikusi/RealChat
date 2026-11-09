@@ -12,7 +12,8 @@ time limit, and telling both users (D-047); deleting Private mode messages from
 Telegram; deleting expired chat messages and direct messages (D-046, D-057) and expired
 profile visits (D-053) about once a day; and failing direct messages left pending by an
 interrupted Send, releasing their held coins (D-057); and settling chat requests that
-were not answered in time or were interrupted, telling the users (D-058).
+were not answered in time or were interrupted, telling the users (D-058); and firing or
+refunding activity alerts, telling the buyers (D-059).
 """
 
 import asyncio
@@ -22,6 +23,7 @@ from collections.abc import Awaitable, Callable
 from contextlib import suppress
 from datetime import UTC, datetime
 
+from apps.bot.activity_alerts import AlertNotices
 from apps.bot.avatars import Avatars
 from apps.bot.chat import ChatNotifier
 from apps.bot.chat_requests import RequestNotices
@@ -31,6 +33,7 @@ from backend.config.settings import load_bot_settings
 from backend.core.logging import configure_logging, exception_summary
 from backend.core.redis import create_redis
 from backend.database.engine import create_engine, create_session_factory
+from backend.modules.activity_alerts.service import AlertJobs
 from backend.modules.admin.settings import RuntimeSettings
 from backend.modules.chat.idle import IdleChats
 from backend.modules.chat.private import PrivateModeJob
@@ -52,6 +55,8 @@ PRIVATE_MODE_SECONDS = 1.0
 PENDING_SWEEP_SECONDS = 60.0
 # Expiring chat requests and busy senders' time to switch (D-058).
 CHAT_REQUESTS_SECONDS = 5.0
+# Firing and refunding activity alerts (D-059).
+ACTIVITY_ALERTS_SECONDS = 5.0
 
 Job = Callable[[datetime], Awaitable[object]]
 
@@ -106,6 +111,9 @@ async def run() -> None:
     visit_retention = VisitRetention(redis, sessions, runtime_settings)
     pending_messages = PendingSweep(sessions)
     chat_requests = RequestJobs(sessions, runtime_settings, RequestNotices(bot, sessions))
+    activity_alerts = AlertJobs(
+        sessions, runtime_settings, AlertNotices(bot, sessions, runtime_settings)
+    )
     private_mode = PrivateModeJob(sessions, runtime_settings, PrivateModeNotifier(bot, sessions))
     deletions = TelegramDeletions(bot, sessions)
     stop = asyncio.Event()
@@ -126,6 +134,7 @@ async def run() -> None:
                 ("visit retention", visit_retention.tick, RETENTION_CHECK_SECONDS),
                 ("pending direct messages", pending_messages.tick, PENDING_SWEEP_SECONDS),
                 ("chat requests", chat_requests.tick, CHAT_REQUESTS_SECONDS),
+                ("activity alerts", activity_alerts.tick, ACTIVITY_ALERTS_SECONDS),
             ),
             stop,
         )

@@ -8,7 +8,7 @@ message retention, are not given as numbers, so the text stays true when they ch
 (D-046).
 """
 
-TERMS_VERSION = "draft-16"
+TERMS_VERSION = "draft-17"
 
 TERMS_TEXT = """\
 DRAFT - not for launch
@@ -39,6 +39,10 @@ were recently active in RealChat. They see your nickname and RealChat ID. The co
 are taken once the request is delivered and aren't returned if it's declined, expires, \
 or you don't switch to them when they accept. If either of you is in a chat when it's \
 accepted, that chat ends.
+• You can pay coins for one alert the next time someone uses RealChat. Unless you \
+turn this off in Advanced settings, others can set such an alert about you; you're \
+not told who. It's based on your use of RealChat, never your Telegram online status. \
+The coins come back if the alert can't be sent within a set period.
 • Telegram apps that honour RealChat's protection don't let your chat partner forward \
 or save what you send. Some Telegram apps also block screenshots of it, but not all of \
 them do.

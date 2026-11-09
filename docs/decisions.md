@@ -541,6 +541,7 @@ Work happens on short-lived issue branches, such as `feature/12-onboarding`, cre
   * 🤫 **Silent mode**, off by default: nobody can send the user chat requests. Direct messages still arrive.
   * 👀 **Visit alerts** and ❤️ **Like alerts**, on by default: notices when someone visits or likes the profile.
   * ⏰ **Reminders**, on by default: general reminders, such as the daily reward while it is offered.
+  * 🔔 **Activity alerts about me**, on by default: whether others can buy activity alerts about the user (added by D-059).
 * Advanced settings also keeps Delete account (and Admin settings for admins), and gains ◀️ Back to the profile card. VIP options join it with the VIP work. More categories may be split out before launch.
 * Each setting is enforced by the feature it controls, as those features ship.
 * Account deletion resets the settings to their defaults. Suspended and banned users cannot change them.
@@ -645,6 +646,22 @@ Work happens on short-lived issue branches, such as `feature/12-onboarding`, cre
 
 **Why:** Owner decisions (requirements §12, amended). Checking availability only on the tap keeps RealChat activity private. Charging on delivery matches what the platform can verify; the no-refund rule for delivered requests is the owner's. Several waiting requests let a sender reach more than one person, with the first acceptance winning.
 
+### D-059 — Activity alerts
+
+**Date:** 2026-11-09
+**Decision:**
+
+* Every other user's card has 🔔 **Alert when active · ‹price›** under Chat request, on the same cards and with the same exceptions. It buys one alert the next time the person uses RealChat (any use of the bot, recorded at most once a minute as their RealChat activity, D-051), within 7 days (admin runtime setting, 1–30), for 1 coin (admin runtime setting, 1–100). The confirmation says exactly that, says the coin is returned if they don't, and that this is RealChat activity, not Telegram online status. Settles O-003.
+* The coin is taken on Buy; a repeated Buy charges nothing more, and Buy is refused if the price changed since it was shown. It can be bought at any time, including while the person is using RealChat, when the person is active and onboarded, neither has blocked the other, and the person allows activity alerts; one active alert per buyer per person. A refusal takes nothing.
+* The alert fires once, the first time the person uses RealChat after the purchase and within the period: "‹nickname› is using RealChat now · /userid_‹id›", labelled as RealChat activity. The worker checks every few seconds, so an alert can come up to about a minute after the activity.
+* The coin is returned, and the buyer told, if the alert can't fire: no activity within the period, a block either way, the person turning alerts off, or their account being suspended, banned, deleted, or deleted and started again (a returning account is someone new). The buyer is told only an expiry's reason; a block or an opt-out isn't revealed. An alert is never both fired and refunded.
+* While an alert is set, the card shows 🔔 **Alert set · Cancel**; cancelling ends it without a refund.
+* Advanced settings gains 🔔 **Activity alerts about me**, on by default (amends D-052). Turned off, nobody can buy an alert about the user, and pending ones are refunded. The person is never told who set an alert.
+* Account deletion erases the alerts the account bought (its coins are forfeited, D-055); alerts about the account are refunded to their buyers.
+* The draft terms describe activity alerts and the opt-out (terms version `draft-17`).
+
+**Why:** Owner decisions (requirements §15). Telegram doesn't let bots see online status, so the alert is defined by RealChat activity and labelled so. One alert per coin with a refund keeps the purchase clear; the opt-out and blocks are the privacy and anti-harassment controls §15 asks for.
+
 ## Open
 
 Each of these needs the owner's decision. Until then, the behavior stays configurable and is not presented to users as final.
@@ -654,7 +671,6 @@ Each of these needs the owner's decision. Until then, the behavior stays configu
 | O-001 | Final minimum eligible age | Public launch | Development uses 18 (D-009). Age is user-entered, with no document verification (requirements §7). Jurisdiction-specific legal review is recommended. |
 | O-007 | Final terms of service and privacy policy text | Public launch | Development uses a versioned draft (D-015). It needs legal review. |
 | O-002 | Retention period for conversation content | Public launch | Kept separate from the retention of payment, moderation, security, and audit records (requirements §20). Development default: 7 days, changeable by admins (D-028, D-035). |
-| O-003 | Terms of the 1-coin activity notification | Before that feature is built | What event triggers it, how long it lasts, and whether it is one alert or several (requirements §15). |
 | O-005 | Coin package and VIP pricing in Telegram Stars | Before payments are built | Also covers what VIP includes and how many coins it grants (requirements §17). |
 | O-006 | Webhook or long polling for receiving Telegram updates in production | Before deployment | Development will use polling. Webhooks require a public HTTPS endpoint. |
 | O-008 | Which premium offer includes hiding the profile, and what happens when it ends | Before the VIP work | D-021. For example, whether the profile becomes visible again automatically. Also whether a hidden profile can still be opened by its RealChat ID (D-054); until decided, nothing hides a profile, so every finished profile can be. |

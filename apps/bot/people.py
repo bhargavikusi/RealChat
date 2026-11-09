@@ -48,6 +48,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from apps.bot.avatars import Avatars
 from apps.bot.cards import send_card
 from apps.bot.endings import (
+    alert_row,
     card_keyboard,
     like_row,
     message_row,
@@ -58,6 +59,7 @@ from apps.bot.endings import (
 from apps.bot.onboarding import Context, load_context, prompt_next
 from backend.config.settings import BotSettings
 from backend.core.logging import exception_summary
+from backend.modules.activity_alerts import service as activity_alerts
 from backend.modules.admin.settings import RuntimeSettings, SettingKey
 from backend.modules.chat import service as chat
 from backend.modules.moderation import service as moderation
@@ -266,8 +268,9 @@ async def ready_user(
 async def _card_rows(
     session: AsyncSession, user_id: int, other: Profile, runtime_settings: RuntimeSettings
 ) -> list[list[InlineKeyboardButton]]:
-    """Like (or Unlike), and ✉️ Message (D-057) and 💬 Chat request (D-058) unless the
-    card's owner blocked the user or the two are chatting now. The services check again
+    """Like (or Unlike), and ✉️ Message (D-057), 💬 Chat request (D-058), and 🔔 Alert
+    when active (D-059) unless the card's owner blocked the user or the two are chatting
+    now. The services check again
     when they are tapped."""
     rows = [like_row(other.public_id, await likes.is_liked(session, user_id, other.user_id))]
     active = await chat.active_chat(session, user_id)
@@ -279,6 +282,9 @@ async def _card_rows(
         # so the card never shows their activity (D-058).
         request_price = await runtime_settings.get(session, SettingKey.CHAT_REQUEST_COINS)
         rows.append(request_row(other.public_id, request_price))
+        alert_price = await runtime_settings.get(session, SettingKey.ACTIVITY_ALERT_COINS)
+        pending = await activity_alerts.pending(session, user_id, other.user_id)
+        rows.append(alert_row(other.public_id, alert_price, pending))
     return rows
 
 

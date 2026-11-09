@@ -43,6 +43,8 @@ PRIVATE_CHAT_KEYS = [[PARTNER_PROFILE, PRIVATE_OFF], [END_CHAT]]
 MESSAGE = "✉️ Message · 1 coin"
 # 💬 Chat request on another user's card, at the default price (D-058).
 REQUEST = "💬 Chat request · 2 coins"
+# 🔔 Alert when active on another user's card, at the default price (D-059).
+ALERT = "🔔 Alert when active · 1 coin"
 
 
 class World:
