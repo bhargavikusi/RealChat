@@ -17,8 +17,15 @@ from aiogram.methods import (
     DeleteMessage,
     DeleteMessages,
     GetMe,
+    SendAnimation,
+    SendAudio,
+    SendDocument,
     SendMessage,
     SendPhoto,
+    SendSticker,
+    SendVideo,
+    SendVideoNote,
+    SendVoice,
     TelegramMethod,
 )
 from aiogram.methods.base import TelegramType
@@ -35,6 +42,11 @@ from aiogram.types import (
 )
 
 from apps.bot.telegram_session import install_request_middlewares
+
+# Media sent by file identifier, other than photos (`sent_photos`).
+MediaMethod = (
+    SendVideo | SendAnimation | SendAudio | SendVoice | SendVideoNote | SendSticker | SendDocument
+)
 
 # Obviously fake, see tests/unit/test_logging.py for why it avoids the real token prefix.
 FAKE_TOKEN = "123456789:TEST-fake-token-for-bot-tests-only"
@@ -175,6 +187,13 @@ class RecordingSession(BaseSession):
     def callback_answers(self) -> list[str]:
         """Text of every callback answer (the short notice shown on a button press)."""
         return [m.text or "" for m in self.requests if isinstance(m, AnswerCallbackQuery)]
+
+    def sent_media(self, chat_id: int) -> list[MediaMethod]:
+        """Videos, animations, audio, voice and video messages, stickers, and documents
+        sent to one chat, oldest first. Telegram's answer to these is not simulated."""
+        return [
+            m for m in self.requests if isinstance(m, MediaMethod) and int(m.chat_id) == chat_id
+        ]
 
     def sent_photos(self) -> list[SendPhoto]:
         return [m for m in self.requests if isinstance(m, SendPhoto)]

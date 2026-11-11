@@ -7,9 +7,31 @@ from typing import Any
 
 import pytest
 from aiogram.exceptions import TelegramBadRequest, TelegramForbiddenError
-from aiogram.methods import SendMessage
+from aiogram.methods import (
+    SendAnimation,
+    SendAudio,
+    SendDocument,
+    SendMessage,
+    SendSticker,
+    SendVideo,
+    SendVideoNote,
+    SendVoice,
+)
+from aiogram.types import (
+    Animation,
+    Audio,
+    Dice,
+    Document,
+    InlineKeyboardMarkup,
+    Message,
+    MessageEntity,
+    Sticker,
+    Update,
+    Video,
+    VideoNote,
+    Voice,
+)
 from aiogram.types import Chat as TelegramChat
-from aiogram.types import Dice, Message, Update
 from aiogram.types import User as TelegramUser
 from redis.asyncio import Redis
 from sqlalchemy import func, select, update
@@ -742,3 +764,99 @@ async def test_a_hold_pays_for_one_message(world: World, session_factory: Sessio
                 ),
                 {"a": alice, "b": bob, "m": sent.message_id},
             )
+
+
+# --- Every media kind ------------------------------------------------------------------
+
+
+BOLD = [MessageEntity(type="bold", offset=0, length=4)]
+# kind -> (the method it is sent with, its file field, the incoming message content)
+MEDIA: dict[str, tuple[type[Any], str, dict[str, Any]]] = {
+    "video": (
+        SendVideo,
+        "video",
+        {"video": Video(file_id="vid", file_unique_id="u", width=1, height=1, duration=3)},
+    ),
+    # Telegram sends a GIF as both an animation and a document.
+    "animation": (
+        SendAnimation,
+        "animation",
+        {
+            "animation": Animation(
+                file_id="gif", file_unique_id="u", width=1, height=1, duration=2
+            ),
+            "document": Document(file_id="gif", file_unique_id="u"),
+        },
+    ),
+    "audio": (SendAudio, "audio", {"audio": Audio(file_id="aud", file_unique_id="u", duration=9)}),
+    "voice": (SendVoice, "voice", {"voice": Voice(file_id="vox", file_unique_id="u", duration=4)}),
+    "video_note": (
+        SendVideoNote,
+        "video_note",
+        {"video_note": VideoNote(file_id="note", file_unique_id="u", length=240, duration=5)},
+    ),
+    "sticker": (
+        SendSticker,
+        "sticker",
+        {
+            "sticker": Sticker(
+                file_id="stk",
+                file_unique_id="u",
+                type="regular",
+                width=512,
+                height=512,
+                is_animated=False,
+                is_video=False,
+            )
+        },
+    ),
+    "document": (
+        SendDocument,
+        "document",
+        {"document": Document(file_id="doc", file_unique_id="u", file_name="a.pdf")},
+    ),
+}
+# Kinds Telegram lets carry a caption.
+CAPTIONED = {"video", "animation", "audio", "voice", "document"}
+
+
+def _sent(method: Any, field: str, captioned: bool) -> tuple[Any, ...]:
+    entities = method.caption_entities if captioned else None
+    return (
+        type(method).__name__,
+        getattr(method, field),
+        method.caption if captioned else None,
+        [(e.type, e.offset, e.length) for e in entities or ()],
+        method.protect_content,
+    )
+
+
+@pytest.mark.parametrize("kind", list(MEDIA))
+async def test_every_media_kind_is_previewed_and_opened_as_sent(
+    world: World, session_factory: Sessions, kind: str
+) -> None:
+    method, field, content = MEDIA[kind]
+    captioned = kind in CAPTIONED
+    caption = {"caption": "Look here", "caption_entities": BOLD} if captioned else {}
+    await write_to(world.alice, session_factory, BOB_ID)
+    await world.alice.send_content(**content, **caption)
+    file_id = next(iter(content.values())).file_id
+    expected = (
+        method.__name__,
+        file_id,
+        "Look here" if captioned else None,
+        [("bold", 0, 4)] if captioned else [],
+        True,
+    )
+    preview = world.alice.session.sent_media(USER_ID)[-1]
+    assert _sent(preview, field, captioned) == expected
+    assert isinstance(preview.reply_markup, InlineKeyboardMarkup)
+    await world.alice.press_data(preview.reply_markup.inline_keyboard[0][0].callback_data or "")
+    (stored,) = await messages(session_factory)
+    assert stored.kind == kind
+    await world.bob.press_data(notice_open(world.alice))
+    opened = world.bob.session.sent_media(BOB_ID)[-1]
+    assert _sent(opened, field, captioned) == expected
+    assert dm.VIEWED.format(nickname=BOB) in [
+        text_of(m) for m in world.bob.session.sent_to(USER_ID)
+    ]
