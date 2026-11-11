@@ -5,6 +5,7 @@ and Redis; only Telegram itself is simulated (see `tests.support.telegram`).
 """
 
 from itertools import count
+from typing import Any
 
 from aiogram import Dispatcher
 from aiogram.types import InlineKeyboardMarkup
@@ -20,6 +21,7 @@ from backend.modules.users.terms import terms_text
 from tests.support.telegram import (
     RecordingSession,
     callback_update,
+    content_update,
     make_bot,
     message_update,
     photo_update,
@@ -82,6 +84,13 @@ class Chat:
         )
         await self.dispatcher.feed_update(
             self.bot, callback_update(next(self._ids), self.user_id, data, reply_markup=markup)
+        )
+
+    async def send_content(self, **fields: Any) -> None:
+        """Send a message with any content, e.g. `video=` and `caption=`."""
+        update_id = next(self._ids)
+        await self.dispatcher.feed_update(
+            self.bot, content_update(update_id, self.user_id, update_id, **fields)
         )
 
     async def send_photo(self, file_id: str) -> str:
