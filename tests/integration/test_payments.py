@@ -489,6 +489,9 @@ async def test_a_refund_stands_when_its_notice_cant_be_sent(
     retries = bot_payments.RefundRetries(chat.bot, session_factory)
     assert await retries.tick(datetime.now(UTC) + payments.REFUND_RETRY) == 1
     assert await _payments(session_factory) == [("charge-1", "refunded", "account_deleted")]
+    [failed] = chat.session.failed_sends
+    assert failed.text == bot_payments.REFUNDED.format(stars=80)
+    assert failed.text not in _notices(chat)
 
 
 async def test_simultaneous_workers_claim_a_refund_once(
@@ -607,7 +610,8 @@ async def test_a_refunded_payment_cant_change_again(chat: Chat, session_factory:
     await chat.paid("charge-1", payload, 80)
     for status in ("paid", "refund_due", "refunded"):
         async with session_factory() as session:
-            with pytest.raises(DBAPIError, match="can only move"):
+            with pytest.raises(DBAPIError, match="can only move") as raised:
                 await session.execute(
                     text("UPDATE stars_payments SET status = :status"), {"status": status}
                 )
+        assert str(raised.value.orig.sqlstate) == RESTRICT_VIOLATION  # type: ignore[union-attr]

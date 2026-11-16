@@ -78,7 +78,9 @@ class RecordingSession(BaseSession):
         # When set, refundStarPayment fails with this Telegram error description.
         self.refund_error: str | None = None
         # When set, sendMessage fails with this error, e.g. for a user who blocked the bot.
+        # Failed sends go to `failed_sends`, not `requests`, so they never count as sent.
         self.send_error: TelegramAPIError | None = None
+        self.failed_sends: list[SendMessage] = []
 
     async def make_request(
         self,
@@ -86,6 +88,9 @@ class RecordingSession(BaseSession):
         method: TelegramMethod[TelegramType],
         timeout: int | None = None,  # noqa: ASYNC109 (aiogram interface)
     ) -> TelegramType:
+        if isinstance(method, SendMessage) and self.send_error is not None:
+            self.failed_sends.append(method)
+            raise self.send_error
         self.requests.append(method)
         if isinstance(method, AnswerCallbackQuery) and self.reject_callback_answers:
             raise TelegramBadRequest(method=method, message=self.reject_callback_answers)
@@ -95,8 +100,6 @@ class RecordingSession(BaseSession):
             if self.copy_error is not None:
                 raise self.copy_error
             return MessageId(message_id=10_000 + len(self.requests))  # type: ignore[return-value]
-        if isinstance(method, SendMessage) and self.send_error is not None:
-            raise self.send_error
         if isinstance(method, SendMessage):
             sent = Message(
                 message_id=len(self.requests),
