@@ -19,6 +19,7 @@ from backend.modules.coins.models import CoinTransaction
 from backend.modules.users import service as users
 from backend.modules.users.models import Profile
 from tests.support.chat import USER_ID, Chat, complete_onboarding
+from tests.support.world import buttons
 
 Sessions = async_sessionmaker[AsyncSession]
 CLAIM = bot_coins.DailyAction(action="claim").pack()
@@ -49,7 +50,7 @@ async def chat(bot_settings: BotSettings, redis: Redis, session_factory: Session
 async def test_it_is_off_by_default(chat: Chat, session_factory: Sessions) -> None:
     shown = await chat.send("/coins")
     assert "Daily reward" not in shown
-    assert chat.session.sent_to(USER_ID)[-1].reply_markup is None
+    assert bot_coins.CLAIM_BUTTON not in buttons(chat.session.sent_to(USER_ID)[-1])
     await chat.press_data(CLAIM)  # an old button
     assert chat.session.callback_answers()[-1] == bot_coins.DAILY_OFF
     assert await _daily(session_factory) == []
@@ -65,7 +66,7 @@ async def test_it_can_be_claimed_once_a_day_while_on(chat: Chat, session_factory
     # Claimed: /coins says so and offers no button; an old button does nothing.
     shown = await chat.send("/coins")
     assert bot_coins.DAILY_CLAIMED in shown.splitlines()
-    assert chat.session.sent_to(USER_ID)[-1].reply_markup is None
+    assert bot_coins.CLAIM_BUTTON not in buttons(chat.session.sent_to(USER_ID)[-1])
     await chat.press_data(CLAIM)
     assert chat.session.callback_answers()[-1] == bot_coins.ALREADY_CLAIMED
     assert await _daily(session_factory) == [1]

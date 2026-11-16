@@ -48,6 +48,14 @@ class SettingKey(StrEnum):
     ACTIVITY_ALERT_COINS = "activity_alert_coins"
     ACTIVITY_ALERT_DAYS = "activity_alert_days"
     REMINDER_LOCAL_HOUR = "reminder_local_hour"
+    PACK_1_COINS = "pack_1_coins"
+    PACK_1_STARS = "pack_1_stars"
+    PACK_2_COINS = "pack_2_coins"
+    PACK_2_STARS = "pack_2_stars"
+    PACK_3_COINS = "pack_3_coins"
+    PACK_3_STARS = "pack_3_stars"
+    PACK_4_COINS = "pack_4_coins"
+    PACK_4_STARS = "pack_4_stars"
 
 
 @dataclass(frozen=True)
@@ -62,6 +70,32 @@ class SettingSpec:
 
     def allows(self, value: int) -> bool:
         return self.minimum <= value <= self.maximum
+
+
+# Coin packs sold for Telegram Stars (D-061): (coins, Stars) for packs 1 to 4.
+PACK_DEFAULTS = ((150, 80), (350, 150), (800, 290), (1_900, 580))
+
+
+def _pack_specs(number: int, coins: int, stars: int) -> tuple[SettingSpec, SettingSpec]:
+    return (
+        SettingSpec(
+            SettingKey(f"pack_{number}_coins"),
+            f"Coin pack {number}: coins",
+            "coins",
+            default=coins,
+            minimum=0,
+            maximum=100_000,
+            note="0 hides the pack",
+        ),
+        SettingSpec(
+            SettingKey(f"pack_{number}_stars"),
+            f"Coin pack {number}: price",
+            "Stars",
+            default=stars,
+            minimum=1,
+            maximum=10_000,
+        ),
+    )
 
 
 SPECS: dict[SettingKey, SettingSpec] = {
@@ -289,6 +323,11 @@ SPECS: dict[SettingKey, SettingSpec] = {
             default=18,
             minimum=0,
             maximum=23,
+        ),
+        *(
+            spec
+            for number, (coins, stars) in enumerate(PACK_DEFAULTS, start=1)
+            for spec in _pack_specs(number, coins, stars)
         ),
     )
 }

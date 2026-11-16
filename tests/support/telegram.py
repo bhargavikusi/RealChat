@@ -13,13 +13,16 @@ from aiogram.client.session.base import BaseSession
 from aiogram.exceptions import TelegramAPIError, TelegramBadRequest, TelegramForbiddenError
 from aiogram.methods import (
     AnswerCallbackQuery,
+    AnswerPreCheckoutQuery,
     CopyMessage,
     DeleteMessage,
     DeleteMessages,
     GetMe,
+    RefundStarPayment,
     SendAnimation,
     SendAudio,
     SendDocument,
+    SendInvoice,
     SendMessage,
     SendPhoto,
     SendSticker,
@@ -37,6 +40,8 @@ from aiogram.types import (
     Message,
     MessageId,
     PhotoSize,
+    PreCheckoutQuery,
+    SuccessfulPayment,
     Update,
     User,
 )
@@ -70,6 +75,8 @@ class RecordingSession(BaseSession):
         self.deleted: list[tuple[int, int]] = []
         # When set, awaited while copyMessage is "in flight", before it returns or fails.
         self.during_copy: Callable[[], Awaitable[None]] | None = None
+        # When set, refundStarPayment fails with this Telegram error description.
+        self.refund_error: str | None = None
 
     async def make_request(
         self,
@@ -139,6 +146,8 @@ class RecordingSession(BaseSession):
             return True  # type: ignore[return-value]
         if isinstance(method, GetMe):
             return BOT_USER  # type: ignore[return-value]
+        if isinstance(method, RefundStarPayment) and self.refund_error is not None:
+            raise TelegramBadRequest(method=method, message=self.refund_error)
         # Most other methods (answerCallbackQuery, etc.) return True.
         return True  # type: ignore[return-value]
 
@@ -197,6 +206,15 @@ class RecordingSession(BaseSession):
 
     def sent_photos(self) -> list[SendPhoto]:
         return [m for m in self.requests if isinstance(m, SendPhoto)]
+
+    def invoices(self) -> list[SendInvoice]:
+        return [m for m in self.requests if isinstance(m, SendInvoice)]
+
+    def checkout_answers(self) -> list[AnswerPreCheckoutQuery]:
+        return [m for m in self.requests if isinstance(m, AnswerPreCheckoutQuery)]
+
+    def refunds(self) -> list[RefundStarPayment]:
+        return [m for m in self.requests if isinstance(m, RefundStarPayment)]
 
     def last_buttons(self) -> dict[str, str]:
         """Button text -> callback data (or URL) for the latest message that had buttons."""
@@ -310,5 +328,43 @@ def edited_update(update_id: int, user_id: int, message_id: int, **fields: Any) 
             chat=Chat(id=user_id, type="private"),
             from_user=_user(user_id),
             **fields,
+        ),
+    )
+
+
+def pre_checkout_update(
+    update_id: int, user_id: int, payload: str, stars: int, currency: str = "XTR"
+) -> Update:
+    """Telegram asking whether to take a payment for an invoice."""
+    return Update(
+        update_id=update_id,
+        pre_checkout_query=PreCheckoutQuery(
+            id=f"checkout-{update_id}",
+            from_user=_user(user_id),
+            currency=currency,
+            total_amount=stars,
+            invoice_payload=payload,
+        ),
+    )
+
+
+def payment_update(
+    update_id: int, user_id: int, charge_id: str, payload: str, stars: int, currency: str = "XTR"
+) -> Update:
+    """Telegram confirming a payment: a service message in the user's chat."""
+    return Update(
+        update_id=update_id,
+        message=Message(
+            message_id=update_id,
+            date=datetime.now(UTC),
+            chat=Chat(id=user_id, type="private"),
+            from_user=_user(user_id),
+            successful_payment=SuccessfulPayment(
+                currency=currency,
+                total_amount=stars,
+                invoice_payload=payload,
+                telegram_payment_charge_id=charge_id,
+                provider_payment_charge_id="",
+            ),
         ),
     )

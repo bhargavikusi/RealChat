@@ -24,7 +24,9 @@ from tests.support.telegram import (
     content_update,
     make_bot,
     message_update,
+    payment_update,
     photo_update,
+    pre_checkout_update,
 )
 
 Sessions = async_sessionmaker[AsyncSession]
@@ -98,6 +100,19 @@ class Chat:
             self.bot, photo_update(next(self._ids), self.user_id, file_id)
         )
         return self.last()
+
+    async def checkout(self, payload: str, stars: int, currency: str = "XTR") -> None:
+        """Tap Pay on an invoice: Telegram asks the bot first."""
+        await self.dispatcher.feed_update(
+            self.bot, pre_checkout_update(next(self._ids), self.user_id, payload, stars, currency)
+        )
+
+    async def paid(self, charge_id: str, payload: str, stars: int, currency: str = "XTR") -> None:
+        """Telegram confirms the payment."""
+        await self.dispatcher.feed_update(
+            self.bot,
+            payment_update(next(self._ids), self.user_id, charge_id, payload, stars, currency),
+        )
 
     def last(self) -> str:
         texts = self.telegram.sent_texts()

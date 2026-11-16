@@ -419,7 +419,8 @@ async def test_a_past_partners_card_waits_for_their_account_deletion(
 ) -> None:
     conversation_id = await chatted(world)
     alice, bob = await world.user_id(USER_ID), await world.user_id(BOB_ID)
-    since = datetime.now(UTC) - timedelta(days=10)
+    # From the same fixed time the chat ended at, so the test doesn't depend on today's date.
+    since = NOW - timedelta(days=10)
     async with session_factory() as deleting, session_factory() as reading:
         await users.delete_account(deleting, bob, datetime.now(UTC))
         pending = asyncio.create_task(people.past_partner(reading, alice, conversation_id, since))

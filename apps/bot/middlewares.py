@@ -17,6 +17,19 @@ Handler = Callable[[TelegramObject, dict[str, Any]], Awaitable[Any]]
 
 DONE = "done"
 
+
+def is_payment(event: TelegramObject) -> bool:
+    """Telegram asking whether to take a payment, or confirming one (D-061).
+
+    These are never dropped: an unanswered question cancels the user's payment, and a
+    confirmation means the Stars were already taken.
+    """
+    return isinstance(event, Update) and (
+        event.pre_checkout_query is not None
+        or (event.message is not None and event.message.successful_payment is not None)
+    )
+
+
 # Claims an update for this process unless it is already done or being processed by
 # this same process. A lease held by a different process is taken over: Telegram
 # allows only one long-polling consumer per bot, so another holder must have stopped
@@ -102,7 +115,8 @@ class DeduplicateUpdatesMiddleware(BaseMiddleware):
 class FloodControlMiddleware(BaseMiddleware):
     """Drop updates from a user who sends more than `limit` in a fixed time window.
 
-    Fails open when Redis is unavailable, for the same reason as deduplication.
+    Payment updates are never dropped or counted (`is_payment`). Fails open when Redis
+    is unavailable, for the same reason as deduplication.
     """
 
     def __init__(
@@ -121,7 +135,7 @@ class FloodControlMiddleware(BaseMiddleware):
 
     async def __call__(self, handler: Handler, event: TelegramObject, data: dict[str, Any]) -> Any:
         user: User | None = data.get("event_from_user")
-        if user is None:
+        if user is None or is_payment(event):
             return await handler(event, data)
 
         window = int(self._clock()) // self._window

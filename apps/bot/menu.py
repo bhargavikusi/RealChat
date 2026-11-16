@@ -32,6 +32,8 @@ COMMANDS = (
     ("coins", "Your coins and recent activity"),
     ("userid", "Open a profile by its RealChat ID, or see yours"),
     ("help", "How RealChat works, terms, and contacts"),
+    ("terms", "Terms of use and privacy notice"),
+    ("paysupport", "Help with a purchase"),
 )
 BOT_COMMANDS = [BotCommand(command=name, description=text) for name, text in COMMANDS]
 

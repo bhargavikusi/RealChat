@@ -38,7 +38,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from apps.bot.admin import admin_button
 from apps.bot.endings import PARTNER_LEFT, coins_label, menu_price, tell_chat_ended
 from apps.bot.menu import HelpAction
-from apps.bot.middlewares import Handler
+from apps.bot.middlewares import Handler, is_payment
 from apps.bot.onboarding import load_context, prompt_next
 from backend.config.settings import BotSettings
 from backend.core.logging import exception_summary
@@ -339,13 +339,17 @@ def create_router() -> Router:
 
 
 async def _allowed_when_restricted(update: Update, bot: Bot) -> bool:
-    """Help and account deletion stay available to restricted users (D-026)."""
+    """Help, the terms, payment support, and account deletion stay available to
+    restricted users (D-026, D-061). Payment updates pass too: checkout declines
+    restricted users itself, with a reason, and a confirmed payment must be recorded."""
+    if is_payment(update):
+        return True
     if update.message is not None:
         command = (update.message.text or "").split(maxsplit=1)[:1]
         if not command:
             return False
         name, _, mention = command[0].partition("@")
-        if name != "/help":
+        if name not in ("/help", "/terms", "/paysupport"):
             return False
         # "/help@name" counts only when it names this bot.
         return not mention or mention.casefold() == ((await bot.me()).username or "").casefold()

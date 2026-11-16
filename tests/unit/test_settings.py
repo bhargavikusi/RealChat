@@ -2,6 +2,7 @@ from pathlib import Path
 
 import pytest
 
+from apps.bot.main import create_bot
 from backend.config.settings import SettingsError, load_bot_settings, load_settings
 
 DB_SECRET = "db-pass-8f3k2"
@@ -139,12 +140,29 @@ def test_production_requires_explicit_min_age(monkeypatch: pytest.MonkeyPatch) -
     monkeypatch.setenv("DATABASE_URL", DATABASE_URL)
     monkeypatch.setenv("REDIS_URL", REDIS_URL)
     monkeypatch.setenv("TELEGRAM_BOT_TOKEN", BOT_TOKEN)
+    monkeypatch.setenv("SUPPORT_CONTACT", "https://t.me/realchat_support")
 
     with pytest.raises(SettingsError, match="MIN_AGE must be set explicitly in production"):
         load_bot_settings(env_file=None)
 
     monkeypatch.setenv("MIN_AGE", "18")
     assert load_bot_settings(env_file=None).min_age == 18
+
+
+def test_production_requires_a_support_contact(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Telegram requires support for bots that take payments (D-061).
+    monkeypatch.setenv("APP_ENV", "production")
+    monkeypatch.setenv("DATABASE_URL", DATABASE_URL)
+    monkeypatch.setenv("REDIS_URL", REDIS_URL)
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", BOT_TOKEN)
+    monkeypatch.setenv("MIN_AGE", "18")
+    monkeypatch.setenv("SUPPORT_CONTACT", "")
+
+    with pytest.raises(SettingsError, match="SUPPORT_CONTACT must be set in production"):
+        load_bot_settings(env_file=None)
+
+    monkeypatch.setenv("SUPPORT_CONTACT", "https://t.me/realchat_support")
+    assert load_bot_settings(env_file=None).support_contact is not None
 
 
 def _bot_env(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -184,3 +202,36 @@ def test_help_links_must_be_https(monkeypatch: pytest.MonkeyPatch) -> None:
     settings = load_bot_settings(env_file=None)
     assert str(settings.announcement_channel_url) == "https://t.me/realchat_news"
     assert str(settings.support_contact) == "https://t.me/realchat_support"
+
+
+def test_the_test_environment_is_off_by_default_and_never_in_production(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _bot_env(monkeypatch)
+    assert load_bot_settings(env_file=None).telegram_test_environment is False
+
+    monkeypatch.setenv("TELEGRAM_TEST_ENVIRONMENT", "true")
+    assert load_bot_settings(env_file=None).telegram_test_environment is True
+
+    monkeypatch.setenv("APP_ENV", "production")
+    monkeypatch.setenv("MIN_AGE", "18")
+    monkeypatch.setenv("SUPPORT_CONTACT", "https://t.me/realchat_support")
+    with pytest.raises(
+        SettingsError, match="TELEGRAM_TEST_ENVIRONMENT can't be used in production"
+    ):
+        load_bot_settings(env_file=None)
+
+
+async def test_the_bot_uses_the_test_environment_only_when_asked(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _bot_env(monkeypatch)
+    normal = create_bot(load_bot_settings(env_file=None))
+    monkeypatch.setenv("TELEGRAM_TEST_ENVIRONMENT", "true")
+    test = create_bot(load_bot_settings(env_file=None))
+    try:
+        assert normal.session.api.api_url("T", "getMe") == "https://api.telegram.org/botT/getMe"
+        assert test.session.api.api_url("T", "getMe") == "https://api.telegram.org/botT/test/getMe"
+    finally:
+        await normal.session.close()
+        await test.session.close()

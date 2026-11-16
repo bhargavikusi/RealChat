@@ -8,7 +8,7 @@ message retention, are not given as numbers, so the text stays true when they ch
 (D-046).
 """
 
-TERMS_VERSION = "draft-18"
+TERMS_VERSION = "draft-19"
 
 TERMS_TEXT = """\
 DRAFT - not for launch
@@ -62,7 +62,12 @@ matched again in a random chat, or being told when they visit or like your profi
 Neither of you can send the other direct messages or chat requests while either has \
 blocked the other.
 • Coins are a virtual in-app currency. They have no cash value and can't be exchanged \
-for money or transferred to other users.
+for money or transferred to other users. This includes coins you buy.
+• You can buy coins with Telegram Stars from /coins. They're added once Telegram \
+confirms the payment. If RealChat can't deliver a purchase, for example because your \
+account was deleted before the payment arrived, the Stars are refunded. For help with \
+a purchase, use /paysupport: Telegram's support can't help with purchases made in \
+RealChat.
 • Accounts that break these rules may be restricted or banned.
 • You can delete your account at any time from your profile (Advanced settings). \
 Your profile is erased immediately, and so are your coins and your invite link; a \
