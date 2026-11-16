@@ -4,10 +4,12 @@ import asyncio
 from datetime import UTC, datetime, timedelta
 
 import pytest
-from aiogram.methods import EditMessageReplyMarkup
+from aiogram.exceptions import TelegramForbiddenError
+from aiogram.methods import EditMessageReplyMarkup, SendMessage
 from aiogram.types import InlineKeyboardMarkup
 from redis.asyncio import Redis
-from sqlalchemy import delete, select, update
+from sqlalchemy import delete, select, text, update
+from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from apps.bot import payments as bot_payments
@@ -33,6 +35,7 @@ from tests.support.world import buttons
 Sessions = async_sessionmaker[AsyncSession]
 PACK_1 = bot_payments.pack_label(payments.Pack(1, 150, 80))
 REFUSED = bot_payments.REFUSALS
+RESTRICT_VIOLATION = "23001"  # the guard trigger, not some other database error
 
 
 async def _set(sessions: Sessions, key: SettingKey, value: int) -> None:
@@ -413,20 +416,96 @@ async def test_a_payment_during_a_deletion_waits_and_is_refunded(
     assert await _balance(session_factory) == 0
 
 
+async def _refund_owed(chat: Chat, sessions: Sessions, error: str) -> str:
+    """A payment for a deleted account whose immediate refund failed with `error`;
+    returns its payload."""
+    payload = await _buy(chat)
+    async with sessions() as session:
+        await users.delete_account(session, await _user_id(sessions), datetime.now(UTC))
+        await session.commit()
+    chat.session.refund_error = error
+    await chat.paid("charge-1", payload, 80)
+    assert await _payments(sessions) == [("charge-1", "refund_due", "account_deleted")]
+    return payload
+
+
+def _notices(chat: Chat) -> list[str]:
+    return [m.text for m in chat.session.requests if isinstance(m, SendMessage)]
+
+
 async def test_a_failed_refund_is_retried_on_the_next_confirmation(
     chat: Chat, session_factory: Sessions
 ) -> None:
-    payload = await _buy(chat)
-    async with session_factory() as session:
-        await users.delete_account(session, await _user_id(session_factory), datetime.now(UTC))
-        await session.commit()
-    chat.session.refund_error = "Bad Request: temporarily unavailable"
-    await chat.paid("charge-1", payload, 80)
-    assert await _payments(session_factory) == [("charge-1", "refund_due", "account_deleted")]
+    payload = await _refund_owed(chat, session_factory, "Bad Request: temporarily unavailable")
     chat.session.refund_error = None
     await chat.paid("charge-1", payload, 80)
     assert len(chat.session.refunds()) == 2
     assert await _payments(session_factory) == [("charge-1", "refunded", "account_deleted")]
+
+
+async def test_the_worker_retries_a_failed_refund(chat: Chat, session_factory: Sessions) -> None:
+    await _refund_owed(chat, session_factory, "Bad Request: temporarily unavailable")
+    retries = bot_payments.RefundRetries(chat.bot, session_factory)
+    now = datetime.now(UTC)
+    # Not before its retry time, which leaves the bot's own attempt alone.
+    assert await retries.tick(now) == 0
+    assert len(chat.session.refunds()) == 1
+    # Still failing: it stays owed and waits again.
+    later = now + payments.REFUND_RETRY
+    assert await retries.tick(later) == 0
+    assert len(chat.session.refunds()) == 2
+    assert await retries.tick(later) == 0
+    assert len(chat.session.refunds()) == 2
+    chat.session.refund_error = None
+    assert await retries.tick(later + payments.REFUND_RETRY) == 1
+    [*_, refund] = chat.session.refunds()
+    assert (refund.user_id, refund.telegram_payment_charge_id) == (USER_ID, "charge-1")
+    assert await _payments(session_factory) == [("charge-1", "refunded", "account_deleted")]
+    assert chat.last() == bot_payments.REFUNDED.format(stars=80)
+    # Settled: never tried again.
+    assert await retries.tick(later + 10 * payments.REFUND_RETRY) == 0
+    assert len(chat.session.refunds()) == 3
+
+
+async def test_a_refund_telegram_already_made_is_recorded_without_a_second_notice(
+    chat: Chat, session_factory: Sessions
+) -> None:
+    await _refund_owed(chat, session_factory, "Bad Request: temporarily unavailable")
+    chat.session.refund_error = "Bad Request: CHARGE_ALREADY_REFUNDED"
+    retries = bot_payments.RefundRetries(chat.bot, session_factory)
+    assert await retries.tick(datetime.now(UTC) + payments.REFUND_RETRY) == 1
+    assert await _payments(session_factory) == [("charge-1", "refunded", "account_deleted")]
+    assert bot_payments.REFUNDED.format(stars=80) not in _notices(chat)
+
+
+async def test_a_refund_stands_when_its_notice_cant_be_sent(
+    chat: Chat, session_factory: Sessions
+) -> None:
+    await _refund_owed(chat, session_factory, "Bad Request: temporarily unavailable")
+    chat.session.refund_error = None
+    chat.session.send_error = TelegramForbiddenError(
+        method=SendMessage(chat_id=USER_ID, text="x"), message="Forbidden: bot was blocked"
+    )
+    retries = bot_payments.RefundRetries(chat.bot, session_factory)
+    assert await retries.tick(datetime.now(UTC) + payments.REFUND_RETRY) == 1
+    assert await _payments(session_factory) == [("charge-1", "refunded", "account_deleted")]
+
+
+async def test_simultaneous_workers_claim_a_refund_once(
+    chat: Chat, session_factory: Sessions
+) -> None:
+    await _refund_owed(chat, session_factory, "Bad Request: temporarily unavailable")
+    due = datetime.now(UTC) + payments.REFUND_RETRY
+    async with session_factory() as first, session_factory() as second:
+        [claimed] = await payments.claim_refunds(first, due, 10)
+        assert claimed.charge_id == "charge-1"
+        # The first claim isn't committed yet, and the row is skipped, not waited on.
+        assert await payments.claim_refunds(second, due, 10) == []
+        await first.commit()
+        await second.rollback()
+        # Committed: the next try is a full wait away.
+        assert await payments.claim_refunds(second, due, 10) == []
+        await second.rollback()
 
 
 async def test_an_unmatched_payment_is_reported_to_the_user(
@@ -495,3 +574,40 @@ async def test_restricted_users_can_read_terms_and_payment_support(
         terms_body(18),
         bot_payments.PAYSUPPORT.format(where=""),
     )
+
+
+# --- The payments table guard ------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("statement", "message"),
+    [
+        ("DELETE FROM stars_payments", "cannot be deleted"),
+        ("TRUNCATE stars_payments", "cannot be deleted"),
+        ("UPDATE stars_payments SET telegram_charge_id = 'other'", "can only move"),
+        ("UPDATE stars_payments SET stars = 1", "can only move"),
+        ("UPDATE stars_payments SET status = 'paid'", "can only move"),
+    ],
+)
+async def test_a_payment_cant_be_deleted_or_rewritten(
+    chat: Chat, session_factory: Sessions, statement: str, message: str
+) -> None:
+    payload = await _buy(chat)
+    await chat.paid("charge-1", payload, 80)
+    async with session_factory() as session:
+        with pytest.raises(DBAPIError, match=message) as raised:
+            await session.execute(text(statement))
+    assert str(raised.value.orig.sqlstate) == RESTRICT_VIOLATION  # type: ignore[union-attr]
+    assert await _payments(session_factory) == [("charge-1", "paid", None)]
+
+
+async def test_a_refunded_payment_cant_change_again(chat: Chat, session_factory: Sessions) -> None:
+    payload = await _refund_owed(chat, session_factory, "Bad Request: temporarily unavailable")
+    chat.session.refund_error = None
+    await chat.paid("charge-1", payload, 80)
+    for status in ("paid", "refund_due", "refunded"):
+        async with session_factory() as session:
+            with pytest.raises(DBAPIError, match="can only move"):
+                await session.execute(
+                    text("UPDATE stars_payments SET status = :status"), {"status": status}
+                )

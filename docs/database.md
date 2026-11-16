@@ -364,8 +364,9 @@ Each Telegram Stars payment received (D-061), written once per Telegram charge.
 | `status` | varchar(16) | `paid` (fulfilled), `refund_due` (can't be fulfilled; the Stars are owed back), or `refunded`. |
 | `refund_reason` | varchar(32), nullable | `account_deleted`. Set exactly when the status is not `paid` (constraint). |
 | `created_at`, `refunded_at` | timestamptz | `refunded_at` is set exactly when the status is `refunded` (constraint). |
+| `refund_retry_at` | timestamptz, nullable | When the worker may next try a refund still owed; set exactly when the status is `refund_due` (constraint). Each claim moves it 5 minutes ahead. A partial index on it covers `refund_due` rows. |
 
-Fulfilment locks the buyer's `users` row (`FOR NO KEY UPDATE`) before writing, as account deletion and every ledger write do, so a payment and a deletion never interleave: a payment waiting on a deletion is recorded as `refund_due`. A `paid` payment's coins are credited in the same transaction. Kept on account deletion. Indexed by `user_id`.
+Fulfilment locks the buyer's `users` row (`FOR NO KEY UPDATE`) before writing, as account deletion and every ledger write do, so a payment and a deletion never interleave: a payment waiting on a deletion is recorded as `refund_due`. A `paid` payment's coins are credited in the same transaction. Kept on account deletion. Indexed by `user_id`. A trigger rejects deleting or truncating rows and any update that changes the charge, buyer, invoice, amount, or creation time, or moves the status anywhere but forward (`paid` to `refund_due` or `refunded`, and `refund_due` to `refunded`; a `refund_due` row may also have its retry time moved). The worker claims due refunds with `FOR UPDATE SKIP LOCKED` and commits the claim before calling Telegram.
 
 ### `invite_codes`
 

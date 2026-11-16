@@ -65,7 +65,8 @@ blocked the other.
 for money or transferred to other users. This includes coins you buy.
 • You can buy coins with Telegram Stars from /coins. They're added once Telegram \
 confirms the payment. If RealChat can't deliver a purchase, for example because your \
-account was deleted before the payment arrived, the Stars are refunded. For help with \
+account was deleted before the payment arrived, RealChat asks Telegram to refund the \
+Stars and keeps asking until Telegram accepts. For help with \
 a purchase, use /paysupport: Telegram's support can't help with purchases made in \
 RealChat.
 • Accounts that break these rules may be restricted or banned.

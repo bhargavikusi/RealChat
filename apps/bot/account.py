@@ -98,7 +98,10 @@ NOTICES = {
     "suspended": "Your account is suspended, so RealChat is unavailable to you for now.",
     "banned": "Your account has been banned for breaking the rules.",
 }
-NOTICE_OPTIONS = "You can still read /help, or delete your account."
+NOTICE_OPTIONS = (
+    "You can still read /help and the /terms, get help with a purchase with /paysupport, "
+    "or delete your account."
+)
 BACK_BUTTON = "◀️ Back"
 NOTIFICATION_LABELS = {
     Notification.SILENT_MODE: "🤫 Silent mode",
@@ -361,7 +364,8 @@ async def _allowed_when_restricted(update: Update, bot: Bot) -> bool:
 
 
 class AccessGateMiddleware(BaseMiddleware):
-    """Stops suspended and banned users before any handler other than help and deletion.
+    """Stops suspended and banned users before any handler other than help, the terms,
+    payment support, payment updates, and deletion (`_allowed_when_restricted`).
 
     Registered as an inner update middleware after the database session, so it runs
     for every update that passed deduplication and flood control. The status lookup

@@ -23,6 +23,7 @@ def clean_env(monkeypatch: pytest.MonkeyPatch) -> None:
         "PROFILE_CHANGE_COOLDOWN_DAYS",
         "ANNOUNCEMENT_CHANNEL_URL",
         "SUPPORT_CONTACT",
+        "TELEGRAM_TEST_ENVIRONMENT",
     ):
         monkeypatch.delenv(name, raising=False)
 

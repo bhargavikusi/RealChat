@@ -77,6 +77,8 @@ class RecordingSession(BaseSession):
         self.during_copy: Callable[[], Awaitable[None]] | None = None
         # When set, refundStarPayment fails with this Telegram error description.
         self.refund_error: str | None = None
+        # When set, sendMessage fails with this error, e.g. for a user who blocked the bot.
+        self.send_error: TelegramAPIError | None = None
 
     async def make_request(
         self,
@@ -93,6 +95,8 @@ class RecordingSession(BaseSession):
             if self.copy_error is not None:
                 raise self.copy_error
             return MessageId(message_id=10_000 + len(self.requests))  # type: ignore[return-value]
+        if isinstance(method, SendMessage) and self.send_error is not None:
+            raise self.send_error
         if isinstance(method, SendMessage):
             sent = Message(
                 message_id=len(self.requests),

@@ -28,6 +28,33 @@ OLD_CREDITS = (
 )
 NEW_CREDITS = OLD_CREDITS + ", 'coin_purchase'"
 
+# A payment is never deleted, its charge, buyer, invoice, amount and time never change,
+# and its status only moves forward: paid -> refund_due -> refunded, or paid ->
+# refunded. A refund still owed may have its retry time moved. Deleting a row would let
+# a resent confirmation credit the same charge again.
+PAYMENT_TRANSITION_FUNCTION = """
+CREATE FUNCTION stars_payments_transition() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+    IF TG_OP <> 'UPDATE' THEN
+        RAISE EXCEPTION 'stars payments cannot be deleted' USING ERRCODE = 'restrict_violation';
+    END IF;
+    IF (NEW.telegram_charge_id, NEW.user_id, NEW.invoice_id, NEW.stars, NEW.created_at)
+            IS DISTINCT FROM
+            (OLD.telegram_charge_id, OLD.user_id, OLD.invoice_id, OLD.stars, OLD.created_at)
+        OR NOT (
+            (OLD.status = 'paid' AND NEW.status IN ('refund_due', 'refunded'))
+            OR (OLD.status = 'refund_due' AND NEW.status IN ('refund_due', 'refunded')
+                AND NEW.refund_reason IS NOT DISTINCT FROM OLD.refund_reason)
+        )
+    THEN
+        RAISE EXCEPTION 'a stars payment can only move from paid to refund_due to refunded'
+            USING ERRCODE = 'restrict_violation';
+    END IF;
+    RETURN NEW;
+END;
+$$
+"""
+
 
 def _ledger_checks(kinds: str, credits: str) -> None:
     """Replace the ledger checks that list kinds, and which kinds add coins."""
@@ -79,6 +106,11 @@ def upgrade() -> None:
             nullable=False,
         ),
         sa.Column("refunded_at", sa.DateTime(timezone=True), nullable=True),
+        sa.Column("refund_retry_at", sa.DateTime(timezone=True), nullable=True),
+        sa.CheckConstraint(
+            "(status = 'refund_due') = (refund_retry_at IS NOT NULL)",
+            name=op.f("ck_stars_payments_refund_retry"),
+        ),
         sa.CheckConstraint(
             "(status = 'paid') = (refund_reason IS NULL)", name=op.f("ck_stars_payments_paid")
         ),
@@ -108,11 +140,29 @@ def upgrade() -> None:
         ),
     )
     op.create_index("ix_stars_payments_user_id", "stars_payments", ["user_id"], unique=False)
+    op.create_index(
+        "ix_stars_payments_refund_retry_at",
+        "stars_payments",
+        ["refund_retry_at"],
+        unique=False,
+        postgresql_where=sa.text("status = 'refund_due'"),
+    )
+    op.execute(PAYMENT_TRANSITION_FUNCTION)
+    op.execute(
+        "CREATE TRIGGER stars_payments_transition BEFORE UPDATE OR DELETE ON stars_payments "
+        "FOR EACH ROW EXECUTE FUNCTION stars_payments_transition()"
+    )
+    op.execute(
+        "CREATE TRIGGER stars_payments_no_truncate BEFORE TRUNCATE ON stars_payments "
+        "FOR EACH STATEMENT EXECUTE FUNCTION stars_payments_transition()"
+    )
 
 
 def downgrade() -> None:
+    op.drop_index("ix_stars_payments_refund_retry_at", table_name="stars_payments")
     op.drop_index("ix_stars_payments_user_id", table_name="stars_payments")
     op.drop_table("stars_payments")
+    op.execute("DROP FUNCTION stars_payments_transition()")
     op.drop_index("ix_stars_invoices_user_id", table_name="stars_invoices")
     op.drop_table("stars_invoices")
     # The ledger is append-only, so this fails while any purchase entry exists, rather

@@ -6,6 +6,10 @@ confirms the payment, which credits the coins. Only that confirmation grants
 anything. Payment updates are never dropped by flood control or the restricted-account
 gate (`apps.bot.middlewares.is_payment`). As elsewhere, the database transaction is
 ended before any Telegram call.
+
+A payment that can't be fulfilled is refunded at once; if Telegram refuses or can't be
+reached, the worker retries it (`RefundRetries`), since Telegram doesn't send the
+confirmation again.
 """
 
 import logging
@@ -24,7 +28,7 @@ from aiogram.types import (
     Message,
     PreCheckoutQuery,
 )
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from apps.bot.endings import coins_label
 from apps.bot.onboarding import load_context
@@ -32,7 +36,13 @@ from backend.config.settings import BotSettings
 from backend.core.logging import exception_summary
 from backend.modules.admin.settings import load_values
 from backend.modules.payments import service as payments
-from backend.modules.payments.service import Outcome, Pack, Refusal, UnknownPaymentError
+from backend.modules.payments.service import (
+    Outcome,
+    Pack,
+    RefundDue,
+    Refusal,
+    UnknownPaymentError,
+)
 from backend.modules.users.terms import TERMS_VERSION, terms_body
 
 logger = logging.getLogger(__name__)
@@ -69,6 +79,10 @@ PAYSUPPORT = (
     "Telegram's own support can't help with purchases made in RealChat."
 )
 SUPPORT_BUTTON = "💬 Contact support"
+# Telegram's answer when the charge was refunded before, for example by an earlier
+# attempt whose result wasn't recorded.
+ALREADY_REFUNDED = "CHARGE_ALREADY_REFUNDED"
+REFUND_BATCH = 20
 
 
 class PackAction(CallbackData, prefix="pack"):
@@ -164,36 +178,64 @@ async def on_paid(message: Message, bot: Bot, session: AsyncSession) -> None:
     if fulfilled.outcome == Outcome.CREDITED:
         await bot.send_message(message.chat.id, CREDITED.format(coins=coins_label(fulfilled.coins)))
     elif fulfilled.status == "refund_due":
-        await _refund(
-            bot,
-            session,
+        due = RefundDue(
+            fulfilled.payment_id,
             message.from_user.id,
             paid.telegram_payment_charge_id,
-            fulfilled.payment_id,
             paid.total_amount,
         )
+        await refund(bot, session, due)
 
 
-async def _refund(
-    bot: Bot,
-    session: AsyncSession,
-    telegram_user_id: int,
-    charge_id: str,
-    payment_id: int,
-    stars: int,
-) -> None:
-    """Return the Stars of a payment that can't be fulfilled. A failure leaves it owed:
-    a repeated confirmation tries again, and admins can see it."""
+async def refund(bot: Bot, session: AsyncSession, due: RefundDue) -> bool:
+    """Return the Stars of a payment that can't be fulfilled; returns whether it is now
+    refunded. A failure leaves it owed for the worker to retry. Call with no
+    transaction open."""
     try:
         await bot.refund_star_payment(
-            user_id=telegram_user_id, telegram_payment_charge_id=charge_id
+            user_id=due.telegram_user_id, telegram_payment_charge_id=due.charge_id
         )
     except TelegramAPIError as exc:
-        logger.warning("could not refund a payment", extra=exception_summary(exc))
-        return
-    await payments.mark_refunded(session, payment_id, _now())
+        if ALREADY_REFUNDED not in exc.message:
+            logger.warning("could not refund a payment", extra=exception_summary(exc))
+            return False
+        # Refunded before, but not recorded: record it, without a second notice.
+        await payments.mark_refunded(session, due.payment_id, _now())
+        await session.commit()
+        return True
+    await payments.mark_refunded(session, due.payment_id, _now())
     await session.commit()
-    await bot.send_message(telegram_user_id, REFUNDED.format(stars=stars))
+    try:
+        await bot.send_message(due.telegram_user_id, REFUNDED.format(stars=due.stars))
+    except TelegramAPIError as exc:
+        # The refund stands; the user may have blocked the bot after deleting.
+        logger.info("could not send a refund notice", extra=exception_summary(exc))
+    return True
+
+
+class RefundRetries:
+    """Retries refunds still owed (D-061). Runs in the worker.
+
+    Each tick claims a bounded batch whose retry time has come; a claim moves the next
+    retry `payments.REFUND_RETRY` ahead, so a refund Telegram keeps refusing is tried
+    again at that pace, and only the failure is logged, without user data.
+    """
+
+    def __init__(self, bot: Bot, sessions: async_sessionmaker[AsyncSession]) -> None:
+        self._bot = bot
+        self._sessions = sessions
+
+    async def tick(self, now: datetime) -> int:
+        """Try one batch; returns how many were refunded."""
+        async with self._sessions() as session:
+            claimed = await payments.claim_refunds(session, now, REFUND_BATCH)
+            await session.commit()
+            refunded = 0
+            for due in claimed:
+                refunded += await refund(self._bot, session, due)
+        if refunded:
+            logger.info("refunded payments", extra={"count": refunded})
+        return refunded
 
 
 async def show_terms(message: Message, settings: BotSettings) -> None:

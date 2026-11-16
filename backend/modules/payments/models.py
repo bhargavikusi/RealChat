@@ -18,6 +18,7 @@ from sqlalchemy import (
     Integer,
     String,
     func,
+    text,
 )
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -25,8 +26,10 @@ from backend.database.engine import Base
 
 PRODUCTS = ("coins",)
 # paid: the Stars were received and the purchase fulfilled. refund_due: the purchase
-# can't be fulfilled and the Stars must go back (see REFUND_REASONS); a failed refund
-# call leaves it here to be tried again. refunded: the Stars were returned.
+# can't be fulfilled and the Stars must go back (see REFUND_REASONS); the worker tries
+# again from `refund_retry_at` until Telegram accepts the refund. refunded: the Stars
+# were returned. A trigger keeps rows from being deleted and lets the status only move
+# forward (see the migration).
 PAYMENT_STATUSES = ("paid", "refund_due", "refunded")
 # account_deleted: the payment arrived after the account was deleted.
 REFUND_REASONS = ("account_deleted",)
@@ -67,8 +70,16 @@ class StarsPayment(Base):
         ),
         CheckConstraint("(status = 'paid') = (refund_reason IS NULL)", name="paid"),
         CheckConstraint("(status = 'refunded') = (refunded_at IS NOT NULL)", name="refunded"),
+        CheckConstraint(
+            "(status = 'refund_due') = (refund_retry_at IS NOT NULL)", name="refund_retry"
+        ),
         CheckConstraint("stars > 0", name="stars"),
         Index("ix_stars_payments_user_id", "user_id"),
+        Index(
+            "ix_stars_payments_refund_retry_at",
+            "refund_retry_at",
+            postgresql_where=text("status = 'refund_due'"),
+        ),
     )
 
     id: Mapped[int] = mapped_column(BigInteger, Identity(), primary_key=True)
@@ -81,3 +92,5 @@ class StarsPayment(Base):
     refund_reason: Mapped[str | None] = mapped_column(String(32))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     refunded_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # When a refund still owed may next be tried.
+    refund_retry_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
