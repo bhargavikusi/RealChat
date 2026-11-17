@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from apps import admin_cli
 from apps.bot import coins as bot_coins
 from apps.bot.menu import BOT_COMMANDS
+from apps.bot.payments import BUY_HEADER
 from backend.config.settings import BotSettings
 from backend.modules.admin import service as admin
 from backend.modules.admin.models import AdminAuditEntry, AppSetting
@@ -320,6 +321,8 @@ async def test_coins_shows_balance_held_coins_and_history(
         "",
         f"👥 Invite friends: https://t.me/RealChatTestBot?start=inv_{code}",
         bot_coins.INVITE_REWARD.format(amount=10, cap=10),
+        "",
+        BUY_HEADER,
     ]
 
 
@@ -342,7 +345,8 @@ async def test_coins_says_when_there_is_no_activity(
         bot_coins.NO_ACTIVITY,
     ]
     assert lines[7].startswith("👥 Invite friends: ")
-    assert len(lines) == 8  # no reward line while invite rewards are off
+    # No reward line while invite rewards are off.
+    assert lines[8:] == ["", BUY_HEADER]
 
 
 async def test_a_repeated_spend_reports_done_even_when_coins_ran_out(

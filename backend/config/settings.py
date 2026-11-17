@@ -36,6 +36,9 @@ class BotSettings(Settings):
     """Settings for the Telegram bot process. Other processes do not need the token."""
 
     telegram_bot_token: SecretStr
+    # Connect to Telegram's test environment instead (a separate network with its own
+    # accounts and bots), to test Stars payments without real Stars (D-061).
+    telegram_test_environment: bool = False
 
     # D-009: development value 18; the launch value is still open (O-001).
     min_age: int = Field(default=18, ge=13, le=99)
@@ -82,6 +85,19 @@ class BotSettings(Settings):
         # so production must never fall back to it silently.
         if self.app_env == "production" and "min_age" not in self.model_fields_set:
             raise ValueError("MIN_AGE must be set explicitly in production")
+        return self
+
+    @model_validator(mode="after")
+    def _require_production_support(self) -> "BotSettings":
+        # Telegram requires bots that take payments to offer support (D-061).
+        if self.app_env == "production" and self.support_contact is None:
+            raise ValueError("SUPPORT_CONTACT must be set in production")
+        return self
+
+    @model_validator(mode="after")
+    def _refuse_production_test_environment(self) -> "BotSettings":
+        if self.app_env == "production" and self.telegram_test_environment:
+            raise ValueError("TELEGRAM_TEST_ENVIRONMENT can't be used in production")
         return self
 
 

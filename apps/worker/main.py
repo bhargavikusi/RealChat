@@ -14,7 +14,8 @@ profile visits (D-053) about once a day; and failing direct messages left pendin
 interrupted Send, releasing their held coins (D-057); and settling chat requests that
 were not answered in time or were interrupted, telling the users (D-058); and firing or
 refunding activity alerts, telling the buyers (D-059); and sending daily reward
-reminders that are due (D-060).
+reminders that are due (D-060); and retrying refunds of Stars payments still owed
+(D-061).
 """
 
 import asyncio
@@ -29,6 +30,7 @@ from apps.bot.avatars import Avatars
 from apps.bot.chat import ChatNotifier
 from apps.bot.chat_requests import RequestNotices
 from apps.bot.main import create_bot
+from apps.bot.payments import RefundRetries
 from apps.bot.private import PrivateModeNotifier, TelegramDeletions
 from apps.bot.reminders import ReminderMessages
 from backend.config.settings import load_bot_settings
@@ -62,6 +64,8 @@ CHAT_REQUESTS_SECONDS = 5.0
 ACTIVITY_ALERTS_SECONDS = 5.0
 # Daily reward reminders that are due (D-060).
 REMINDERS_SECONDS = 60.0
+# Refunds of Stars payments still owed (D-061); each has its own retry time.
+REFUNDS_SECONDS = 60.0
 
 Job = Callable[[datetime], Awaitable[object]]
 
@@ -122,6 +126,7 @@ async def run() -> None:
     reminders = ReminderJob(sessions, runtime_settings, ReminderMessages(bot), TERMS_VERSION)
     private_mode = PrivateModeJob(sessions, runtime_settings, PrivateModeNotifier(bot, sessions))
     deletions = TelegramDeletions(bot, sessions)
+    refunds = RefundRetries(bot, sessions)
     stop = asyncio.Event()
     loop = asyncio.get_running_loop()
     for signum in (signal.SIGINT, signal.SIGTERM):
@@ -142,6 +147,7 @@ async def run() -> None:
                 ("chat requests", chat_requests.tick, CHAT_REQUESTS_SECONDS),
                 ("activity alerts", activity_alerts.tick, ACTIVITY_ALERTS_SECONDS),
                 ("daily reward reminders", reminders.tick, REMINDERS_SECONDS),
+                ("payment refunds", refunds.tick, REFUNDS_SECONDS),
             ),
             stop,
         )

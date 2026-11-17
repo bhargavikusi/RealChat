@@ -9,6 +9,8 @@ import time
 from collections.abc import Callable
 
 from aiogram import Bot, Dispatcher
+from aiogram.client.session.aiohttp import AiohttpSession
+from aiogram.client.telegram import TelegramAPIServer
 from aiogram.fsm.storage.redis import RedisEventIsolation, RedisStorage
 from aiogram.types import BotCommandScopeAllPrivateChats
 from redis.asyncio import Redis
@@ -26,6 +28,7 @@ from apps.bot import (
     likes,
     menu,
     onboarding,
+    payments,
     people,
     private,
     profile,
@@ -100,6 +103,9 @@ def create_dispatcher(
     dispatcher.include_routers(
         errors.create_router(),
         menu.create_router(),
+        # Stars purchases, /terms, and /paysupport (D-061): before anything that could
+        # take a payment confirmation as an ordinary message.
+        payments.create_router(),
         account.create_router(),
         # /coins (D-050).
         coins.create_router(),
@@ -131,10 +137,18 @@ def create_dispatcher(
     return dispatcher
 
 
+# Telegram's test environment, where Stars payments cost nothing (D-061).
+TEST_ENVIRONMENT = TelegramAPIServer(
+    base="https://api.telegram.org/bot{token}/test/{method}",
+    file="https://api.telegram.org/file/bot{token}/test/{path}",
+)
+
+
 def create_bot(settings: BotSettings) -> Bot:
+    session = AiohttpSession(api=TEST_ENVIRONMENT) if settings.telegram_test_environment else None
     # No default parse mode: text is sent as plain text, so user-provided content
     # can never be interpreted as HTML or Markdown.
-    bot = Bot(token=settings.telegram_bot_token.get_secret_value())
+    bot = Bot(token=settings.telegram_bot_token.get_secret_value(), session=session)
     install_request_middlewares(bot.session)
     return bot
 

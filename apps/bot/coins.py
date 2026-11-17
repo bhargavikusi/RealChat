@@ -20,12 +20,14 @@ from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMar
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from apps.bot.onboarding import load_context, prompt_next
+from apps.bot.payments import BUY_HEADER, pack_rows
 from backend.config.settings import BotSettings
 from backend.core.logging import exception_summary
 from backend.modules.admin.settings import SettingKey, load_values
 from backend.modules.coins import rewards
 from backend.modules.coins import service as coins
 from backend.modules.coins.service import Entry
+from backend.modules.payments import service as payments
 
 logger = logging.getLogger(__name__)
 
@@ -43,6 +45,7 @@ LABELS = {
     "chat_request": "Chat request",
     "activity_alert": "Activity alert",
     "activity_alert_refund": "Activity alert returned",
+    "coin_purchase": "Bought with Stars",
 }
 NO_ACTIVITY = "No coin activity yet."
 DAILY_AVAILABLE = "🎁 Daily reward: {amount} today."
@@ -68,16 +71,10 @@ def daily_lines(on: bool, claimed: bool, amount: int) -> list[str]:
     return ["", DAILY_CLAIMED if claimed else DAILY_AVAILABLE.format(amount=coin_count(amount))]
 
 
-def claim_keyboard() -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
-            [
-                InlineKeyboardButton(
-                    text=CLAIM_BUTTON, callback_data=DailyAction(action="claim").pack()
-                )
-            ]
-        ]
-    )
+def claim_row() -> list[InlineKeyboardButton]:
+    return [
+        InlineKeyboardButton(text=CLAIM_BUTTON, callback_data=DailyAction(action="claim").pack())
+    ]
 
 
 INVITE = "👥 Invite friends: {link}"
@@ -133,9 +130,14 @@ async def on_coins(
         link, values[SettingKey.INVITE_REWARD_COINS], values[SettingKey.INVITE_REWARDS_PER_DAY]
     )
     daily = daily_lines(daily_on, claimed, values[SettingKey.DAILY_REWARD_COINS])
+    offers = payments.packs(values)
+    rows = [claim_row()] if daily_on and not claimed else []
+    rows += pack_rows(offers)
     await message.answer(
-        "\n".join([coins_text(balance, entries), *daily, *invite]),
-        reply_markup=claim_keyboard() if daily_on and not claimed else None,
+        "\n".join(
+            [coins_text(balance, entries), *daily, *invite, *(["", BUY_HEADER] if offers else [])]
+        ),
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=rows) if rows else None,
     )
 
 
@@ -163,11 +165,20 @@ async def on_claim(query: CallbackQuery, bot: Bot, session: AsyncSession) -> Non
 
 
 async def _remove_button(bot: Bot, query: CallbackQuery) -> None:
+    """Remove the claim button, keeping any other buttons (the coin packs)."""
     if query.message is None:
         return
+    markup = getattr(query.message, "reply_markup", None)
+    rows = [
+        row
+        for row in (markup.inline_keyboard if isinstance(markup, InlineKeyboardMarkup) else [])
+        if not any(button.callback_data == query.data for button in row)
+    ]
     try:
         await bot.edit_message_reply_markup(
-            chat_id=query.message.chat.id, message_id=query.message.message_id, reply_markup=None
+            chat_id=query.message.chat.id,
+            message_id=query.message.message_id,
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=rows) if rows else None,
         )
     except TelegramAPIError as exc:
         logger.info("could not remove the claim button", extra=exception_summary(exc))

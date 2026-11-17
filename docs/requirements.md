@@ -433,6 +433,8 @@ Never grant purchased coins based solely on a client callback or a request param
 
 Do not hard-code payment prices or product identifiers throughout the codebase.
 
+Approved (D-061): four coin packs in Stars, admin settings (150 coins for 80 Stars, 350 for 150, 800 for 290, 1,900 for 580 by default), shown in Stars only. Each invoice is stored and honoured at what it showed for 1 hour. Coins are credited once per Telegram charge on the payment confirmation; a payment for an account deleted meanwhile is refunded, with failed refund calls retried until Telegram accepts them, and one for a restricted account is credited. A confirmation that can't be recorded at all is not yet reconciled automatically. /terms and /paysupport are available, and a support contact is required in production.
+
 ### VIP subscription
 
 VIP is a configurable subscription with potential benefits including:

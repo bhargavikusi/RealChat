@@ -38,7 +38,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from apps.bot.admin import admin_button
 from apps.bot.endings import PARTNER_LEFT, coins_label, menu_price, tell_chat_ended
 from apps.bot.menu import HelpAction
-from apps.bot.middlewares import Handler
+from apps.bot.middlewares import Handler, is_payment
 from apps.bot.onboarding import load_context, prompt_next
 from backend.config.settings import BotSettings
 from backend.core.logging import exception_summary
@@ -98,7 +98,10 @@ NOTICES = {
     "suspended": "Your account is suspended, so RealChat is unavailable to you for now.",
     "banned": "Your account has been banned for breaking the rules.",
 }
-NOTICE_OPTIONS = "You can still read /help, or delete your account."
+NOTICE_OPTIONS = (
+    "You can still read /help and the /terms, get help with a purchase with /paysupport, "
+    "or delete your account."
+)
 BACK_BUTTON = "◀️ Back"
 NOTIFICATION_LABELS = {
     Notification.SILENT_MODE: "🤫 Silent mode",
@@ -339,13 +342,17 @@ def create_router() -> Router:
 
 
 async def _allowed_when_restricted(update: Update, bot: Bot) -> bool:
-    """Help and account deletion stay available to restricted users (D-026)."""
+    """Help, the terms, payment support, and account deletion stay available to
+    restricted users (D-026, D-061). Payment updates pass too: checkout declines
+    restricted users itself, with a reason, and a confirmed payment must be recorded."""
+    if is_payment(update):
+        return True
     if update.message is not None:
         command = (update.message.text or "").split(maxsplit=1)[:1]
         if not command:
             return False
         name, _, mention = command[0].partition("@")
-        if name != "/help":
+        if name not in ("/help", "/terms", "/paysupport"):
             return False
         # "/help@name" counts only when it names this bot.
         return not mention or mention.casefold() == ((await bot.me()).username or "").casefold()
@@ -357,7 +364,8 @@ async def _allowed_when_restricted(update: Update, bot: Bot) -> bool:
 
 
 class AccessGateMiddleware(BaseMiddleware):
-    """Stops suspended and banned users before any handler other than help and deletion.
+    """Stops suspended and banned users before any handler other than help, the terms,
+    payment support, payment updates, and deletion (`_allowed_when_restricted`).
 
     Registered as an inner update middleware after the database session, so it runs
     for every update that passed deduplication and flood control. The status lookup

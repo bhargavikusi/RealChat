@@ -10,6 +10,7 @@ from backend.modules.chat_requests import models as chat_requests  # noqa: F401
 from backend.modules.coins import models as coins  # noqa: F401
 from backend.modules.direct_messages import models as direct_messages  # noqa: F401
 from backend.modules.moderation import models as moderation  # noqa: F401
+from backend.modules.payments import models as payments  # noqa: F401
 from backend.modules.people import models as people  # noqa: F401
 from backend.modules.reminders import models as reminders  # noqa: F401
 from backend.modules.users import models as users  # noqa: F401
