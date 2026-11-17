@@ -31,6 +31,7 @@ from aiogram.types import (
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from apps.bot.endings import coins_label
+from apps.bot.menu import send_parts
 from apps.bot.onboarding import load_context
 from backend.config.settings import BotSettings
 from backend.core.logging import exception_summary
@@ -43,7 +44,7 @@ from backend.modules.payments.service import (
     Refusal,
     UnknownPaymentError,
 )
-from backend.modules.users.terms import TERMS_VERSION, terms_body
+from backend.modules.users.terms import TERMS_VERSION, terms_parts
 
 logger = logging.getLogger(__name__)
 
@@ -238,8 +239,8 @@ class RefundRetries:
         return refunded
 
 
-async def show_terms(message: Message, settings: BotSettings) -> None:
-    await message.answer(terms_body(settings.min_age))
+async def show_terms(message: Message, bot: Bot, settings: BotSettings) -> None:
+    await send_parts(bot, message.chat.id, terms_parts(settings.min_age))
 
 
 async def show_paysupport(message: Message, settings: BotSettings) -> None:

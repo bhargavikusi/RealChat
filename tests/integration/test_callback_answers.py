@@ -16,7 +16,7 @@ from apps.bot import profile as pr
 from apps.bot.errors import GENERIC_ERROR_TEXT
 from backend.modules.admin import service as admin_service
 from backend.modules.admin.settings import load_values
-from backend.modules.users.terms import terms_body
+from backend.modules.users.terms import terms_parts
 from tests.support.chat import TERMS, USER_ID, Chat, complete_onboarding
 
 Sessions = async_sessionmaker[AsyncSession]
@@ -32,7 +32,9 @@ async def test_onboarding_buttons(chat: Chat) -> None:
 async def test_help_buttons(chat: Chat) -> None:
     await chat.send("/help")
     chat.session.reject_callback_answers = EXPIRED
-    assert await chat.press("📄 Terms and privacy") == terms_body(18)
+    sent = len(chat.session.sent_texts())
+    await chat.press("📄 Terms and privacy")
+    assert chat.session.sent_texts()[sent:] == terms_parts(18)
 
 
 async def test_profile_buttons(chat: Chat) -> None:

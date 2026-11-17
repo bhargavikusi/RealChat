@@ -18,7 +18,7 @@ from aiogram.types import (
 )
 
 from backend.config.settings import BotSettings
-from backend.modules.users.terms import terms_body
+from backend.modules.users.terms import terms_parts
 
 
 class HelpAction(CallbackData, prefix="help"):
@@ -73,9 +73,19 @@ async def show_help(message: Message, settings: BotSettings) -> None:
     await message.answer(HELP_TEXT, reply_markup=help_keyboard(settings))
 
 
+async def send_parts(
+    bot: Bot, chat_id: int, parts: list[str], reply_markup: InlineKeyboardMarkup | None = None
+) -> None:
+    """Send a text split into several messages (`split_message`), in order; any buttons
+    go on the last one."""
+    for part in parts[:-1]:
+        await bot.send_message(chat_id, part)
+    await bot.send_message(chat_id, parts[-1], reply_markup=reply_markup)
+
+
 async def show_terms(query: CallbackQuery, bot: Bot, settings: BotSettings) -> None:
     await query.answer()
-    await bot.send_message(query.from_user.id, terms_body(settings.min_age))
+    await send_parts(bot, query.from_user.id, terms_parts(settings.min_age))
 
 
 def create_router() -> Router:

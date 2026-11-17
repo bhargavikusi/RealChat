@@ -88,6 +88,9 @@ class RecordingSession(BaseSession):
         method: TelegramMethod[TelegramType],
         timeout: int | None = None,  # noqa: ASYNC109 (aiogram interface)
     ) -> TelegramType:
+        if isinstance(method, SendMessage) and len(method.text.encode("utf-16-le")) // 2 > 4096:
+            # Telegram refuses a message over its limit, so the tests do too.
+            raise TelegramBadRequest(method=method, message="Bad Request: message is too long")
         if isinstance(method, SendMessage) and self.send_error is not None:
             self.failed_sends.append(method)
             raise self.send_error

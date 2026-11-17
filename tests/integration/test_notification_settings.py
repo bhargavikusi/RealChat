@@ -17,7 +17,7 @@ from backend.modules.admin import service as admin_service
 from backend.modules.users import service as users
 from backend.modules.users.models import NotificationSettings, User
 from backend.modules.users.service import NOTIFICATION_DEFAULTS, Notification
-from tests.support.chat import TERMS, USER_ID, Chat, complete_onboarding
+from tests.support.chat import TERMS_PARTS, USER_ID, Chat, complete_onboarding
 from tests.support.world import buttons, last_to, text_of
 
 Sessions = async_sessionmaker[AsyncSession]
@@ -149,7 +149,7 @@ async def test_settings_need_the_current_terms(
     monkeypatch.setattr(ob, "TERMS_VERSION", "draft-99")
     sent = len(chat.session.sent_texts())
     await chat.press_data(notify_data(Notification.SILENT_MODE, True))
-    assert chat.session.sent_texts()[sent:] == [TERMS]
+    assert chat.session.sent_texts()[sent:] == TERMS_PARTS
     assert (await choices(session_factory))[Notification.SILENT_MODE] is False
 
 

@@ -15,6 +15,7 @@ from backend.modules.users.models import Profile, ProfileChange, TermsAcceptance
 from backend.modules.users.terms import TERMS_VERSION
 from tests.support.chat import (
     TERMS,
+    TERMS_PARTS,
     USER_ID,
     Chat,
     complete_onboarding,
@@ -204,7 +205,7 @@ async def test_old_buttons_cannot_delete_without_the_current_terms(
     for data in (confirm, settings, delete):
         sent = len(chat.session.sent_texts())
         await chat.press_data(data)
-        assert chat.session.sent_texts()[sent:] == [TERMS]  # the new terms, nothing else
+        assert chat.session.sent_texts()[sent:] == TERMS_PARTS  # the new terms, nothing else
 
     assert (await load_profile(session_factory)).nickname == "Night Owl"
     assert (await _user(session_factory)).status == "active"

@@ -16,7 +16,7 @@ from apps.bot.menu import BOT_COMMANDS, HELP_TEXT
 from apps.bot.people import PEOPLE_BUTTON
 from backend.config.settings import BotSettings
 from backend.modules.users.models import ProfileChange
-from backend.modules.users.terms import terms_body
+from backend.modules.users.terms import terms_parts
 from backend.modules.users.validation import Gender
 from tests.support.chat import (
     TERMS,
@@ -337,7 +337,9 @@ async def test_help_shows_the_guide_and_terms_without_unset_links(chat: Chat) ->
     assert await chat.send("/help") == HELP_TEXT
     assert set(chat.session.last_buttons()) == {"📄 Terms and privacy"}
 
-    assert await chat.press("📄 Terms and privacy") == terms_body(18)
+    sent = len(chat.session.sent_texts())
+    await chat.press("📄 Terms and privacy")
+    assert chat.session.sent_texts()[sent:] == terms_parts(18)
     assert all(f"/{c.command}" in HELP_TEXT for c in BOT_COMMANDS)
     assert "not end-to-end encrypted" in HELP_TEXT
 
