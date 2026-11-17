@@ -50,6 +50,9 @@ def test_approved_defaults() -> None:
         SettingKey.PACK_3_STARS: 290,
         SettingKey.PACK_4_COINS: 1_900,
         SettingKey.PACK_4_STARS: 580,
+        SettingKey.VIP_STARS: 780,
+        SettingKey.VIP_DAYS: 180,
+        SettingKey.VIP_COINS: 3_750,
     }
 
 

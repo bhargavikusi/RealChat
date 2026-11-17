@@ -451,6 +451,8 @@ Users must be able to manage their subscription and understand its terms. Do not
 
 When VIP expires, revoke subscription-only entitlements according to documented rules without deleting unrelated user data or purchased coin balances.
 
+Approved (D-062): VIP is sold as a one-time pass in Stars, not a subscription: 780 Stars for 180 days plus 3,750 coins by default, all admin settings. Buying while VIP is running adds the days to the current end date, but only while at most one pass's length is left. VIP ends at its end date with no further action, and coins are kept. A restricted account whose payment arrives is still granted VIP, and its days keep running; a payment for a deleted account is refunded; deleting an account ends VIP. /vip lists only perks that work. Approved perks, built separately: the ✅ 👑 VIP badge (not identity verification), priority matching, and Ghost mode for profile visits.
+
 ## 18. Advertising and Announcements
 
 Support two distinct advertising mechanisms.

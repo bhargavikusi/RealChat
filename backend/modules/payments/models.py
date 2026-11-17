@@ -1,6 +1,7 @@
-"""Telegram Stars invoices and payments (D-061). PostgreSQL is the source of truth.
+"""Telegram Stars invoices and payments (D-061, D-062). PostgreSQL is the source of truth.
 
-An invoice row records exactly what was offered: its Stars price and what it buys.
+An invoice row records exactly what was offered: its Stars price and what it buys (a
+coin pack, or a VIP pass with its days and included coins).
 The invoice sent to Telegram carries only a reference to that row, so checkout and
 fulfilment always use what was stored. A payment row is written once per Telegram
 charge, and is kept when an account is deleted, like the coin ledger.
@@ -24,7 +25,7 @@ from sqlalchemy.orm import Mapped, mapped_column
 
 from backend.database.engine import Base
 
-PRODUCTS = ("coins",)
+PRODUCTS = ("coins", "vip")
 # paid: the Stars were received and the purchase fulfilled. refund_due: the purchase
 # can't be fulfilled and the Stars must go back (see REFUND_REASONS); the worker tries
 # again from `refund_retry_at` until Telegram accepts the refund. refunded: the Stars
@@ -46,7 +47,10 @@ class StarsInvoice(Base):
     __table_args__ = (
         CheckConstraint(_in("product", PRODUCTS), name="product"),
         CheckConstraint("stars > 0", name="stars"),
-        CheckConstraint("coins > 0", name="coins"),
+        # A VIP pass may include no coins; a coin pack always has some.
+        CheckConstraint("coins > 0 OR (product = 'vip' AND coins = 0)", name="coins"),
+        CheckConstraint("(product = 'vip') = (days IS NOT NULL)", name="vip_days"),
+        CheckConstraint("days IS NULL OR days > 0", name="days"),
         Index("ix_stars_invoices_user_id", "user_id"),
     )
 
@@ -55,6 +59,8 @@ class StarsInvoice(Base):
     product: Mapped[str] = mapped_column(String(16))
     stars: Mapped[int] = mapped_column(Integer)
     coins: Mapped[int] = mapped_column(Integer)
+    # VIP days a pass adds (D-062); NULL for a coin pack.
+    days: Mapped[int | None] = mapped_column(Integer)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
@@ -94,3 +100,5 @@ class StarsPayment(Base):
     refunded_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     # When a refund still owed may next be tried.
     refund_retry_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # For a VIP pass that was granted: the VIP end date it produced (D-062).
+    vip_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

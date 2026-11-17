@@ -34,6 +34,7 @@ from apps.bot import (
     profile,
     relay,
     safety,
+    vip,
 )
 from apps.bot.account import AccessGateMiddleware
 from apps.bot.avatars import Avatars
@@ -106,6 +107,8 @@ def create_dispatcher(
         # Stars purchases, /terms, and /paysupport (D-061): before anything that could
         # take a payment confirmation as an ordinary message.
         payments.create_router(),
+        # /vip and the VIP pass (D-062).
+        vip.create_router(),
         account.create_router(),
         # /coins (D-050).
         coins.create_router(),

@@ -13,6 +13,7 @@ from apps import admin_cli
 from apps.bot import coins as bot_coins
 from apps.bot.menu import BOT_COMMANDS
 from apps.bot.payments import BUY_HEADER
+from apps.bot.vip import INACTIVE
 from backend.config.settings import BotSettings
 from backend.modules.admin import service as admin
 from backend.modules.admin.models import AdminAuditEntry, AppSetting
@@ -319,6 +320,8 @@ async def test_coins_shows_balance_held_coins_and_history(
         f"+5  Bonus from RealChat · {today}",
         f"+10  Welcome bonus · {today}",
         "",
+        f"👑 {INACTIVE} See /vip.",
+        "",
         f"👥 Invite friends: https://t.me/RealChatTestBot?start=inv_{code}",
         bot_coins.INVITE_REWARD.format(amount=10, cap=10),
         "",
@@ -344,9 +347,10 @@ async def test_coins_says_when_there_is_no_activity(
         "Recent activity:",
         bot_coins.NO_ACTIVITY,
     ]
-    assert lines[7].startswith("👥 Invite friends: ")
+    assert lines[6:8] == ["", f"👑 {INACTIVE} See /vip."]
+    assert lines[9].startswith("👥 Invite friends: ")
     # No reward line while invite rewards are off.
-    assert lines[8:] == ["", BUY_HEADER]
+    assert lines[10:] == ["", BUY_HEADER]
 
 
 async def test_a_repeated_spend_reports_done_even_when_coins_ran_out(

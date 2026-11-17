@@ -693,7 +693,22 @@ Work happens on short-lived issue branches, such as `feature/12-onboarding`, cre
 * For testing, `TELEGRAM_TEST_ENVIRONMENT` connects the bot to Telegram's test environment, where Stars payments cost nothing; it is refused in production.
 * /terms shows the terms, and /paysupport points to RealChat support and says Telegram's support can't help with purchases; both are in the command menu and available to restricted users. `SUPPORT_CONTACT` is required in production. The draft terms cover buying coins (terms version `draft-19`).
 
-**Why:** Owner decisions on pricing (packs give more coins for the same Stars than comparable bots), invoice validity, and payments that race a restriction or deletion. Telegram's rules for digital goods (Bot API payments documentation, checked 2026-11-16). Settles O-005 for coin packs; its VIP part stays open until the VIP work records it.
+**Why:** Owner decisions on pricing (packs give more coins for the same Stars than comparable bots), invoice validity, and payments that race a restriction or deletion. Telegram's rules for digital goods (Bot API payments documentation, checked 2026-11-16). Settles O-005 for coin packs; D-062 settles its VIP part.
+
+### D-062 — The VIP pass
+
+**Date:** 2026-11-17
+**Decision:**
+
+* VIP is sold as a one-time pass in Telegram Stars, bought from /vip with the same stored invoice, checkout, and exactly-once fulfilment as coin packs (D-061). It never renews; Telegram's Stars subscriptions are not used. The price, length, and included coins are admin settings: 780 Stars, 180 days, and 3,750 coins by default.
+* VIP is stored as `users.vip_until`, and the user is VIP while it is in the future, so it ends at that moment with no job. A pass sets it to the later of now and its current value, plus the invoice's days; the included coins are a `vip_coins` ledger entry. Each payment records the end date it produced.
+* Stacking limit: a pass can be bought only while at most one pass's length of VIP is left, so VIP never runs more than two passes ahead. The button and checkout both check it, and /vip says from when another pass can be bought. Two invoices that both passed checkout before either was paid are both granted, since the Stars were taken.
+* When VIP ends the user is a normal user again and keeps all their coins, including those that came with the pass.
+* A payment that arrives after the account was suspended or banned still grants VIP, and its days keep running during the restriction. A payment for a deleted account is refunded like a coin pack. Deleting an account ends VIP, and the deletion warning says so.
+* /vip shows the status and end date, only the perks that work today, the pass, and a Buy (or Extend) button; /coins shows the status line. Approved perks, each added to /vip when built: a ✅ 👑 VIP badge (requirements §17 amended; the terms will say it isn't identity verification), priority in every search, and Ghost mode for profile visits. Not part of VIP: hiding the profile (O-008), extra view-once views (O-012), and bulk messages.
+* The draft terms describe the pass (terms version `draft-20`).
+
+**Why:** Owner decisions on the pass, its price, the stacking limit, how restrictions and deletion apply, and listing only working perks. Settles the VIP part of O-005.
 
 ## Open
 
@@ -705,7 +720,6 @@ Each of these needs the owner's decision. Until then, the behavior stays configu
 | O-007 | Final terms of service and privacy policy text | Public launch | Development uses a versioned draft (D-015). It needs legal review. |
 | O-002 | Retention period for conversation content | Public launch | Kept separate from the retention of payment, moderation, security, and audit records (requirements §20). Development default: 7 days, changeable by admins (D-028, D-035). |
 | O-006 | Webhook or long polling for receiving Telegram updates in production | Before deployment | Development will use polling. Webhooks require a public HTTPS endpoint. |
-| O-005 | VIP pricing in Telegram Stars | Before VIP is built | Coin packs are settled (D-061). Still to be recorded: the VIP price, what VIP includes, and how many coins it grants (requirements §17). |
 | O-008 | Which premium offer includes hiding the profile, and what happens when it ends | Before hidden profiles are built | D-021. VIP does not include it (owner, 2026-11-16). For example, whether the profile becomes visible again automatically. Also whether a hidden profile can still be opened by its RealChat ID (D-054); until decided, nothing hides a profile, so every finished profile can be. |
 | O-009 | Retention period for the age and gender change history | Public launch | D-024. Separate from conversation content (O-002), because moderators use the history to spot repeated switching. Until decided, rows are kept until account deletion. |
 | O-010 | The fourth button on the chat keyboard | Before the chat keyboard is final | D-030. Until then Block and Report are inline buttons on the partner's card and after each chat (D-045). |

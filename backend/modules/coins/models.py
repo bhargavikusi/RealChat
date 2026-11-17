@@ -44,8 +44,9 @@ TRANSACTION_KINDS = (
     # An activity alert bought, and its refund when it never fires (D-059).
     "activity_alert",
     "activity_alert_refund",
-    # Coins bought with Telegram Stars (D-061).
+    # Coins bought with Telegram Stars (D-061), and those included with a VIP pass (D-062).
     "coin_purchase",
+    "vip_coins",
 )
 # Kinds that add coins, and kinds that remove them; the database checks the sign.
 CREDIT_KINDS = (
@@ -55,6 +56,7 @@ CREDIT_KINDS = (
     "admin_grant",
     "activity_alert_refund",
     "coin_purchase",
+    "vip_coins",
 )
 DEBIT_KINDS = (
     "paid_match",

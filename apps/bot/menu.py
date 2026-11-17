@@ -30,6 +30,7 @@ COMMANDS = (
     ("start", "Set up your account, or continue where you left off"),
     ("profile", "View and edit your profile"),
     ("coins", "Your coins and recent activity"),
+    ("vip", "VIP status and the VIP pass"),
     ("userid", "Open a profile by its RealChat ID, or see yours"),
     ("help", "How RealChat works, terms, and contacts"),
     ("terms", "Terms of use and privacy notice"),

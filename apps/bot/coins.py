@@ -21,6 +21,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from apps.bot.onboarding import load_context, prompt_next
 from apps.bot.payments import BUY_HEADER, pack_rows
+from apps.bot.vip import status_line
 from backend.config.settings import BotSettings
 from backend.core.logging import exception_summary
 from backend.modules.admin.settings import SettingKey, load_values
@@ -46,6 +47,7 @@ LABELS = {
     "activity_alert": "Activity alert",
     "activity_alert_refund": "Activity alert returned",
     "coin_purchase": "Bought with Stars",
+    "vip_coins": "Included with VIP",
 }
 NO_ACTIVITY = "No coin activity yet."
 DAILY_AVAILABLE = "🎁 Daily reward: {amount} today."
@@ -135,7 +137,14 @@ async def on_coins(
     rows += pack_rows(offers)
     await message.answer(
         "\n".join(
-            [coins_text(balance, entries), *daily, *invite, *(["", BUY_HEADER] if offers else [])]
+            [
+                coins_text(balance, entries),
+                "",
+                f"👑 {status_line(ctx.user, datetime.now(UTC))} See /vip.",
+                *daily,
+                *invite,
+                *(["", BUY_HEADER] if offers else []),
+            ]
         ),
         reply_markup=InlineKeyboardMarkup(inline_keyboard=rows) if rows else None,
     )

@@ -1,6 +1,8 @@
-"""Buying coin packs with Telegram Stars, /terms, and /paysupport (D-061).
+"""Buying coin packs and the VIP pass with Telegram Stars, /terms, and /paysupport
+(D-061, D-062).
 
-/coins shows one button per pack. A tap stores an invoice and sends it; Telegram then
+/coins shows one button per pack, and /vip the pass (`apps/bot/vip.py`). A tap stores an
+invoice and sends it; Telegram then
 asks before taking the Stars (pre-checkout, answered within its 10-second limit) and
 confirms the payment, which credits the coins. Only that confirmation grants
 anything. Payment updates are never dropped by flood control or the restricted-account
@@ -63,8 +65,12 @@ REFUSALS = {
     Refusal.EXPIRED: "This offer has expired. Please choose again from /coins.",
     Refusal.UNAVAILABLE: "Your account can't make purchases right now.",
     Refusal.TERMS: "Please accept the updated terms first: send /start.",
+    Refusal.VIP_LIMIT: "You already have plenty of VIP time left. See /vip for when you "
+    "can extend it.",
 }
 CREDITED = "✅ Payment received: you got {coins}. Thank you!"
+VIP_GRANTED = "👑 Payment received: you're VIP until {until}.{coins} Thank you!"
+VIP_COINS_ADDED = " {coins} were added to your balance."
 REFUNDED = (
     "Your RealChat account was deleted before this payment arrived, so your {stars} Stars "
     "were refunded."
@@ -127,15 +133,34 @@ async def on_pack(
     await session.commit()
     await query.answer()
     coins = coins_label(offer.coins)
-    await bot.send_invoice(
+    await send_invoice(
+        bot,
         query.from_user.id,
-        title=INVOICE_TITLE.format(coins=coins),
-        description=INVOICE_DESCRIPTION.format(coins=coins.capitalize()),
+        invoice_id,
+        INVOICE_TITLE.format(coins=coins),
+        INVOICE_DESCRIPTION.format(coins=coins.capitalize()),
+        coins,
+        offer.stars,
+    )
+
+
+async def send_invoice(
+    bot: Bot, chat_id: int, invoice_id: int, title: str, description: str, label: str, stars: int
+) -> None:
+    """Send a stored invoice; call with no transaction open."""
+    await bot.send_invoice(
+        chat_id,
+        title=title,
+        description=description,
         payload=payments.payload(invoice_id),
         currency=payments.CURRENCY,
-        prices=[LabeledPrice(label=coins, amount=offer.stars)],
+        prices=[LabeledPrice(label=label, amount=stars)],
         start_parameter=START_PARAMETER,
     )
+
+
+def vip_date(moment: datetime) -> str:
+    return f"{moment.day} {moment:%B %Y}, {moment:%H:%M} UTC"
 
 
 async def on_pre_checkout(query: PreCheckoutQuery, bot: Bot, session: AsyncSession) -> None:
@@ -176,7 +201,15 @@ async def on_paid(message: Message, bot: Bot, session: AsyncSession) -> None:
         await bot.send_message(message.chat.id, UNMATCHED)
         return
     await session.commit()
-    if fulfilled.outcome == Outcome.CREDITED:
+    if fulfilled.outcome == Outcome.CREDITED and fulfilled.vip_until is not None:
+        added = VIP_COINS_ADDED.format(coins=coins_label(fulfilled.coins).capitalize())
+        await bot.send_message(
+            message.chat.id,
+            VIP_GRANTED.format(
+                until=vip_date(fulfilled.vip_until), coins=added if fulfilled.coins else ""
+            ),
+        )
+    elif fulfilled.outcome == Outcome.CREDITED:
         await bot.send_message(message.chat.id, CREDITED.format(coins=coins_label(fulfilled.coins)))
     elif fulfilled.status == "refund_due":
         due = RefundDue(
