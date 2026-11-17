@@ -17,7 +17,7 @@ from apps.bot.main import create_dispatcher
 from backend.config.settings import BotSettings
 from backend.modules.users import service
 from backend.modules.users.models import Profile
-from backend.modules.users.terms import terms_text
+from backend.modules.users.terms import terms_prompt_parts
 from tests.support.telegram import (
     RecordingSession,
     callback_update,
@@ -31,7 +31,9 @@ from tests.support.telegram import (
 
 Sessions = async_sessionmaker[AsyncSession]
 USER_ID = 4242
-TERMS = terms_text(18)
+# The terms are sent in parts (they exceed one message); the last asks to accept.
+TERMS_PARTS = terms_prompt_parts(18)
+TERMS = TERMS_PARTS[-1]
 
 
 class Chat:

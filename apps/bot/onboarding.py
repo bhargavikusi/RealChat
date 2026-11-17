@@ -29,6 +29,7 @@ from aiogram.types import User as TelegramUser
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from apps.bot.keyboards import NEW_CHAT, current_keyboard, main_keyboard
+from apps.bot.menu import send_parts
 from backend.config.settings import BotSettings
 from backend.core.logging import exception_summary
 from backend.modules.admin.settings import SettingKey, load_values
@@ -36,7 +37,7 @@ from backend.modules.coins import rewards
 from backend.modules.users import service
 from backend.modules.users.countries import match_country
 from backend.modules.users.models import Profile, User
-from backend.modules.users.terms import TERMS_VERSION, terms_text
+from backend.modules.users.terms import TERMS_VERSION, terms_prompt_parts
 from backend.modules.users.validation import Gender, ProfileValidationError, parse_age
 
 
@@ -187,8 +188,8 @@ async def prompt_next(
     """
     if not ctx.terms_accepted:
         await state.set_state(Onboarding.terms)
-        await bot.send_message(
-            chat_id, terms_text(settings.min_age), reply_markup=_terms_keyboard()
+        await send_parts(
+            bot, chat_id, terms_prompt_parts(settings.min_age), reply_markup=_terms_keyboard()
         )
         return
 

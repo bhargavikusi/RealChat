@@ -9,13 +9,13 @@ from apps.bot.errors import GENERIC_ERROR_TEXT
 from apps.bot.main import create_dispatcher
 from backend.config.settings import BotSettings
 from backend.core.redis import create_redis
-from backend.modules.users.terms import terms_text
+from backend.modules.users.terms import terms_prompt_parts
 from tests.support.telegram import FAKE_TOKEN, make_bot, message_update
 
 FLOOD_LIMIT = 3
 # A frozen clock keeps every flood-test update inside one window.
 FROZEN_NOW = 1_000_000.0
-TERMS = terms_text(18)
+TERMS_PARTS = terms_prompt_parts(18)
 
 Sessions = async_sessionmaker[AsyncSession]
 
@@ -56,7 +56,7 @@ async def test_start_shows_terms(
         bot, message_update(1, 7, "/start")
     )
 
-    assert session.sent_texts() == [TERMS]
+    assert session.sent_texts() == TERMS_PARTS
 
 
 async def test_duplicate_update_is_processed_once(
@@ -69,7 +69,7 @@ async def test_duplicate_update_is_processed_once(
     await dispatcher.feed_update(bot, update)
     await dispatcher.feed_update(bot, update)
 
-    assert session.sent_texts() == [TERMS]
+    assert session.sent_texts() == TERMS_PARTS
 
 
 async def test_flood_limit_drops_excess_updates(
@@ -81,7 +81,8 @@ async def test_flood_limit_drops_excess_updates(
     for update_id in range(100, 100 + FLOOD_LIMIT + 2):
         await dispatcher.feed_update(bot, message_update(update_id, 7, "/start"))
 
-    assert len(session.sent_texts()) == FLOOD_LIMIT
+    # Each /start that gets through is answered with the terms, in parts.
+    assert session.sent_texts() == TERMS_PARTS * FLOOD_LIMIT
 
 
 async def test_flood_limit_is_per_user(
@@ -94,7 +95,7 @@ async def test_flood_limit_is_per_user(
         await dispatcher.feed_update(bot, message_update(update_id, 7, "/start"))
     await dispatcher.feed_update(bot, message_update(300, 8, "/start"))
 
-    assert len(session.sent_texts()) == FLOOD_LIMIT + 1
+    assert session.sent_texts() == TERMS_PARTS * (FLOOD_LIMIT + 1)
 
 
 async def test_user_is_told_when_redis_is_down(

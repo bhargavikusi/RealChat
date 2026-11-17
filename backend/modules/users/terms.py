@@ -80,6 +80,34 @@ received are kept too."""
 TERMS_QUESTION = "Do you agree to these terms and the privacy notice?"
 
 
+# The most Telegram accepts in one message, counted in UTF-16 code units.
+MESSAGE_LIMIT = 4096
+
+
+def _length(text: str) -> int:
+    return len(text.encode("utf-16-le")) // 2
+
+
+def split_message(text: str, limit: int = MESSAGE_LIMIT) -> list[str]:
+    """Split `text` at line breaks into as few parts as fit within `limit`, in order.
+
+    Each bullet of the terms is one line, so parts end between bullets, and joining
+    the parts with a line break gives `text` back. A single line over the limit can't
+    be split this way and raises ValueError.
+    """
+    parts: list[str] = []
+    current: list[str] = []
+    for line in text.split("\n"):
+        if _length(line) > limit:
+            raise ValueError("a line is longer than one message")
+        if current and _length("\n".join([*current, line])) > limit:
+            parts.append("\n".join(current))
+            current = []
+        current.append(line)
+    parts.append("\n".join(current))
+    return parts
+
+
 def terms_body(minimum_age: int) -> str:
     """The terms alone, for reading again later (e.g. from /help)."""
     return TERMS_TEXT.format(minimum_age=minimum_age)
@@ -88,3 +116,14 @@ def terms_body(minimum_age: int) -> str:
 def terms_text(minimum_age: int) -> str:
     """The terms followed by the acceptance question, as shown at onboarding."""
     return f"{terms_body(minimum_age)}\n\n{TERMS_QUESTION}"
+
+
+def terms_parts(minimum_age: int) -> list[str]:
+    """The terms as the messages they are sent in (`split_message`)."""
+    return split_message(terms_body(minimum_age))
+
+
+def terms_prompt_parts(minimum_age: int) -> list[str]:
+    """The terms and the acceptance question as sent at onboarding; the last part
+    carries the accept buttons."""
+    return split_message(terms_text(minimum_age))

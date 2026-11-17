@@ -26,7 +26,7 @@ from backend.modules.payments.models import StarsInvoice, StarsPayment
 from backend.modules.payments.service import Outcome, Refusal
 from backend.modules.users import service as users
 from backend.modules.users.models import TermsAcceptance, User
-from backend.modules.users.terms import TERMS_VERSION, terms_body
+from backend.modules.users.terms import TERMS_VERSION, terms_parts
 from tests.support.chat import USER_ID, Chat, complete_onboarding
 from tests.support.db import wait_until_blocked
 from tests.support.telegram import make_bot, message_update, payment_update
@@ -551,7 +551,10 @@ async def test_terms_shows_the_current_terms(
     bot_settings: BotSettings, redis: Redis, session_factory: Sessions
 ) -> None:
     chat = Chat(bot_settings, redis, session_factory)
-    assert await chat.send("/terms") == terms_body(bot_settings.min_age)
+    await chat.send("/terms")
+    parts = terms_parts(bot_settings.min_age)
+    assert len(parts) > 1  # the terms are longer than one message
+    assert chat.session.sent_texts() == parts
 
 
 async def test_paysupport_points_to_support_not_telegram(
@@ -572,10 +575,11 @@ async def test_restricted_users_can_read_terms_and_payment_support(
     chat: Chat, session_factory: Sessions, command: str
 ) -> None:
     await _set_status(session_factory, "banned")
-    shown = await chat.send(command)
-    assert shown in (
-        terms_body(18),
-        bot_payments.PAYSUPPORT.format(where=""),
+    sent = len(chat.session.sent_texts())
+    await chat.send(command)
+    assert chat.session.sent_texts()[sent:] in (
+        terms_parts(18),
+        [bot_payments.PAYSUPPORT.format(where="")],
     )
 
 
