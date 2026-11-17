@@ -90,6 +90,7 @@ class RecordingSession(BaseSession):
     ) -> TelegramType:
         if isinstance(method, SendMessage) and len(method.text.encode("utf-16-le")) // 2 > 4096:
             # Telegram refuses a message over its limit, so the tests do too.
+            self.failed_sends.append(method)
             raise TelegramBadRequest(method=method, message="Bad Request: message is too long")
         if isinstance(method, SendMessage) and self.send_error is not None:
             self.failed_sends.append(method)
