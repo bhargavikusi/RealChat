@@ -214,7 +214,8 @@ async def fulfil(
     a deletion either finishes before (and the payment is refunded) or waits. A
     restricted account is still granted the purchase: the Stars were taken, and the
     coins stay with the account like any other balance. The VIP stacking limit is
-    checked at checkout only, so a second pass paid meanwhile is still granted.
+    checked at checkout only, so every pass paid meanwhile is granted, even if
+    that puts VIP more than two passes ahead.
 
     Raises UnknownPaymentError if the payment can't be matched to its invoice, which
     checkout prevents; the caller must report it, since the Stars were taken.

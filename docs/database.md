@@ -311,7 +311,7 @@ The coin ledger (D-050). Every change to a user's coins is one row; a balance is
 |---|---|---|
 | `id` | bigint identity | |
 | `user_id` | bigint | References `users.id`. |
-| `amount` | integer | Positive adds coins, negative removes them; never 0. A constraint ties the sign to the kind: rewards, admin grants, activity alert refunds, and coin purchases add; paid matches, direct messages, chat requests, activity alerts, admin corrections, and deletion forfeits remove. |
+| `amount` | integer | Positive adds coins, negative removes them; never 0. A constraint ties the sign to the kind: rewards, admin grants, activity alert refunds, coin purchases, and coins included with a VIP pass add; paid matches, direct messages, chat requests, activity alerts, admin corrections, and deletion forfeits remove. |
 | `kind` | varchar(32) | `welcome_bonus`, `referral_reward`, `daily_reward`, `paid_match`, `admin_grant`, `admin_correction`, `account_deleted` (the balance forfeited when the account is deleted, D-055), `direct_message` (a delivered direct message, D-057), `chat_request` (a delivered chat request, D-058), `activity_alert` (an activity alert bought, D-059), `activity_alert_refund` (its refund, keyed `alert:<id>:refund`), `coin_purchase` (coins bought with Telegram Stars, keyed `payment:<stars_payments id>`, D-061), or `vip_coins` (coins included with a VIP pass, keyed the same way, D-062). |
 | `idempotency_key` | varchar(128), unique | One row per action: a retried or duplicated action records once. |
 | `hold_id` | bigint, nullable | References `coin_holds.id`: the hold this spending captured. Only rows whose kind is a hold purpose (`paid_match`, `direct_message`, `chat_request`) may have one (constraint), and a partial unique index allows one row per hold. A trigger checks that the hold is captured, belongs to the same user, is of the same purpose as the entry's kind, and that the amount is exactly minus the hold's amount. |
@@ -354,7 +354,7 @@ Kept on account deletion. Indexed by `user_id`.
 
 ### `stars_payments`
 
-Each Telegram Stars payment received (D-061), written once per Telegram charge.
+Each Telegram Stars payment received for a coin pack or a VIP pass (D-061, D-062), written once per Telegram charge.
 
 | Column | Type | Notes |
 |---|---|---|

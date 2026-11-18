@@ -1,5 +1,6 @@
 """The VIP pass bought with Telegram Stars, and VIP status (D-062)."""
 
+import asyncio
 from datetime import UTC, datetime, timedelta
 
 import pytest
@@ -214,7 +215,7 @@ async def test_the_invoice_is_honoured_at_the_days_it_showed(
     await chat.paid("charge-1", payload, 780)
     until = (await _user(session_factory)).vip_until
     assert until is not None
-    assert until >= before + PASS
+    assert before + PASS <= until <= before + PASS + SLACK
     assert await _balance(session_factory) == 10 + 3_750
 
 
@@ -276,6 +277,30 @@ async def test_two_passes_paid_meanwhile_are_both_granted(
     assert await _balance(session_factory) == 10 + 2 * 3_750
 
 
+async def test_two_passes_confirmed_at_once_both_extend(
+    chat: Chat, session_factory: Sessions
+) -> None:
+    # The user's row lock orders them, so neither overwrites the other's days.
+    before = datetime.now(UTC)
+    first = await _invoice(chat)
+    second = await _invoice(chat)
+
+    async def fulfil(charge_id: str, payload: str) -> datetime | None:
+        async with session_factory() as session:
+            done = await payments.fulfil(
+                session, USER_ID, charge_id, payload, "XTR", 780, datetime.now(UTC)
+            )
+            await session.commit()
+            return done.vip_until
+
+    granted = await asyncio.gather(fulfil("charge-1", first), fulfil("charge-2", second))
+    until = (await _user(session_factory)).vip_until
+    assert until is not None
+    assert before + 2 * PASS <= until <= before + 2 * PASS + SLACK
+    assert max(g for g in granted if g is not None) == until
+    assert await _balance(session_factory) == 10 + 2 * 3_750
+
+
 # --- Expiry, restriction, and deletion -------------------------------------------------
 
 
@@ -295,14 +320,15 @@ async def test_coins_stay_when_vip_ends(chat: Chat, session_factory: Sessions) -
     assert await _balance(session_factory) == 10 + 3_750
 
 
+@pytest.mark.parametrize("status", ["suspended", "banned"])
 async def test_a_payment_after_a_restriction_still_grants_vip(
-    chat: Chat, session_factory: Sessions
+    chat: Chat, session_factory: Sessions, status: str
 ) -> None:
     payload = await _invoice(chat)
     await chat.checkout(payload, 780)
     async with session_factory() as session:
         await session.execute(
-            update(User).where(User.telegram_user_id == USER_ID).values(status="suspended")
+            update(User).where(User.telegram_user_id == USER_ID).values(status=status)
         )
         await session.commit()
     await chat.paid("charge-1", payload, 780)

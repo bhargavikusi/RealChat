@@ -4,7 +4,8 @@
 /coins shows one button per pack, and /vip the pass (`apps/bot/vip.py`). A tap stores an
 invoice and sends it; Telegram then
 asks before taking the Stars (pre-checkout, answered within its 10-second limit) and
-confirms the payment, which credits the coins. Only that confirmation grants
+confirms the payment, which credits a pack's coins, or grants a pass's VIP days and
+any coins it includes. Only that confirmation grants
 anything. Payment updates are never dropped by flood control or the restricted-account
 gate (`apps.bot.middlewares.is_payment`). As elsewhere, the database transaction is
 ended before any Telegram call.

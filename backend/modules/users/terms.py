@@ -72,8 +72,8 @@ RealChat.
 • You can buy a VIP pass with Telegram Stars from /vip. It's paid once and never \
 renews. VIP lasts until the end date shown in /vip; buying another pass while VIP is \
 running adds its days to that date, and can be done once the time left is no longer \
-than one pass. Coins included with a pass, and any other coins, stay yours when VIP \
-ends. VIP ends when you delete your account.
+than one pass. When VIP runs out, coins included with a pass and any other coins \
+stay yours. Deleting your account ends VIP and erases your coins.
 • Accounts that break these rules may be restricted or banned.
 • You can delete your account at any time from your profile (Advanced settings). \
 Your profile is erased immediately, and so are your coins, any VIP time left, and \
