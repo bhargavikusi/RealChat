@@ -106,6 +106,7 @@ async def test_vip_shows_the_status_perks_and_pass(chat: Chat) -> None:
             bot_vip.PERKS_HEADER,
             bot_vip.PERK_BADGE,
             bot_vip.PERK_PRIORITY,
+            bot_vip.PERK_GHOST,
             bot_vip.PERK_COINS.format(coins="3750 coins"),
             "",
             bot_vip.OFFER_TEXT.format(days=180, stars=780),
@@ -208,6 +209,33 @@ async def test_an_ended_vip_is_not_extended_from_its_old_end(
     until = (await _user(session_factory)).vip_until
     assert until is not None
     assert before + PASS <= until <= before + PASS + SLACK
+
+
+async def _ghost_mode(sessions: Sessions) -> bool:
+    return (await _user(sessions)).ghost_mode
+
+
+async def _set_ghost_off(sessions: Sessions) -> None:
+    async with sessions() as session:
+        await session.execute(
+            update(User).where(User.telegram_user_id == USER_ID).values(ghost_mode=False)
+        )
+        await session.commit()
+
+
+async def test_a_new_vip_period_turns_ghost_mode_on(chat: Chat, session_factory: Sessions) -> None:
+    # Switched off in an earlier VIP that has since ended (D-064).
+    await _set_vip_until(session_factory, datetime.now(UTC) - timedelta(days=3))
+    await _set_ghost_off(session_factory)
+    await _buy(chat, "charge-1")
+    assert await _ghost_mode(session_factory)
+
+
+async def test_extending_vip_keeps_ghost_mode_off(chat: Chat, session_factory: Sessions) -> None:
+    await _set_vip_until(session_factory, datetime.now(UTC) + timedelta(days=100))
+    await _set_ghost_off(session_factory)
+    await _buy(chat, "charge-1", EXTEND)
+    assert not await _ghost_mode(session_factory)
 
 
 async def test_the_invoice_is_honoured_at_the_days_it_showed(
@@ -373,8 +401,10 @@ async def test_deleting_the_account_ends_vip_after_a_warning(
     assert warning == ac.DELETE_CONFIRM.format(
         coins="3760 coins", vip=ac.VIP_LOST.format(until=vip_date(until))
     )
+    await _set_ghost_off(session_factory)
     await chat.press(ac.CONFIRM_BUTTON)
     assert (await _user(session_factory)).vip_until is None
+    assert await _ghost_mode(session_factory)  # reset with the account (D-064)
     # The payment that bought it is kept, with what it granted.
     async with session_factory() as session:
         payment = await session.scalar(select(StarsPayment))

@@ -723,6 +723,19 @@ Work happens on short-lived issue branches, such as `feature/12-onboarding`, cre
 
 **Why:** Owner decisions on where the marks appear (the full badge on cards and lists, the tick everywhere else), on VIP-first ordering with any fitting partner, and on reaching every waiting VIP each tick.
 
+### D-064 — Ghost mode for profile visits
+
+**Date:** 2026-11-18
+**Decision:**
+
+* A VIP user (D-062) has 👻 Ghost mode in Advanced settings; nobody else sees the switch, and the server refuses it unless the user is VIP at that moment. It is stored as `users.ghost_mode`.
+* While the user is VIP and Ghost mode is on, opening any profile card records no visit and sends no visit alert: from Past chats, Visited you, Liked you, You liked, `/userid`, and 👤 Partner profile during a chat. A ghost visit is never recorded, so it doesn't appear later either, including after VIP ends. Visits recorded earlier stay as they were.
+* Turning Ghost mode off, or VIP ending, makes visits record and notify normally again from then on.
+* Each new VIP period starts with Ghost mode on: a VIP payment that starts VIP again turns it on in the same update that sets the end date. A payment that extends running VIP keeps the user's choice. Account deletion resets it.
+* The check is in `visits.record_visit`, after both account rows are locked, so every way a card is opened follows it. /vip lists the perk, and the terms say visits are not shown while Ghost mode is on (terms version `draft-22`).
+
+**Why:** Owner decisions to cover the chat partner's card too, and to turn Ghost mode on with every new VIP period.
+
 ## Open
 
 Each of these needs the owner's decision. Until then, the behavior stays configurable and is not presented to users as final.

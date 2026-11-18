@@ -50,7 +50,8 @@ async def record_visit(
     session: AsyncSession, visitor_id: int, visited_id: int, now: datetime
 ) -> bool:
     """Record that `visitor_id` opened `visited_id`'s card at `now`; returns whether it
-    was recorded (not for a self-visit, or when either account is no longer active).
+    was recorded (not for a self-visit, when either account is no longer active, or
+    while the visitor is VIP with Ghost mode on, D-064).
 
     Both accounts are locked FOR NO KEY UPDATE (in id order, until the transaction ends)
     and must still be active. Account deletion locks the account row FOR UPDATE, so a
@@ -60,13 +61,18 @@ async def record_visit(
     """
     if visitor_id == visited_id:
         return False
-    active = await session.scalars(
-        select(User.id)
-        .where(User.id.in_((visitor_id, visited_id)), User.status == "active")
-        .order_by(User.id)
-        .with_for_update(key_share=True)
-    )
-    if len(active.all()) < 2:
+    active = (
+        await session.execute(
+            select(User.id, User.vip_until, User.ghost_mode)
+            .where(User.id.in_((visitor_id, visited_id)), User.status == "active")
+            .order_by(User.id)
+            .with_for_update(key_share=True)
+        )
+    ).all()
+    if len(active) < 2:
+        return False
+    visitor = next(row for row in active if row.id == visitor_id)
+    if visitor.ghost_mode and visitor.vip_until is not None and visitor.vip_until > now:
         return False
     await session.execute(
         insert(ProfileVisit)

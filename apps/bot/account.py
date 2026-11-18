@@ -1,9 +1,10 @@
 """Advanced settings, account deletion, and the access gate (D-016, D-025, D-026).
 
 Advanced settings also holds the notification settings (D-052): Silent mode, visit and
-like alerts, and reminders. Each button shows the current value and carries the value
-it sets, so a repeated or old tap never flips a setting back. Their buttons have their
-own prefix, which the access gate does not let suspended or banned users through.
+like alerts, and reminders; and, for VIP users only, Ghost mode (D-064). Each button
+shows the current value and carries the value it sets, so a repeated or old tap never
+flips a setting back. Their buttons have their own prefix, which the access gate does
+not let suspended or banned users through.
 
 Deletion is reached from the profile card's Advanced settings button, or from the
 notice shown to suspended and banned users. It always needs a second, explicit
@@ -49,6 +50,7 @@ from backend.modules.coins import service as coins
 from backend.modules.moderation import service as moderation
 from backend.modules.payments import service as payments
 from backend.modules.users import service
+from backend.modules.users.models import User
 from backend.modules.users.service import Notification, NotificationChoices
 
 logger = logging.getLogger(__name__)
@@ -61,6 +63,12 @@ class AccountAction(CallbackData, prefix="acct"):
 
 class NotifyAction(CallbackData, prefix="notify"):
     setting: str  # a `Notification` value
+    on: bool  # the value this button sets
+
+
+class GhostAction(CallbackData, prefix="ghost"):
+    """👻 Ghost mode, a VIP setting (D-064)."""
+
     on: bool  # the value this button sets
 
 
@@ -117,6 +125,10 @@ NOTIFICATION_LABELS = {
 }
 SILENT_MODE_ON = "Silent mode is on: nobody can send you chat requests. Messages still arrive."
 SILENT_MODE_OFF = "Silent mode is off."
+GHOST_LABEL = "👻 Ghost mode"
+GHOST_ON = "👻 Ghost mode is on: profiles you open won't see your visit."
+GHOST_OFF = "👻 Ghost mode is off: profiles you open will see your visit again."
+GHOST_VIP_ONLY = "👻 Ghost mode is a VIP perk. See /vip."
 
 
 def notification_button(setting: Notification, on: bool) -> InlineKeyboardButton:
@@ -127,8 +139,15 @@ def notification_button(setting: Notification, on: bool) -> InlineKeyboardButton
     )
 
 
-def settings_keyboard(choices: NotificationChoices, *, admin: bool) -> InlineKeyboardMarkup:
+def settings_keyboard(
+    choices: NotificationChoices, *, admin: bool, ghost: bool | None = None
+) -> InlineKeyboardMarkup:
+    """`ghost` is the Ghost mode setting for a VIP, or None to leave its row out."""
     rows = [[notification_button(setting, choices[setting])] for setting in Notification]
+    if ghost is not None:
+        rows.append(
+            [_button(f"{GHOST_LABEL}: {'On' if ghost else 'Off'}", GhostAction(on=not ghost))]
+        )
     rows.append([_button(DELETE_BUTTON, AccountAction(action="delete"))])
     if admin:
         rows.append([admin_button()])
@@ -194,13 +213,33 @@ async def show_settings(
     # Admin settings are offered to admins only; the admin handlers check again (D-035).
     is_admin = await admin_service.get_role(session, query.from_user.id) == "admin"
     choices = await service.notification_settings(session, user.id)
+    ghost = _ghost(user)
     await session.commit()
     await query.answer()
     await bot.send_message(
         query.from_user.id,
         ADVANCED_SETTINGS_TEXT,
-        reply_markup=settings_keyboard(choices, admin=is_admin),
+        reply_markup=settings_keyboard(choices, admin=is_admin, ghost=ghost),
     )
+
+
+def _ghost(user: User) -> bool | None:
+    """The Ghost mode row's value: the setting while VIP, else None (no row)."""
+    return user.ghost_mode if payments.is_vip(user, datetime.now(UTC)) else None
+
+
+async def _refresh_settings(bot: Bot, query: CallbackQuery, keyboard: InlineKeyboardMarkup) -> None:
+    if query.message is None:
+        return
+    try:
+        await bot.edit_message_reply_markup(
+            chat_id=query.message.chat.id,
+            message_id=query.message.message_id,
+            reply_markup=keyboard,
+        )
+    except TelegramAPIError as exc:
+        # The setting is saved either way; Telegram refuses an unchanged keyboard.
+        logger.info("could not update settings buttons", extra=exception_summary(exc))
 
 
 async def on_notify(
@@ -224,19 +263,37 @@ async def on_notify(
     await service.set_notification(session, ctx.user.id, setting, callback_data.on)
     is_admin = ctx.user.role == "admin"
     choices = await service.notification_settings(session, ctx.user.id)
+    ghost = _ghost(ctx.user)
     await session.commit()
     await query.answer(changed(setting, callback_data.on))
-    if query.message is None:
+    await _refresh_settings(bot, query, settings_keyboard(choices, admin=is_admin, ghost=ghost))
+
+
+async def on_ghost(
+    query: CallbackQuery,
+    bot: Bot,
+    callback_data: GhostAction,
+    session: AsyncSession,
+    state: FSMContext,
+    settings: BotSettings,
+) -> None:
+    ctx = await load_context(session, query.from_user)
+    if not ctx.terms_accepted:
+        await query.answer()
+        await prompt_next(bot, query.from_user.id, session, ctx, state, settings)
         return
-    try:
-        await bot.edit_message_reply_markup(
-            chat_id=query.message.chat.id,
-            message_id=query.message.message_id,
-            reply_markup=settings_keyboard(choices, admin=is_admin),
-        )
-    except TelegramAPIError as exc:
-        # The setting is saved either way; Telegram refuses an unchanged keyboard.
-        logger.info("could not update settings buttons", extra=exception_summary(exc))
+    # The server decides who is VIP; an old button from a past VIP changes nothing. The
+    # ORM update also refreshes `ctx.user.ghost_mode` in this session.
+    done = await payments.set_ghost_mode(session, ctx.user.id, callback_data.on, datetime.now(UTC))
+    is_admin = ctx.user.role == "admin"
+    choices = await service.notification_settings(session, ctx.user.id)
+    ghost = _ghost(ctx.user)
+    await session.commit()
+    if not done:
+        await query.answer(GHOST_VIP_ONLY, show_alert=True)
+    else:
+        await query.answer(GHOST_ON if callback_data.on else GHOST_OFF)
+    await _refresh_settings(bot, query, settings_keyboard(choices, admin=is_admin, ghost=ghost))
 
 
 async def ask_to_confirm(
@@ -342,6 +399,7 @@ def create_router() -> Router:
     router.callback_query.filter(F.message.chat.type == ChatType.PRIVATE)
     router.callback_query.register(show_settings, AccountAction.filter(F.action == "settings"))
     router.callback_query.register(on_notify, NotifyAction.filter())
+    router.callback_query.register(on_ghost, GhostAction.filter())
     router.callback_query.register(ask_to_confirm, AccountAction.filter(F.action == "delete"))
     router.callback_query.register(on_confirm, AccountAction.filter(F.action == "confirm"))
     router.callback_query.register(on_keep, AccountAction.filter(F.action == "keep"))

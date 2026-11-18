@@ -34,6 +34,10 @@ PERK_BADGE = (
     "notices. It shows you have VIP, not that your identity is verified."
 )
 PERK_PRIORITY = "• Matched first when you search, before people without VIP"
+PERK_GHOST = (
+    "• 👻 Ghost mode: open profiles without them seeing your visit. It starts on; switch "
+    "it in ⚙️ Advanced settings."
+)
 PERK_COINS = "• {coins} added to your balance when you buy a pass"
 OFFER_TEXT = (
     "A VIP pass gives {days} days of VIP for ⭐ {stars}. It's paid once and never renews; "
@@ -66,7 +70,7 @@ def status_line(user: User, now: datetime) -> str:
 
 def perk_lines(offer: VipPass) -> list[str]:
     """The perks that work today; each VIP perk adds its line when it is built."""
-    perks = [PERK_BADGE, PERK_PRIORITY]
+    perks = [PERK_BADGE, PERK_PRIORITY, PERK_GHOST]
     if offer.coins:
         perks.append(PERK_COINS.format(coins=coins_label(offer.coins)))
     return perks

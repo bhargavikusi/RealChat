@@ -455,6 +455,8 @@ Approved (D-062): VIP is sold as a one-time pass in Stars, not a subscription: 7
 
 Approved (D-063): while VIP lasts, ✅ 👑 VIP follows the nickname on profile cards and in People lists, and ✅ in every notice naming the user; both mark VIP bought in RealChat, not identity verification, as /vip and the terms state. VIP searchers are matched first, oldest VIP first, with any partner who fits; every waiting VIP is considered in each matching round.
 
+Approved (D-064): VIP users have 👻 Ghost mode in Advanced settings, on at the start of every new VIP period (an extension keeps their choice). While VIP lasts and it is on, opening any profile card, including the chat partner's, records no visit and sends no visit alert, so the visit never appears in Visited you. Turning it off or VIP ending restores normal visits from then on; earlier visits are unchanged. It does not hide the VIP user's own profile.
+
 ## 18. Advertising and Announcements
 
 Support two distinct advertising mechanisms.
