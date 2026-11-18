@@ -1,7 +1,8 @@
 """Profile cards: a profile as other users see it (D-029).
 
 Shared by /profile, the chat partner's card, People (D-051), and /userid (D-054), so
-every card shows the same details in the same way.
+every card shows the same details in the same way. A VIP's nickname carries the VIP
+badge (D-063); each caller says whether the profile's owner is VIP now.
 """
 
 from datetime import UTC, date, datetime
@@ -10,22 +11,23 @@ from aiogram import Bot
 from aiogram.types import InlineKeyboardMarkup, ReplyKeyboardMarkup
 
 from apps.bot.avatars import Avatars
+from apps.bot.badges import card_name
 from backend.modules.users import service
 from backend.modules.users.countries import country_name
 from backend.modules.users.models import Profile
 from backend.modules.users.validation import Gender
 
 
-def profile_caption(profile: Profile, today: date) -> str:
-    """The profile as other users see it: nickname, age, gender, place, RealChat ID (as
-    a command that opens the card, D-054), and bio."""
+def profile_caption(profile: Profile, today: date, *, vip: bool) -> str:
+    """The profile as other users see it: nickname (with the VIP badge), age, gender,
+    place, RealChat ID (as a command that opens the card, D-054), and bio."""
     age = service.profile_age(profile, today)
     gender = profile.gender.capitalize() if profile.gender else ""
     place = country_name(profile.country_code) if profile.country_code else ""
     if profile.city:
         place = f"{profile.city}, {place}"
     lines = [
-        f"👤 {profile.nickname}",
+        f"👤 {card_name(str(profile.nickname), vip)}",
         f"🎂 {age} · {gender}",
         f"📍 {place}",
         f"🆔 /userid_{profile.public_id}",
@@ -42,9 +44,11 @@ async def send_card(
     profile: Profile,
     header: str,
     reply_markup: ReplyKeyboardMarkup | InlineKeyboardMarkup | None = None,
+    *,
+    vip: bool,
 ) -> None:
     """Send `profile` as others see it, with the photo or the default avatar."""
-    caption = f"{header}\n\n{profile_caption(profile, datetime.now(UTC).date())}"
+    caption = f"{header}\n\n{profile_caption(profile, datetime.now(UTC).date(), vip=vip)}"
     if profile.photo_file_id is not None:
         await bot.send_photo(
             chat_id, profile.photo_file_id, caption=caption, reply_markup=reply_markup

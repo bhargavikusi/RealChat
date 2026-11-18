@@ -23,6 +23,7 @@ from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from apps.bot import badges
 from apps.bot.endings import LikeAction, is_like_row, like_row
 from apps.bot.people import NOT_AVAILABLE, VIEW_PROFILE_BUTTON, PeopleAction, ready_user
 from backend.config.settings import BotSettings
@@ -77,9 +78,9 @@ class LikeNotice:
 async def _notice(session: AsyncSession, liker_id: int, liked_id: int) -> LikeNotice:
     active = await chat.active_chat(session, liker_id)
     partner = active is not None and active.partner_id == liked_id
-    nickname = (await users.get_profile(session, liker_id)).nickname
+    nickname = await badges.notice_nickname(session, liker_id)
     chat_id = (await users.get_user(session, liked_id)).telegram_user_id
-    return LikeNotice(chat_id, liker_id, str(nickname), partner)
+    return LikeNotice(chat_id, liker_id, nickname, partner)
 
 
 async def _set_like_button(bot: Bot, query: CallbackQuery, public_id: str, liked: bool) -> None:

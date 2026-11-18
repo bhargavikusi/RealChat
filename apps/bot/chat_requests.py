@@ -30,6 +30,7 @@ from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from apps.bot import badges
 from apps.bot.avatars import Avatars
 from apps.bot.cards import send_card
 from apps.bot.chat import COINS_RETURNED, duration, release_search_hold, tell_partner_ended
@@ -134,7 +135,8 @@ async def _tell(
 
 
 async def _nickname(session: AsyncSession, user_id: int) -> str:
-    return str((await users.get_profile(session, user_id)).nickname)
+    """The nickname as notices show it, marked while the user is VIP (D-063)."""
+    return await badges.notice_nickname(session, user_id)
 
 
 async def _chat_id(session: AsyncSession, user_id: int) -> int:
@@ -259,13 +261,14 @@ async def on_send(
         await _remove_buttons(bot, query)
         return
     sender = await users.get_profile(session, user_id)
+    sender_nickname = await _nickname(session, user_id)
     recipient_chat = await _chat_id(session, other_id)
     expiry = await _expiry(session, runtime_settings)
     await session.commit()
     await query.answer()
     await _remove_buttons(bot, query)
     notice = REQUEST_NOTICE.format(
-        nickname=sender.nickname, public_id=sender.public_id, expiry=duration(expiry * 60)
+        nickname=sender_nickname, public_id=sender.public_id, expiry=duration(expiry * 60)
     )
     answer = RequestAction(action="accept", request=sent.request_id)
     decline = RequestAction(action="decline", request=sent.request_id)
@@ -506,7 +509,10 @@ async def _connect(
     left_waiting = [
         await _chat_id(session, closed.recipient_id) for closed in connected.closed_waiting
     ]
-    sender_nickname = str(people[parties.sender_id][1].nickname)
+    vips = await badges.vip_ids(session, (parties.sender_id, parties.recipient_id))
+    sender_nickname = badges.notice_name(
+        str(people[parties.sender_id][1].nickname), parties.sender_id in vips
+    )
     await session.commit()
     await query.answer()
     await _remove_buttons(bot, query)
@@ -522,7 +528,9 @@ async def _connect(
         telegram_id, _ = people[user_id]
         _, partner = people[partner_id]
         try:
-            await send_card(bot, avatars, telegram_id, partner, header, chat_keyboard())
+            await send_card(
+                bot, avatars, telegram_id, partner, header, chat_keyboard(), vip=partner_id in vips
+            )
         except TelegramAPIError as exc:
             logger.warning("could not announce a chat request", extra=exception_summary(exc))
     for chat_id in left_waiting:

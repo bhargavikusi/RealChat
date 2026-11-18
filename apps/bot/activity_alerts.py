@@ -24,6 +24,7 @@ from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from apps.bot import badges
 from apps.bot.endings import AlertAction, alert_row, coins_label, is_alert_row
 from apps.bot.people import NOT_AVAILABLE, days_label, ready_user
 from backend.config.settings import BotSettings
@@ -94,9 +95,12 @@ async def _remove_buttons(bot: Bot, query: CallbackQuery) -> None:
 
 
 async def _nickname(session: AsyncSession, user_id: int) -> str:
-    """The nickname, or a neutral word for an account deleted meanwhile."""
+    """The nickname (marked while VIP, D-063), or a neutral word for an account deleted
+    meanwhile."""
     nickname = (await users.get_profile(session, user_id)).nickname
-    return str(nickname) if nickname else SOMEONE
+    if not nickname:
+        return SOMEONE
+    return badges.notice_name(str(nickname), await badges.is_vip(session, user_id))
 
 
 async def on_ask(
@@ -269,12 +273,15 @@ class AlertNotices:
     async def fired(self, alert: Settled) -> None:
         async with self._sessions() as session:
             buyer = await users.get_user(session, alert.buyer_id)
+            vip = await badges.is_vip(session, alert.target_id)
             await session.commit()
         if buyer.status != "active":
             return  # the buyer deleted their account (or was restricted) meanwhile
         # The person as they were when it fired, never as they are now.
         text = (
-            FIRED.format(nickname=alert.nickname, public_id=alert.public_id)
+            FIRED.format(
+                nickname=badges.notice_name(alert.nickname, vip), public_id=alert.public_id
+            )
             if alert.nickname and alert.public_id
             else FIRED_GONE
         )

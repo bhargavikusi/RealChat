@@ -321,9 +321,9 @@ async def test_past_chats_come_in_pages_latest_first(session_factory: Sessions) 
 
 def test_page_buttons() -> None:
     found = people.PastChats(entries=[], has_next=True)
-    keyboard = pp.past_chats_keyboard(1, found, NOW)
+    keyboard = pp.past_chats_keyboard(1, found, NOW, set())
     assert [b.text for b in keyboard.inline_keyboard[0]] == [pp.PREVIOUS_BUTTON, pp.NEXT_BUTTON]
-    assert pp.past_chats_keyboard(0, people.PastChats([], False), NOW).inline_keyboard == []
+    assert pp.past_chats_keyboard(0, people.PastChats([], False), NOW, set()).inline_keyboard == []
 
 
 def test_ago() -> None:

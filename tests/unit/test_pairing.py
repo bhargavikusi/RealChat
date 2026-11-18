@@ -1,6 +1,6 @@
 """Pairing rules for waiting users (D-033)."""
 
-from backend.modules.matching.matcher import pair_users
+from backend.modules.matching.matcher import pair_users, vip_first
 
 
 def recent(*pairs: tuple[int, int]) -> set[frozenset[int]]:
@@ -65,3 +65,14 @@ def test_avoiding_a_repeat_never_makes_a_disallowed_pair() -> None:
         return 1 not in (first, second) or 2 in (first, second)
 
     assert pair_users([1, 2, 3, 4], recent((3, 4)), can_pair) == [(1, 2), (3, 4)]
+
+
+def test_vips_go_first_in_waiting_order() -> None:
+    assert vip_first([1, 2, 3, 4, 5], {4, 2}) == [2, 4, 1, 3, 5]
+    assert vip_first([1, 2], set()) == [1, 2]
+
+
+def test_a_vip_is_paired_before_others_and_still_only_where_allowed() -> None:
+    # 3 is VIP. 3 can't meet 1 (say, a gender search), so 3 meets 2 and 1 waits.
+    order = vip_first([1, 2, 3], {3})
+    assert pair_users(order, set(), lambda x, y: {x, y} != {1, 3}) == [(3, 2)]

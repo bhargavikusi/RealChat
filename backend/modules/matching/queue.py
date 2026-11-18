@@ -22,6 +22,12 @@ a free random search is just `<token>`. (Not a colon: the id travels in button d
 where colons separate fields.) The coins for a paid search are held in
 PostgreSQL under the key `search_hold_key(user, token)`.
 
+A VIP's new search is also added to a second sorted set, scored the same way (D-063),
+so the matcher can find every waiting VIP beyond the batch it reads. It is only a
+hint: the matcher keeps entries still in the queue and re-checks VIP in PostgreSQL,
+and entries older than the search time limit are trimmed. A new search without VIP
+removes the user's earlier entry.
+
 User ids are internal `users.id` values, never Telegram IDs.
 """
 
@@ -32,6 +38,7 @@ from typing import Any, cast
 from redis.asyncio import Redis
 
 QUEUE_KEY = "match:queue"
+VIP_KEY = "match:vip"
 # A safety net only: the matcher ends searches after the configured time limit. If
 # the worker is down, abandoned search keys still disappear eventually.
 SEARCH_TTL_SECONDS = 2 * 60 * 60
@@ -54,6 +61,11 @@ if current and current ~= 'cancelled' then
 end
 redis.call('SET', KEYS[1], ARGV[1], 'EX', ARGV[3])
 redis.call('ZADD', KEYS[2], ARGV[2], ARGV[4])
+if ARGV[5] == '1' then
+    redis.call('ZADD', KEYS[3], ARGV[2], ARGV[4])
+else
+    redis.call('ZREM', KEYS[3], ARGV[4])
+end
 return {1, ARGV[1]}
 """
 
@@ -184,22 +196,25 @@ class SearchQueue:
         return await self._redis.eval(script, numkeys, *args)
 
     async def start(
-        self, user_id: int, now: float, search_id: str | None = None
+        self, user_id: int, now: float, search_id: str | None = None, *, vip: bool = False
     ) -> tuple[str, bool]:
         """Start searching; returns (search id, True if new). A repeat returns the current id.
 
         `search_id` names the new search (see `search_id_for`); a random one is used if
-        not given.
+        not given. A new search by a `vip` is also recorded as a VIP search (D-063); any
+        other new search clears an earlier VIP entry.
         """
         created, current = await self._eval(
             _START,
-            2,
+            3,
             _search_key(user_id),
             QUEUE_KEY,
+            VIP_KEY,
             search_id or new_token(),
             now,
             SEARCH_TTL_SECONDS,
             user_id,
+            int(vip),
         )
         return str(current), bool(created)
 
@@ -248,6 +263,23 @@ class SearchQueue:
             ),
         )
         return [(int(member), float(score)) for member, score in rows]
+
+    async def vip_waiting(self, started_after: float) -> list[tuple[int, float]]:
+        """(user id, start time) of every VIP search still queued and newer than
+        `started_after`, oldest first. Older VIP entries are trimmed (D-063)."""
+        await self._redis.zremrangebyscore(VIP_KEY, "-inf", started_after)
+        members = cast(
+            list[str], await self._redis.zrangebyscore(VIP_KEY, f"({started_after}", "+inf")
+        )
+        if not members:
+            return []
+        # The queue's own score: a VIP entry outlives a search that ended or restarted.
+        scores = await self._redis.zmscore(QUEUE_KEY, members)
+        return [
+            (int(member), float(score))
+            for member, score in zip(members, scores, strict=True)
+            if score is not None and float(score) > started_after
+        ]
 
     async def started_before(self, cutoff: float, limit: int) -> list[int]:
         """Users whose search started at or before `cutoff`, oldest first."""
