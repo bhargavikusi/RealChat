@@ -38,6 +38,7 @@ from apps.bot.onboarding import (
 )
 from apps.bot.people import people_button
 from backend.config.settings import BotSettings
+from backend.modules.payments import service as payments
 from backend.modules.users import service
 from backend.modules.users.countries import match_country
 from backend.modules.users.models import Profile
@@ -199,10 +200,9 @@ def _current_value(profile: Profile, field: ProfileField) -> str | None:
     return values.get(field)
 
 
-async def _send_card(
-    bot: Bot, chat_id: int, profile: Profile, avatars: Avatars, header: str
-) -> None:
-    await send_card(bot, avatars, chat_id, profile, header, _edit_keyboard())
+async def _send_card(bot: Bot, chat_id: int, ctx: Context, avatars: Avatars, header: str) -> None:
+    vip = payments.is_vip(ctx.user, datetime.now(UTC))
+    await send_card(bot, avatars, chat_id, ctx.profile, header, _edit_keyboard(), vip=vip)
 
 
 async def _ready(
@@ -256,7 +256,7 @@ async def show_profile(
     if not await _ready(ctx, bot, message.chat.id, session, state, settings):
         return
     await state.clear()
-    await _send_card(bot, message.chat.id, ctx.profile, avatars, PROFILE_HEADER)
+    await _send_card(bot, message.chat.id, ctx, avatars, PROFILE_HEADER)
 
 
 async def on_back(
@@ -274,7 +274,7 @@ async def on_back(
     if not await _ready(ctx, bot, chat_id, session, state, settings):
         return
     await state.clear()
-    await _send_card(bot, chat_id, ctx.profile, avatars, PROFILE_HEADER)
+    await _send_card(bot, chat_id, ctx, avatars, PROFILE_HEADER)
 
 
 # --- Starting, cancelling, and removing ----------------------------------------------
@@ -361,7 +361,7 @@ async def on_remove(
     await session.commit()
     await state.clear()
     await query.answer()
-    await _send_card(bot, chat_id, ctx.profile, avatars, REMOVED)
+    await _send_card(bot, chat_id, ctx, avatars, REMOVED)
 
 
 # --- Answers -------------------------------------------------------------------------
@@ -401,7 +401,7 @@ async def on_text_answer(
         return
     await session.commit()
     await state.clear()
-    await _send_card(bot, message.chat.id, ctx.profile, avatars, SAVED)
+    await _send_card(bot, message.chat.id, ctx, avatars, SAVED)
 
 
 async def on_age_answer(
@@ -455,7 +455,7 @@ async def on_age_answer(
     await session.commit()
     await state.clear()
     header = SAVED if changed else unchanged(ProfileField.AGE)
-    await _send_card(bot, message.chat.id, ctx.profile, avatars, header)
+    await _send_card(bot, message.chat.id, ctx, avatars, header)
 
 
 async def on_gender_pick(
@@ -490,7 +490,7 @@ async def on_gender_pick(
     await state.clear()
     await query.answer()
     header = SAVED if changed else unchanged(ProfileField.GENDER)
-    await _send_card(bot, chat_id, ctx.profile, avatars, header)
+    await _send_card(bot, chat_id, ctx, avatars, header)
 
 
 async def on_country_text(message: Message, state: FSMContext) -> None:
@@ -539,7 +539,7 @@ async def on_country_pick(
         return
     await session.commit()
     await state.clear()
-    await _send_card(bot, chat_id, ctx.profile, avatars, SAVED)
+    await _send_card(bot, chat_id, ctx, avatars, SAVED)
 
 
 async def on_photo_answer(
@@ -559,7 +559,7 @@ async def on_photo_answer(
     service.set_photo(ctx.profile, message.photo[-1].file_id)
     await session.commit()
     await state.clear()
-    await _send_card(bot, message.chat.id, ctx.profile, avatars, SAVED)
+    await _send_card(bot, message.chat.id, ctx, avatars, SAVED)
 
 
 async def photo_expected(message: Message, state: FSMContext) -> None:

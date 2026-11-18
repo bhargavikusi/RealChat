@@ -5,7 +5,8 @@ Each tick:
 2. The longest-waiting searchers are re-checked in PostgreSQL. Anyone no longer
    eligible (restricted, deleted, already in a chat, terms not current) is dropped.
 3. Eligible users are paired, oldest first, avoiding recent partners while anyone
-   else is available.
+   else is available. VIPs come first (D-063): every waiting VIP is read, also beyond
+   the batch, and paired before everyone else, oldest VIP first.
 4. Each pair is taken out of the queue atomically, then the conversation is created
    and committed in PostgreSQL. Only after that commit are both users told. If the
    database refuses the match, both are put back in the queue in their old place.
@@ -37,6 +38,7 @@ from backend.modules.matching.queue import (
     parse_search,
     search_hold_key,
 )
+from backend.modules.payments import service as payments
 
 logger = logging.getLogger(__name__)
 
@@ -71,6 +73,11 @@ STALE_HOLD_MARGIN = timedelta(minutes=10)
 def fits(wants: str | None, gender: str | None) -> bool:
     """Whether someone of `gender` fits a search for `wants` (None: anyone)."""
     return wants is None or wants == gender
+
+
+def vip_first(waiting: Sequence[int], vips: set[int]) -> list[int]:
+    """VIPs ahead of everyone else, each group keeping its waiting order (D-063)."""
+    return [u for u in waiting if u in vips] + [u for u in waiting if u not in vips]
 
 
 def pair_users(
@@ -203,13 +210,18 @@ class Matcher:
             )
             await session.commit()
 
-        # Only searches still within the time limit, even if more were left to expire.
-        searches = await self._queue.waiting(BATCH_SIZE, started_after=cutoff)
+        # Only searches still within the time limit, even if more were left to expire,
+        # and every VIP search however far back it is (D-063).
+        batch = await self._queue.waiting(BATCH_SIZE, started_after=cutoff)
+        vip_searches = await self._queue.vip_waiting(started_after=cutoff)
+        searches = sorted({**dict(batch), **dict(vip_searches)}.items(), key=lambda s: s[1])
         waiting = [user_id for user_id, _ in searches]
         choices = await self._queue.searches(waiting)
         async with self._sessions() as session:
             eligible = await chat.eligible_for_matching(session, waiting, self._terms_version)
             ordered = [user_id for user_id in waiting if user_id in eligible and user_id in choices]
+            vips = await payments.vip_users(session, ordered, now)
+            ordered = vip_first(ordered, vips)
             genders = await chat.genders(session, ordered)
             recent = (
                 await chat.recent_pairs(session, ordered, now - timedelta(seconds=window))

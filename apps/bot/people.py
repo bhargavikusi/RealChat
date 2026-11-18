@@ -45,6 +45,7 @@ from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMar
 from aiogram.types import User as TelegramUser
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from apps.bot import badges
 from apps.bot.avatars import Avatars
 from apps.bot.cards import send_card
 from apps.bot.endings import (
@@ -146,26 +147,28 @@ def ago(ended_at: datetime, now: datetime) -> str:
     return "yesterday" if days == 1 else f"{days} days ago"
 
 
-def _entry(entry: people.PastChat, now: datetime) -> InlineKeyboardButton:
+def _entry(entry: people.PastChat, now: datetime, vip: bool) -> InlineKeyboardButton:
     mark = BLOCKED_MARK if entry.blocked else ""
     return _button(
-        f"{entry.nickname} · {ago(entry.ended_at, now)}{mark}",
+        f"{badges.card_name(entry.nickname, vip)} · {ago(entry.ended_at, now)}{mark}",
         PeopleAction(action="open", conversation=entry.conversation_id),
     )
 
 
-def _visitor_entry(entry: visits.Visitor, now: datetime) -> InlineKeyboardButton:
+def _visitor_entry(entry: visits.Visitor, now: datetime, vip: bool) -> InlineKeyboardButton:
     mark = BLOCKED_MARK if entry.blocked else ""
     return _button(
-        f"{entry.nickname} · {ago(entry.visited_at, now)}{mark}",
+        f"{badges.card_name(entry.nickname, vip)} · {ago(entry.visited_at, now)}{mark}",
         PeopleAction(action="visitor", user=entry.user_id),
     )
 
 
-def _like_entry(entry: likes.LikeEntry, action: str, now: datetime) -> InlineKeyboardButton:
+def _like_entry(
+    entry: likes.LikeEntry, action: str, now: datetime, vip: bool
+) -> InlineKeyboardButton:
     mark = BLOCKED_MARK if entry.blocked else ""
     return _button(
-        f"{entry.nickname} · {ago(entry.liked_at, now)}{mark}",
+        f"{badges.card_name(entry.nickname, vip)} · {ago(entry.liked_at, now)}{mark}",
         PeopleAction(action=action, user=entry.user_id),
     )
 
@@ -183,20 +186,32 @@ def _pages(
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
-def past_chats_keyboard(page: int, found: people.PastChats, now: datetime) -> InlineKeyboardMarkup:
-    rows = [[_entry(entry, now)] for entry in found.entries]
+def past_chats_keyboard(
+    page: int, found: people.PastChats, now: datetime, vips: set[int]
+) -> InlineKeyboardMarkup:
+    """`vips`: who among the entries is VIP now, for the badge (D-063)."""
+    rows = [[_entry(entry, now, entry.partner_id in vips)] for entry in found.entries]
     return _pages(rows, "past", page, found.has_next)
 
 
-def visitors_keyboard(page: int, found: visits.Visitors, now: datetime) -> InlineKeyboardMarkup:
-    rows = [[_visitor_entry(entry, now)] for entry in found.entries]
+def visitors_keyboard(
+    page: int, found: visits.Visitors, now: datetime, vips: set[int]
+) -> InlineKeyboardMarkup:
+    rows = [[_visitor_entry(entry, now, entry.user_id in vips)] for entry in found.entries]
     return _pages(rows, "visitors", page, found.has_next)
 
 
 def likes_keyboard(
-    list_action: str, entry_action: str, page: int, found: likes.LikeEntries, now: datetime
+    list_action: str,
+    entry_action: str,
+    page: int,
+    found: likes.LikeEntries,
+    now: datetime,
+    vips: set[int],
 ) -> InlineKeyboardMarkup:
-    rows = [[_like_entry(entry, entry_action, now)] for entry in found.entries]
+    rows = [
+        [_like_entry(entry, entry_action, now, entry.user_id in vips)] for entry in found.entries
+    ]
     return _pages(rows, list_action, page, found.has_next)
 
 
@@ -227,9 +242,9 @@ async def _visit(
         return None
     if not await visits.should_notify(session, visitor_id, visited.user_id):
         return None
-    nickname = (await users.get_profile(session, visitor_id)).nickname
+    nickname = await badges.notice_nickname(session, visitor_id)
     chat_id = (await users.get_user(session, visited.user_id)).telegram_user_id
-    return Notice(chat_id, visitor_id, str(nickname))
+    return Notice(chat_id, visitor_id, nickname)
 
 
 async def _ready_context(
@@ -343,6 +358,7 @@ async def on_past_chats(
     now = _now()
     page = max(callback_data.page, 0)
     found = await people.past_chats(session, user_id, people.window_start(now, days), page)
+    vips = await badges.vip_ids(session, [entry.partner_id for entry in found.entries])
     await session.commit()
     await query.answer()
     if not found.entries and page == 0:
@@ -351,7 +367,7 @@ async def on_past_chats(
     await bot.send_message(
         query.from_user.id,
         PAST_CHATS_HEADER.format(days=days_label(days)),
-        reply_markup=past_chats_keyboard(page, found, now),
+        reply_markup=past_chats_keyboard(page, found, now, vips),
     )
 
 
@@ -382,9 +398,10 @@ async def on_open(
         safety_keyboard(conversation_id, blocked),
     )
     notice = await _visit(session, user_id, profile, _now())
+    vip = await badges.is_vip(session, profile.user_id)
     await session.commit()
     await query.answer()
-    await send_card(bot, avatars, query.from_user.id, profile, PAST_CHAT_HEADER, markup)
+    await send_card(bot, avatars, query.from_user.id, profile, PAST_CHAT_HEADER, markup, vip=vip)
     if notice is not None:
         await notice.send(bot)
 
@@ -405,6 +422,7 @@ async def on_visitors(
     now = _now()
     page = max(callback_data.page, 0)
     found = await visits.visitors(session, user_id, visits.retention_start(now, days), page)
+    vips = await badges.vip_ids(session, [entry.user_id for entry in found.entries])
     await session.commit()
     await query.answer()
     if not found.entries and page == 0:
@@ -413,7 +431,7 @@ async def on_visitors(
     await bot.send_message(
         query.from_user.id,
         VISITORS_HEADER.format(days=days_label(days)),
-        reply_markup=visitors_keyboard(page, found, now),
+        reply_markup=visitors_keyboard(page, found, now, vips),
     )
 
 
@@ -440,9 +458,10 @@ async def on_visitor(
         return
     markup = await _card_buttons(session, user_id, profile, runtime_settings)
     notice = await _visit(session, user_id, profile, now)
+    vip = await badges.is_vip(session, profile.user_id)
     await session.commit()
     await query.answer()
-    await send_card(bot, avatars, query.from_user.id, profile, VISITOR_HEADER, markup)
+    await send_card(bot, avatars, query.from_user.id, profile, VISITOR_HEADER, markup, vip=vip)
     if notice is not None:
         await notice.send(bot)
 
@@ -470,6 +489,7 @@ async def _show_likes(
         return
     page = max(callback_data.page, 0)
     found = await fetch(session, user_id, page)
+    vips = await badges.vip_ids(session, [entry.user_id for entry in found.entries])
     await session.commit()
     await query.answer()
     if not found.entries and page == 0:
@@ -478,7 +498,7 @@ async def _show_likes(
     await bot.send_message(
         query.from_user.id,
         header,
-        reply_markup=likes_keyboard(callback_data.action, entry_action, page, found, _now()),
+        reply_markup=likes_keyboard(callback_data.action, entry_action, page, found, _now(), vips),
     )
 
 
@@ -506,9 +526,10 @@ async def _open_like(
         return
     markup = await _card_buttons(session, user_id, profile, runtime_settings)
     notice = await _visit(session, user_id, profile, _now())
+    vip = await badges.is_vip(session, profile.user_id)
     await session.commit()
     await query.answer()
-    await send_card(bot, avatars, query.from_user.id, profile, header, markup)
+    await send_card(bot, avatars, query.from_user.id, profile, header, markup, vip=vip)
     if notice is not None:
         await notice.send(bot)
 
@@ -633,7 +654,9 @@ async def on_userid(
         return
     public_id = public_ids.normalize(raw)
     if public_id == own.public_id:
-        await send_card(bot, avatars, message.chat.id, own, OWN_CARD_HEADER)
+        vip = await badges.is_vip(session, ctx.user.id)
+        await session.commit()
+        await send_card(bot, avatars, message.chat.id, own, OWN_CARD_HEADER, vip=vip)
         return
     limit = await runtime_settings.get(session, SettingKey.USERID_MISSES_PER_HOUR)
     try:
@@ -654,8 +677,9 @@ async def on_userid(
         return
     markup = await _card_buttons(session, ctx.user.id, profile, runtime_settings)
     notice = await _visit(session, ctx.user.id, profile, _now())
+    vip = await badges.is_vip(session, profile.user_id)
     await session.commit()
-    await send_card(bot, avatars, message.chat.id, profile, ID_HEADER, markup)
+    await send_card(bot, avatars, message.chat.id, profile, ID_HEADER, markup, vip=vip)
     if notice is not None:
         await notice.send(bot)
 

@@ -453,6 +453,8 @@ When VIP expires, revoke subscription-only entitlements according to documented 
 
 Approved (D-062): VIP is sold as a one-time pass in Stars, not a subscription: 780 Stars for 180 days plus 3,750 coins by default, all admin settings. Buying while VIP is running adds the days to the current end date, but only while at most one pass's length is left. VIP ends at its end date with no further action, and coins are kept. A restricted account whose payment arrives is still granted VIP, and its days keep running; a payment for a deleted account is refunded; deleting an account ends VIP. /vip lists only perks that work. Approved perks, built separately: the ✅ 👑 VIP badge (not identity verification), priority matching, and Ghost mode for profile visits. This replaces the subscription wording above: there is nothing to renew or cancel. /vip and the invoice show the pass's price, length, and included coins, and /vip shows from when another pass can be bought; the full conditions, including the stacking limit and what happens on deletion, are in /terms.
 
+Approved (D-063): while VIP lasts, ✅ 👑 VIP follows the nickname on profile cards and in People lists, and ✅ in every notice naming the user; both mark VIP bought in RealChat, not identity verification, as /vip and the terms state. VIP searchers are matched first, oldest VIP first, with any partner who fits; every waiting VIP is considered in each matching round.
+
 ## 18. Advertising and Announcements
 
 Support two distinct advertising mechanisms.

@@ -8,7 +8,7 @@ message retention, are not given as numbers, so the text stays true when they ch
 (D-046).
 """
 
-TERMS_VERSION = "draft-20"
+TERMS_VERSION = "draft-21"
 
 TERMS_TEXT = """\
 DRAFT - not for launch
@@ -74,6 +74,9 @@ renews. VIP lasts until the end date shown in /vip; buying another pass while VI
 running adds its days to that date, and can be done once the time left is no longer \
 than one pass. When VIP runs out, coins included with a pass and any other coins \
 stay yours. Deleting your account ends VIP and erases your coins.
+• While someone has VIP, ✅ 👑 VIP or ✅ is shown after their nickname, and their \
+searches are matched first. These marks only show that VIP was bought in RealChat; \
+they don't verify anyone's identity.
 • Accounts that break these rules may be restricted or banned. A purchase whose \
 payment arrives after your account was restricted or banned is still delivered, and \
 VIP time keeps running while an account is restricted or banned.

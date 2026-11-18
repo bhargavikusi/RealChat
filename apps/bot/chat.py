@@ -30,6 +30,7 @@ from aiogram.types import User as TelegramUser
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from apps.bot import badges
 from apps.bot.avatars import Avatars
 from apps.bot.cards import send_card
 from apps.bot.endings import (
@@ -68,6 +69,7 @@ from backend.modules.matching.queue import (
     search_id_for,
 )
 from backend.modules.moderation import service as moderation
+from backend.modules.payments import service as payments
 from backend.modules.people import likes, visits
 from backend.modules.users import service as users
 from backend.modules.users.models import User
@@ -146,8 +148,10 @@ async def _start_search(
     # Any half-finished profile edit is abandoned, so its answers can't be mixed up
     # with what the user sends next.
     await state.clear()
+    # VIPs are matched first (D-063); the matcher checks VIP again before pairing.
+    vip = payments.is_vip(ctx.user, datetime.now(UTC))
     if wants is None:
-        search_id, created = await search_queue.start(ctx.user.id, time.time())
+        search_id, created = await search_queue.start(ctx.user.id, time.time(), vip=vip)
         await bot.send_message(
             chat_id,
             SEARCHING if created else ALREADY_SEARCHING,
@@ -179,7 +183,7 @@ async def _start_search(
         return
     try:
         search_id, created = await search_queue.start(
-            ctx.user.id, time.time(), search_id_for(token, wants)
+            ctx.user.id, time.time(), search_id_for(token, wants), vip=vip
         )
     except BaseException:
         await release_search_hold(session, ctx.user.id, token)
@@ -317,6 +321,7 @@ async def on_partner_profile(
     partner = await users.get_profile(session, active.partner_id)
     blocked = await moderation.is_blocked(session, user.id, active.partner_id)
     liked = await likes.is_liked(session, user.id, active.partner_id)
+    vip = await badges.is_vip(session, active.partner_id)
     # Listed in the partner's Visited you, without a notice during the chat (D-053).
     await visits.record_visit(session, user.id, active.partner_id, datetime.now(UTC))
     await session.commit()
@@ -330,6 +335,7 @@ async def on_partner_profile(
             [like_row(partner.public_id, liked)],
             safety_keyboard(active.conversation_id, blocked),
         ),
+        vip=vip,
     )
 
 
@@ -400,6 +406,7 @@ class ChatNotifier:
                 )
                 for user_id in (first, second)
             }
+            vips = await badges.vip_ids(session, (first, second))
             await session.commit()
         for user_id, partner_id in ((first, second), (second, first)):
             telegram_id, _ = people[user_id]
@@ -412,7 +419,13 @@ class ChatNotifier:
             )
             try:
                 await send_card(
-                    self._bot, self._avatars, telegram_id, partner, header, chat_keyboard()
+                    self._bot,
+                    self._avatars,
+                    telegram_id,
+                    partner,
+                    header,
+                    chat_keyboard(),
+                    vip=partner_id in vips,
                 )
             except TelegramAPIError as exc:
                 logger.warning("could not announce a match", extra=exception_summary(exc))

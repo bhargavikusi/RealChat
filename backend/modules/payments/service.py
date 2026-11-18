@@ -15,6 +15,7 @@ The flow, following Telegram's rules for digital goods:
 """
 
 import logging
+from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from enum import StrEnum
@@ -84,6 +85,15 @@ def vip_pass(values: dict[SettingKey, int]) -> VipPass:
 def is_vip(user: User, now: datetime) -> bool:
     """VIP while the stored end date is in the future, so expiry needs no job."""
     return user.vip_until is not None and user.vip_until > now
+
+
+async def vip_users(session: AsyncSession, user_ids: Iterable[int], now: datetime) -> set[int]:
+    """Which of these users are VIP now, for the badge and matching priority (D-063)."""
+    ids = list(user_ids)
+    if not ids:
+        return set()
+    rows = await session.scalars(select(User.id).where(User.id.in_(ids), User.vip_until > now))
+    return {int(user_id) for user_id in rows}
 
 
 def can_buy_vip(user: User, now: datetime, days: int) -> bool:

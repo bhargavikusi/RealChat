@@ -710,6 +710,19 @@ Work happens on short-lived issue branches, such as `feature/12-onboarding`, cre
 
 **Why:** Owner decisions on the pass, its price, the stacking limit, how restrictions and deletion apply, and listing only working perks. Settles the VIP part of O-005.
 
+### D-063 — The VIP badge and matching priority
+
+**Date:** 2026-11-18
+**Decision:**
+
+* While a user is VIP (D-062), `✅ 👑 VIP` follows their nickname on every profile card (their own, the chat partner's, People, /userid) and in the People lists (past chats, visitors, likes), and `✅` follows it in every notice that names them (direct messages and replies, likes, profile visits, chat requests, activity alerts). VIP is read when the card, list, or notice is made, so the marks disappear the moment VIP ends.
+* The marks show that VIP was bought in RealChat, never a verified identity; /vip and the terms say so (terms version `draft-21`).
+* VIP searchers are matched first, in free and gender searches: each tick orders VIPs ahead of everyone else, each group oldest first, and pairs as before. A VIP's partner can be anyone who fits, VIP or not, and a gender search still matches only that gender; blocks, repeat avoidance, and paid holds are unchanged.
+* Every waiting VIP is in every tick, also beyond the 200 longest-waiting searches: a VIP's new search is recorded in a second Redis sorted set (`match:vip`), in the same script that starts it, and the matcher reads it each tick. It is only a hint: entries no longer queued are skipped, entries past the search time limit are trimmed, and VIP is re-checked in PostgreSQL before priority is given.
+* Someone who becomes VIP during a search gets priority in that search only while it is among the 200 longest-waiting; from their next search, always.
+
+**Why:** Owner decisions on where the marks appear (the full badge on cards and lists, the tick everywhere else), on VIP-first ordering with any fitting partner, and on reaching every waiting VIP each tick.
+
 ## Open
 
 Each of these needs the owner's decision. Until then, the behavior stays configurable and is not presented to users as final.

@@ -38,6 +38,7 @@ from aiogram.types import (
 )
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from apps.bot import badges
 from apps.bot.endings import DirectAction, coins_label
 from apps.bot.people import NOT_AVAILABLE, ready_user
 from apps.bot.relay import BLOCKED, content_refusal, file_id, message_kind, unreachable
@@ -189,7 +190,7 @@ async def on_write(
         return
     price = await runtime_settings.get(session, SettingKey.DIRECT_MESSAGE_COINS)
     available = (await coins.balance(session, user_id)).available
-    nickname = str((await users.get_profile(session, other_id)).nickname)
+    nickname = await badges.notice_nickname(session, other_id)
     await session.commit()
     if available < price:
         await query.answer(
@@ -227,7 +228,7 @@ async def on_reply(
         await session.commit()
         await query.answer(REFUSALS[refused or Refusal.EXPIRED])
         return
-    nickname = str((await users.get_profile(session, sender_id)).nickname)
+    nickname = await badges.notice_nickname(session, sender_id)
     await session.commit()
     await state.set_state(Compose.message)
     await state.set_data(
@@ -338,7 +339,7 @@ async def on_send(
     sender = await users.get_profile(session, user_id)
     recipient_chat = (await users.get_user(session, recipient_id)).telegram_user_id
     notice = (REPLY_NOTICE if reply_to is not None else MESSAGE_NOTICE).format(
-        nickname=sender.nickname, public_id=sender.public_id
+        nickname=await badges.notice_nickname(session, user_id), public_id=sender.public_id
     )
     await session.commit()
     await state.clear()
@@ -429,7 +430,7 @@ async def on_open(
         logger.warning("could not show a direct message", extra=exception_summary(exc))
         return
     viewed = await direct.mark_viewed(session, message_id, _now())
-    nickname = str((await users.get_profile(session, user_id)).nickname)
+    nickname = await badges.notice_nickname(session, user_id)
     sender_chat = (await users.get_user(session, sender_id)).telegram_user_id
     await session.commit()
     if not viewed:

@@ -16,7 +16,7 @@ from backend.modules.chat import service as chat
 from backend.modules.chat.models import Conversation, ConversationParticipant
 from backend.modules.matching import matcher as matcher_module
 from backend.modules.matching.matcher import Matcher
-from backend.modules.matching.queue import CLAIM_TTL_SECONDS, SearchQueue
+from backend.modules.matching.queue import CLAIM_TTL_SECONDS, VIP_KEY, SearchQueue
 from backend.modules.users import service as users
 from backend.modules.users.models import User
 from backend.modules.users.terms import TERMS_VERSION
@@ -601,3 +601,80 @@ async def test_claim_markers_expire_quickly_and_restored_searches_do_not(
     assert 0 < await redis.ttl("match:search:1") <= CLAIM_TTL_SECONDS
     assert await queue.requeue(claimed[0])
     assert await redis.ttl("match:search:1") > CLAIM_TTL_SECONDS
+
+
+# --- VIP priority (D-063) ------------------------------------------------------------
+
+
+async def _set_vip_until(sessions: Sessions, user_id: int, until: datetime | None) -> None:
+    async with sessions() as session:
+        await session.execute(update(User).where(User.id == user_id).values(vip_until=until))
+        await session.commit()
+
+
+async def _vip_search(queue: SearchQueue, user_id: int, at: float) -> None:
+    await queue.start(user_id, at, vip=True)
+
+
+async def test_vip_searches_are_listed_while_queued(queue: SearchQueue, redis: Redis) -> None:
+    await queue.start(1, 100.0)
+    await _vip_search(queue, 2, 200.0)
+    await _vip_search(queue, 3, 300.0)
+    assert await queue.vip_waiting(started_after=0) == [(2, 200.0), (3, 300.0)]
+    # A cancelled search is no longer listed; one older than the cutoff is trimmed.
+    assert await queue.cancel(3, str(await queue.current(3)))
+    assert await queue.vip_waiting(started_after=0) == [(2, 200.0)]
+    assert await queue.vip_waiting(started_after=200.0) == []
+    assert await redis.zrange(VIP_KEY, 0, -1) == ["3"]
+
+
+async def test_a_vip_is_matched_first(
+    matcher: Matcher,
+    queue: SearchQueue,
+    notifier: RecordingNotifier,
+    people: list[int],
+    session_factory: Sessions,
+) -> None:
+    a, b, vip = people[:3]
+    await _set_vip_until(session_factory, vip, NOW + timedelta(days=1))
+    await _search(queue, a, b)
+    await _vip_search(queue, vip, NOW.timestamp() + 5)
+    await matcher.tick(NOW)
+    # The VIP came last but is matched first, with the longest-waiting user.
+    assert notifier.matches == [(vip, a)]
+    assert [user for user, _ in await queue.waiting(10, started_after=0)] == [b]
+
+
+async def test_a_vip_beyond_the_batch_is_matched_first(
+    matcher: Matcher,
+    queue: SearchQueue,
+    notifier: RecordingNotifier,
+    people: list[int],
+    session_factory: Sessions,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(matcher_module, "BATCH_SIZE", 2)
+    a, b, c, vip = people
+    await _set_vip_until(session_factory, vip, NOW + timedelta(days=1))
+    await _search(queue, a, b, c)
+    await _vip_search(queue, vip, NOW.timestamp() + 5)
+    await matcher.tick(NOW)
+    # Only a and b are in the batch, yet the VIP is matched first.
+    assert notifier.matches[0] == (vip, a)
+
+
+async def test_an_ended_vip_gets_no_priority(
+    matcher: Matcher,
+    queue: SearchQueue,
+    notifier: RecordingNotifier,
+    people: list[int],
+    session_factory: Sessions,
+) -> None:
+    a, b, former = people[:3]
+    # Recorded as VIP when the search started, but VIP has ended since.
+    await _set_vip_until(session_factory, former, NOW - timedelta(seconds=1))
+    await _search(queue, a, b)
+    await _vip_search(queue, former, NOW.timestamp() + 5)
+    await matcher.tick(NOW)
+    assert notifier.matches == [(a, b)]
+    assert [user for user, _ in await queue.waiting(10, started_after=0)] == [former]

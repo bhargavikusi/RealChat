@@ -29,6 +29,11 @@ HEADER = "👑 RealChat VIP"
 ACTIVE = "You're VIP until {until}."
 INACTIVE = "You're not VIP."
 PERKS_HEADER = "What VIP includes:"
+PERK_BADGE = (
+    "• ✅ 👑 VIP after your nickname on your profile card and in People lists, and ✅ in "
+    "notices. It shows you have VIP, not that your identity is verified."
+)
+PERK_PRIORITY = "• Matched first when you search, before people without VIP"
 PERK_COINS = "• {coins} added to your balance when you buy a pass"
 OFFER_TEXT = (
     "A VIP pass gives {days} days of VIP for ⭐ {stars}. It's paid once and never renews; "
@@ -61,7 +66,10 @@ def status_line(user: User, now: datetime) -> str:
 
 def perk_lines(offer: VipPass) -> list[str]:
     """The perks that work today; each VIP perk adds its line when it is built."""
-    return [PERK_COINS.format(coins=coins_label(offer.coins))] if offer.coins else []
+    perks = [PERK_BADGE, PERK_PRIORITY]
+    if offer.coins:
+        perks.append(PERK_COINS.format(coins=coins_label(offer.coins)))
+    return perks
 
 
 def _extend_from(user: User, offer: VipPass, now: datetime) -> datetime:
@@ -71,9 +79,7 @@ def _extend_from(user: User, offer: VipPass, now: datetime) -> datetime:
 
 def vip_text(user: User, offer: VipPass, now: datetime) -> str:
     lines = [HEADER, "", f"👑 {status_line(user, now)}"]
-    perks = perk_lines(offer)
-    if perks:
-        lines += ["", PERKS_HEADER, *perks]
+    lines += ["", PERKS_HEADER, *perk_lines(offer)]
     lines += ["", OFFER_TEXT.format(days=offer.days, stars=offer.stars)]
     if not payments.can_buy_vip(user, now, offer.days):
         lines += [

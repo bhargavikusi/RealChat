@@ -104,6 +104,8 @@ async def test_vip_shows_the_status_perks_and_pass(chat: Chat) -> None:
             f"👑 {bot_vip.INACTIVE}",
             "",
             bot_vip.PERKS_HEADER,
+            bot_vip.PERK_BADGE,
+            bot_vip.PERK_PRIORITY,
             bot_vip.PERK_COINS.format(coins="3750 coins"),
             "",
             bot_vip.OFFER_TEXT.format(days=180, stars=780),
@@ -112,9 +114,13 @@ async def test_vip_shows_the_status_perks_and_pass(chat: Chat) -> None:
     assert list(chat.session.last_buttons()) == [BUY]
 
 
-async def test_a_pass_without_coins_lists_no_perks(chat: Chat, session_factory: Sessions) -> None:
+async def test_a_pass_without_coins_lists_no_coin_perk(
+    chat: Chat, session_factory: Sessions
+) -> None:
     await _set(session_factory, SettingKey.VIP_COINS, 0)
-    assert bot_vip.PERKS_HEADER not in await chat.send("/vip")
+    text = await chat.send("/vip")
+    assert bot_vip.PERK_PRIORITY in text
+    assert "coins added" not in text
     await _buy(chat, "charge-1")
     assert await _vip_entries(session_factory) == []
     until = (await _user(session_factory)).vip_until

@@ -586,3 +586,22 @@ async def test_no_notice_to_a_buyer_deleted_after_it_fired(
     runtime = RuntimeSettings(ttl_seconds=0)
     await aa.AlertNotices(world.bob.bot, session_factory, runtime).fired(fired)
     assert world.bob.session.sent_to(USER_ID) == []
+
+
+async def test_alert_notices_mark_a_vip(world: World, session_factory: Sessions) -> None:
+    # D-063: a VIP is named with the tick in the notices about them.
+    async with session_factory() as session:
+        await session.execute(
+            update(User)
+            .where(User.telegram_user_id == BOB_ID)
+            .values(vip_until=datetime.now(UTC) + timedelta(days=1))
+        )
+        await session.commit()
+    await ask(world.alice, session_factory, BOB_ID)
+    assert f"{BOB} ✅ uses RealChat" in text_of(last_to(world.alice.session, USER_ID))
+    await buy(world.alice, session_factory, BOB_ID)
+    await bob_uses_realchat(session_factory)
+    assert await jobs(session_factory, world.bob).tick(now()) == 1
+    assert text_of(last_to(world.bob.session, USER_ID)) == aa.FIRED.format(
+        nickname=f"{BOB} ✅", public_id=await public_id(session_factory, BOB_ID)
+    )
