@@ -190,7 +190,8 @@ async def on_write(
         return
     price = await runtime_settings.get(session, SettingKey.DIRECT_MESSAGE_COINS)
     available = (await coins.balance(session, user_id)).available
-    nickname = await badges.notice_nickname(session, other_id)
+    nickname = str((await users.get_profile(session, other_id)).nickname)
+    marked = badges.notice_name(nickname, await badges.is_vip(session, other_id))
     await session.commit()
     if available < price:
         await query.answer(
@@ -205,7 +206,7 @@ async def on_write(
     await query.answer()
     await bot.send_message(
         query.from_user.id,
-        WRITE_PROMPT.format(nickname=nickname, price=coins_label(price)),
+        WRITE_PROMPT.format(nickname=marked, price=coins_label(price)),
         reply_markup=_buttons((CANCEL_BUTTON, DirectAction(action="cancel"))),
     )
 
@@ -228,7 +229,8 @@ async def on_reply(
         await session.commit()
         await query.answer(REFUSALS[refused or Refusal.EXPIRED])
         return
-    nickname = await badges.notice_nickname(session, sender_id)
+    nickname = str((await users.get_profile(session, sender_id)).nickname)
+    marked = badges.notice_name(nickname, await badges.is_vip(session, sender_id))
     await session.commit()
     await state.set_state(Compose.message)
     await state.set_data(
@@ -237,12 +239,19 @@ async def on_reply(
     await query.answer()
     await bot.send_message(
         query.from_user.id,
-        REPLY_PROMPT.format(nickname=nickname),
+        REPLY_PROMPT.format(nickname=marked),
         reply_markup=_buttons((CANCEL_BUTTON, DirectAction(action="cancel"))),
     )
 
 
-async def on_compose(message: Message, bot: Bot, state: FSMContext) -> None:
+async def _recipient_name(session: AsyncSession, data: dict[str, Any]) -> str:
+    """The recipient's nickname, saved when writing began, marked while they are VIP now
+    (D-063): the saved name never carries the mark, so it can't outlast their VIP."""
+    nickname = str(data.get("nickname", ""))
+    return badges.notice_name(nickname, await badges.is_vip(session, int(data["recipient"])))
+
+
+async def on_compose(message: Message, bot: Bot, state: FSMContext, session: AsyncSession) -> None:
     """The message to send: checked, then shown back as a preview with Send."""
     refused = content_refusal(message)
     if refused is not None:
@@ -254,6 +263,8 @@ async def on_compose(message: Message, bot: Bot, state: FSMContext) -> None:
         return
     draft = secrets.token_hex(8)
     data = await state.get_data()
+    nickname = await _recipient_name(session, data)
+    await session.commit()
     await state.set_state(Compose.preview)
     await state.update_data(
         draft=draft,
@@ -264,7 +275,7 @@ async def on_compose(message: Message, bot: Bot, state: FSMContext) -> None:
             "file_id": content.file_id,
         },
     )
-    await message.answer(PREVIEW.format(nickname=data.get("nickname", "")))
+    await message.answer(PREVIEW.format(nickname=nickname))
     await send_content(
         bot,
         message.chat.id,
@@ -341,6 +352,7 @@ async def on_send(
     notice = (REPLY_NOTICE if reply_to is not None else MESSAGE_NOTICE).format(
         nickname=await badges.notice_nickname(session, user_id), public_id=sender.public_id
     )
+    recipient_name = await _recipient_name(session, data)
     await session.commit()
     await state.clear()
     await query.answer()
@@ -352,7 +364,7 @@ async def on_send(
         recipient_chat,
         sent.message_id,
         notice,
-        nickname=str(data.get("nickname", "")),
+        nickname=recipient_name,
         price=0 if reply_to is not None else price,
     )
 

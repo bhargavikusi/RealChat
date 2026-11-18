@@ -628,6 +628,17 @@ async def test_vip_searches_are_listed_while_queued(queue: SearchQueue, redis: R
     assert await redis.zrange(VIP_KEY, 0, -1) == ["3"]
 
 
+async def test_a_search_without_vip_clears_an_earlier_vip_entry(
+    queue: SearchQueue, redis: Redis
+) -> None:
+    await _vip_search(queue, 2, 200.0)
+    assert await queue.cancel(2, str(await queue.current(2)))
+    # VIP ended meanwhile: the new search is not listed as a VIP's.
+    await queue.start(2, 300.0)
+    assert await redis.zrange(VIP_KEY, 0, -1) == []
+    assert await queue.vip_waiting(started_after=0) == []
+
+
 async def test_a_vip_is_matched_first(
     matcher: Matcher,
     queue: SearchQueue,

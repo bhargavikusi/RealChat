@@ -185,3 +185,19 @@ async def test_message_and_request_notices_mark_a_vip(world: World) -> None:
     assert text_of(last_to(world.bob.session, BOB_ID)).startswith(
         dm.WRITE_PROMPT.split("{")[0] + marked
     )
+
+
+async def test_a_mark_does_not_outlast_vip_while_writing(world: World) -> None:
+    await set_vip(world.sessions, USER_ID, soon())
+    alice_id = await public_id(world.sessions, USER_ID)
+    await world.bob.press_data(DirectAction(action="write", profile=alice_id).pack())
+    # Alice's VIP ends while Bob writes: the preview and his confirmation drop the tick.
+    await set_vip(world.sessions, USER_ID, datetime.now(UTC) - timedelta(seconds=1))
+    await world.bob.send("hello")
+    assert dm.PREVIEW.format(nickname=ALICE) in [
+        text_of(m) for m in world.bob.session.sent_to(BOB_ID)
+    ]
+    await world.bob.press_data(own_buttons(world.bob)[dm.SEND_BUTTON])
+    assert text_of(last_to(world.bob.session, BOB_ID)).startswith(
+        dm.DELIVERED.split("{")[0] + f"{ALICE}."
+    )
