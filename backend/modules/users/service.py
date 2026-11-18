@@ -184,6 +184,7 @@ async def delete_account(session: AsyncSession, user_id: int, now: datetime) -> 
     starts a fresh onboarding with the default settings. Coins are
     forfeited (held coins released, then the balance removed by one ledger entry), the
     invite code is retired, and pending invites are settled as not rewarded (D-055).
+    VIP ends (D-062); the payments that bought it are kept.
     Kept: the Telegram user ID, the status, timestamps, and the coin ledger. An
     active account becomes "deleted"; a suspended or banned one keeps its status, so
     deleting cannot be used to escape a restriction. A moderator or admin role is reset
@@ -239,6 +240,7 @@ async def delete_account(session: AsyncSession, user_id: int, now: datetime) -> 
     await _ensure_profile(session, user_id)
     user.coin_history_after_id = (await coins.forfeit_all(session, user_id, now)).history_after_id
     await rewards.retire_invites(session, user_id, now)
+    user.vip_until = None
     if user.status not in RESTRICTED_STATUSES:
         user.status = "deleted"
     user.deleted_at = now

@@ -70,6 +70,9 @@ class User(Base):
     # returning user sees a fresh history (D-055). A ledger position, not a time, so an
     # entry is never hidden by when its transaction started.
     coin_history_after_id: Mapped[int | None] = mapped_column(BigInteger)
+    # VIP lasts until this time (D-062): the user is VIP while it is in the future, so
+    # expiry needs no job. Cleared on account deletion.
+    vip_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
 class Profile(Base):

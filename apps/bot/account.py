@@ -40,12 +40,14 @@ from apps.bot.endings import PARTNER_LEFT, coins_label, menu_price, tell_chat_en
 from apps.bot.menu import HelpAction
 from apps.bot.middlewares import Handler, is_payment
 from apps.bot.onboarding import load_context, prompt_next
+from apps.bot.payments import vip_date
 from backend.config.settings import BotSettings
 from backend.core.logging import exception_summary
 from backend.modules.admin import service as admin_service
 from backend.modules.chat import service as chat_service
 from backend.modules.coins import service as coins
 from backend.modules.moderation import service as moderation
+from backend.modules.payments import service as payments
 from backend.modules.users import service
 from backend.modules.users.service import Notification, NotificationChoices
 
@@ -75,13 +77,15 @@ DELETE_BUTTON = "🗑 Delete account"
 CONFIRM_BUTTON = "Yes, delete my account"
 KEEP_BUTTON = "Cancel"
 ADVANCED_SETTINGS_TEXT = "Advanced settings"
-# What deletion removes (D-016, D-055); {coins} is the current balance.
+# What deletion removes (D-016, D-055, D-062); {coins} is the current balance, and {vip}
+# is VIP_LOST while VIP is running, or empty.
 DELETE_CONFIRM = (
     "Delete your account?\n\n"
     "This can't be undone. You'll lose:\n"
     "• Your profile (nickname, age, gender, country, city, bio, and photo) and your "
     "RealChat ID\n"
     "• Your coins (you have {coins})\n"
+    "{vip}"
     "• Your Past chats list, visitors, and settings\n"
     "• Your invite link, and rewards for invites that haven't finished signing up\n\n"
     "A minimal record (your Telegram user ID, account status, and dates) is kept so that "
@@ -90,6 +94,7 @@ DELETE_CONFIRM = (
     "You can come back later with /start and start fresh. One-time rewards you already "
     "received, like the welcome bonus, aren't given again."
 )
+VIP_LOST = "• Your VIP, which would last until {until}\n"
 DELETED = "Your account has been deleted. Send /start if you ever want to come back."
 DELETED_RESTRICTED = "Your profile has been erased. Your account remains restricted."
 KEPT = "Your account was not deleted."
@@ -258,7 +263,12 @@ async def ask_to_confirm(
     await query.answer()
     await bot.send_message(
         query.from_user.id,
-        DELETE_CONFIRM.format(coins=coins_label(balance.total)),
+        DELETE_CONFIRM.format(
+            coins=coins_label(balance.total),
+            vip=VIP_LOST.format(until=vip_date(user.vip_until))
+            if user.vip_until is not None and payments.is_vip(user, datetime.now(UTC))
+            else "",
+        ),
         reply_markup=keyboard,
     )
 

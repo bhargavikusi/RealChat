@@ -1,4 +1,4 @@
-"""Coin packs bought with Telegram Stars (D-061).
+"""Coin packs and the VIP pass bought with Telegram Stars (D-061, D-062).
 
 Like the other services, these take an AsyncSession and leave committing to the
 caller. User ids are internal `users.id` values unless named `telegram_user_id`.
@@ -8,7 +8,8 @@ The flow, following Telegram's rules for digital goods:
    its reference (`payload`).
 2. Telegram asks before taking the Stars; `checkout_refusal` says whether to proceed.
 3. Telegram confirms the payment; `fulfil` records it once per Telegram charge and
-   credits the coins in the same transaction. Only this confirmation grants anything.
+   credits the coins, and for a VIP pass extends VIP, in the same transaction. Only
+   this confirmation grants anything.
 4. A payment that can't be fulfilled is refunded: the bot tries at once, and the
    worker retries any refund still owed (`claim_refunds`, `mark_refunded`).
 """
@@ -66,11 +67,41 @@ def pack(values: dict[SettingKey, int], number: int) -> Pack | None:
     return next((p for p in packs(values) if p.number == number), None)
 
 
-async def create_invoice(session: AsyncSession, user_id: int, offer: Pack) -> int:
+@dataclass(frozen=True)
+class VipPass:
+    stars: int
+    days: int
+    coins: int
+
+
+def vip_pass(values: dict[SettingKey, int]) -> VipPass:
+    """The VIP pass on offer, from the admin settings (D-062)."""
+    return VipPass(
+        values[SettingKey.VIP_STARS], values[SettingKey.VIP_DAYS], values[SettingKey.VIP_COINS]
+    )
+
+
+def is_vip(user: User, now: datetime) -> bool:
+    """VIP while the stored end date is in the future, so expiry needs no job."""
+    return user.vip_until is not None and user.vip_until > now
+
+
+def can_buy_vip(user: User, now: datetime, days: int) -> bool:
+    """A pass can be bought while at most one pass's length of VIP is left, so VIP never
+    runs more than two passes ahead."""
+    return user.vip_until is None or user.vip_until - now <= timedelta(days=days)
+
+
+async def create_invoice(session: AsyncSession, user_id: int, offer: Pack | VipPass) -> int:
     """Store an invoice for `offer`; returns its id."""
+    values = (
+        {"product": "vip", "days": offer.days}
+        if isinstance(offer, VipPass)
+        else {"product": "coins"}
+    )
     invoice_id = await session.scalar(
         insert(StarsInvoice)
-        .values(user_id=user_id, product="coins", stars=offer.stars, coins=offer.coins)
+        .values(user_id=user_id, stars=offer.stars, coins=offer.coins, **values)
         .returning(StarsInvoice.id)
     )
     return int(invoice_id)  # type: ignore[arg-type]
@@ -96,6 +127,7 @@ class Refusal(StrEnum):
     MISMATCH = "mismatch"  # a different currency or amount from the stored invoice
     UNAVAILABLE = "unavailable"  # the account can't buy right now
     TERMS = "terms"  # the current terms aren't accepted
+    VIP_LIMIT = "vip_limit"  # more than a pass's length of VIP is left
 
 
 async def _invoice_for(
@@ -138,6 +170,8 @@ async def checkout_refusal(
         return Refusal.UNAVAILABLE
     if not await users.has_accepted_terms(session, user.id, terms_version):
         return Refusal.TERMS
+    if invoice.days is not None and not can_buy_vip(user, now, invoice.days):
+        return Refusal.VIP_LIMIT
     return None
 
 
@@ -154,6 +188,9 @@ class Fulfilled:
     coins: int
     # The payment's status now: for ALREADY, "refund_due" means a refund is still owed.
     status: str
+    product: str = "coins"
+    # For a granted VIP pass: the VIP end date it produced.
+    vip_until: datetime | None = None
 
 
 class UnknownPaymentError(Exception):
@@ -169,12 +206,16 @@ async def fulfil(
     stars: int,
     now: datetime,
 ) -> Fulfilled:
-    """Record a confirmed payment and credit its coins, once per Telegram charge.
+    """Record a confirmed payment and grant what it bought, once per Telegram charge:
+    the coins, and for a VIP pass its days, added to the current VIP end date if VIP
+    is still running (D-062).
 
     The account row is locked first, as account deletion and every ledger write do, so
     a deletion either finishes before (and the payment is refunded) or waits. A
-    restricted account is still credited: the Stars were taken and the coins stay
-    with the account like any other balance.
+    restricted account is still granted the purchase: the Stars were taken, and the
+    coins stay with the account like any other balance. The VIP stacking limit is
+    checked at checkout only, so every pass paid meanwhile is granted, even if
+    that puts VIP more than two passes ahead.
 
     Raises UnknownPaymentError if the payment can't be matched to its invoice, which
     checkout prevents; the caller must report it, since the Stars were taken.
@@ -194,6 +235,10 @@ async def fulfil(
     deleted = user.status == "deleted" or (
         user.deleted_at is not None and invoice.created_at <= user.deleted_at
     )
+    vip_until: datetime | None = None
+    if invoice.days is not None and not deleted:
+        start = user.vip_until if user.vip_until is not None and user.vip_until > now else now
+        vip_until = start + timedelta(days=invoice.days)
     payment_id = await session.scalar(
         insert(StarsPayment)
         .values(
@@ -204,6 +249,7 @@ async def fulfil(
             status="refund_due" if deleted else "paid",
             refund_reason="account_deleted" if deleted else None,
             refund_retry_at=now + REFUND_RETRY if deleted else None,
+            vip_until=vip_until,
             created_at=now,
         )
         .on_conflict_do_nothing(index_elements=["telegram_charge_id"])
@@ -212,16 +258,33 @@ async def fulfil(
     if payment_id is None:
         existing = (
             await session.execute(
-                select(StarsPayment.id, StarsPayment.status).where(
+                select(StarsPayment.id, StarsPayment.status, StarsPayment.vip_until).where(
                     StarsPayment.telegram_charge_id == charge_id
                 )
             )
         ).one()
-        return Fulfilled(Outcome.ALREADY, int(existing.id), invoice.coins, existing.status)
+        return Fulfilled(
+            Outcome.ALREADY,
+            int(existing.id),
+            invoice.coins,
+            existing.status,
+            invoice.product,
+            existing.vip_until,
+        )
     if deleted:
-        return Fulfilled(Outcome.REFUND_DUE, int(payment_id), invoice.coins, "refund_due")
-    await coins.credit(session, user.id, invoice.coins, "coin_purchase", f"payment:{payment_id}")
-    return Fulfilled(Outcome.CREDITED, int(payment_id), invoice.coins, "paid")
+        return Fulfilled(
+            Outcome.REFUND_DUE, int(payment_id), invoice.coins, "refund_due", invoice.product
+        )
+    key = f"payment:{payment_id}"
+    if invoice.product == "vip":
+        if invoice.coins:
+            await coins.credit(session, user.id, invoice.coins, "vip_coins", key)
+        await session.execute(update(User).where(User.id == user.id).values(vip_until=vip_until))
+    else:
+        await coins.credit(session, user.id, invoice.coins, "coin_purchase", key)
+    return Fulfilled(
+        Outcome.CREDITED, int(payment_id), invoice.coins, "paid", invoice.product, vip_until
+    )
 
 
 async def mark_refunded(session: AsyncSession, payment_id: int, now: datetime) -> bool:

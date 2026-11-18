@@ -82,7 +82,7 @@ async def test_the_warning_lists_what_is_lost_with_the_balance(
     await alice.send("/profile")
     await alice.press(ac.ADVANCED_SETTINGS)
     warning = await alice.press(ac.DELETE_BUTTON)
-    assert warning == ac.DELETE_CONFIRM.format(coins="25 coins")
+    assert warning == ac.DELETE_CONFIRM.format(coins="25 coins", vip="")
     assert "• Your coins (you have 25 coins)" in warning
     # Cancelling changes nothing.
     assert await alice.press(ac.KEEP_BUTTON) == ac.KEPT
@@ -201,7 +201,7 @@ async def test_restricted_accounts_forfeit_their_coins_too(
         )
         await session.commit()
     await alice.send("/profile")
-    assert await alice.press(ac.DELETE_BUTTON) == ac.DELETE_CONFIRM.format(coins="10 coins")
+    assert await alice.press(ac.DELETE_BUTTON) == ac.DELETE_CONFIRM.format(coins="10 coins", vip="")
     assert await alice.press(ac.CONFIRM_BUTTON) == ac.DELETED_RESTRICTED
     assert await total(session_factory, await user_id_of(session_factory)) == 0
 

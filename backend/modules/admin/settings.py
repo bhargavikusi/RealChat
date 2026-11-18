@@ -56,6 +56,9 @@ class SettingKey(StrEnum):
     PACK_3_STARS = "pack_3_stars"
     PACK_4_COINS = "pack_4_coins"
     PACK_4_STARS = "pack_4_stars"
+    VIP_STARS = "vip_stars"
+    VIP_DAYS = "vip_days"
+    VIP_COINS = "vip_coins"
 
 
 @dataclass(frozen=True)
@@ -328,6 +331,31 @@ SPECS: dict[SettingKey, SettingSpec] = {
             spec
             for number, (coins, stars) in enumerate(PACK_DEFAULTS, start=1)
             for spec in _pack_specs(number, coins, stars)
+        ),
+        SettingSpec(
+            SettingKey.VIP_STARS,
+            "VIP pass: price",
+            "Stars",
+            default=780,
+            minimum=1,
+            maximum=10_000,
+        ),
+        SettingSpec(
+            SettingKey.VIP_DAYS,
+            "VIP pass: length",
+            "days",
+            default=180,
+            minimum=1,
+            maximum=366,
+            note="also the most VIP time left at which another pass can be bought",
+        ),
+        SettingSpec(
+            SettingKey.VIP_COINS,
+            "VIP pass: coins included",
+            "coins",
+            default=3_750,
+            minimum=0,
+            maximum=100_000,
         ),
     )
 }

@@ -18,6 +18,7 @@ There is one row per Telegram account.
 | `created_at` | timestamptz | |
 | `last_active_at` | timestamptz | When the user last used RealChat (D-051): updated by the bot for each private-chat update from an active account, at most once a minute. RealChat activity only, never Telegram online status. |
 | `deleted_at` | timestamptz, nullable | When the user last deleted their account (D-016). Kept if they return. |
+| `vip_until` | timestamptz, nullable | VIP lasts until this time (D-062). The user is VIP while it is in the future, so expiry needs no job. A VIP pass sets it to the later of now and its current value, plus the pass's days. Cleared on account deletion. |
 | `coin_history_after_id` | bigint, nullable | Set at account deletion to the account's latest coin ledger entry, or 0 if it had none (not a real entry id): `/coins` lists only later entries, so a returning user sees a fresh history (D-055). NULL for accounts never deleted since this was added; those see their whole history. |
 | `role` | varchar(16) | One of `user` (default), `moderator`, `admin` (D-034). Changed only by the admin CLI, except that account deletion resets it to `user`. |
 
@@ -310,8 +311,8 @@ The coin ledger (D-050). Every change to a user's coins is one row; a balance is
 |---|---|---|
 | `id` | bigint identity | |
 | `user_id` | bigint | References `users.id`. |
-| `amount` | integer | Positive adds coins, negative removes them; never 0. A constraint ties the sign to the kind: rewards, admin grants, activity alert refunds, and coin purchases add; paid matches, direct messages, chat requests, activity alerts, admin corrections, and deletion forfeits remove. |
-| `kind` | varchar(32) | `welcome_bonus`, `referral_reward`, `daily_reward`, `paid_match`, `admin_grant`, `admin_correction`, `account_deleted` (the balance forfeited when the account is deleted, D-055), `direct_message` (a delivered direct message, D-057), `chat_request` (a delivered chat request, D-058), `activity_alert` (an activity alert bought, D-059), `activity_alert_refund` (its refund, keyed `alert:<id>:refund`), or `coin_purchase` (coins bought with Telegram Stars, keyed `payment:<stars_payments id>`, D-061). |
+| `amount` | integer | Positive adds coins, negative removes them; never 0. A constraint ties the sign to the kind: rewards, admin grants, activity alert refunds, coin purchases, and coins included with a VIP pass add; paid matches, direct messages, chat requests, activity alerts, admin corrections, and deletion forfeits remove. |
+| `kind` | varchar(32) | `welcome_bonus`, `referral_reward`, `daily_reward`, `paid_match`, `admin_grant`, `admin_correction`, `account_deleted` (the balance forfeited when the account is deleted, D-055), `direct_message` (a delivered direct message, D-057), `chat_request` (a delivered chat request, D-058), `activity_alert` (an activity alert bought, D-059), `activity_alert_refund` (its refund, keyed `alert:<id>:refund`), `coin_purchase` (coins bought with Telegram Stars, keyed `payment:<stars_payments id>`, D-061), or `vip_coins` (coins included with a VIP pass, keyed the same way, D-062). |
 | `idempotency_key` | varchar(128), unique | One row per action: a retried or duplicated action records once. |
 | `hold_id` | bigint, nullable | References `coin_holds.id`: the hold this spending captured. Only rows whose kind is a hold purpose (`paid_match`, `direct_message`, `chat_request`) may have one (constraint), and a partial unique index allows one row per hold. A trigger checks that the hold is captured, belongs to the same user, is of the same purpose as the entry's kind, and that the amount is exactly minus the hold's amount. |
 | `note` | text, nullable | The reason for an admin grant or correction; required for those kinds (constraint). |
@@ -337,22 +338,23 @@ Available coins are the balance minus the user's `held` holds (a partial index s
 
 ### `stars_invoices`
 
-Each Telegram Stars invoice sent (D-061), with exactly what it offered. The invoice sent to Telegram carries only `inv:<id>`, so checkout and fulfilment use these values, never Telegram's copy.
+Each Telegram Stars invoice sent (D-061, D-062), with exactly what it offered. The invoice sent to Telegram carries only `inv:<id>`, so checkout and fulfilment use these values, never Telegram's copy.
 
 | Column | Type | Notes |
 |---|---|---|
 | `id` | bigint identity | |
 | `user_id` | bigint | References `users.id`: who the invoice was sent to. Only this user's payments are accepted for it. |
-| `product` | varchar(16) | `coins`. |
+| `product` | varchar(16) | `coins` (a coin pack) or `vip` (the VIP pass). |
 | `stars` | integer | The price in Stars; positive. |
-| `coins` | integer | The coins it buys; positive. |
+| `coins` | integer | The coins it buys, or that the VIP pass includes. Positive for a coin pack; a VIP pass may include 0 (constraint). |
+| `days` | integer, nullable | The VIP days a pass adds; positive, and set exactly for `vip` invoices (constraint). |
 | `created_at` | timestamptz | Checkout approves it for 1 hour after this, and never for an invoice made before the account's latest deletion. |
 
 Kept on account deletion. Indexed by `user_id`.
 
 ### `stars_payments`
 
-Each Telegram Stars payment received (D-061), written once per Telegram charge.
+Each Telegram Stars payment received for a coin pack or a VIP pass (D-061, D-062), written once per Telegram charge.
 
 | Column | Type | Notes |
 |---|---|---|
@@ -364,9 +366,10 @@ Each Telegram Stars payment received (D-061), written once per Telegram charge.
 | `status` | varchar(16) | `paid` (fulfilled), `refund_due` (can't be fulfilled; the Stars are owed back), or `refunded`. |
 | `refund_reason` | varchar(32), nullable | `account_deleted`. Set exactly when the status is not `paid` (constraint). |
 | `created_at`, `refunded_at` | timestamptz | `refunded_at` is set exactly when the status is `refunded` (constraint). |
+| `vip_until` | timestamptz, nullable | For a VIP pass that was granted, the VIP end date it produced (D-062); kept as a record, including after account deletion. |
 | `refund_retry_at` | timestamptz, nullable | When the worker may next try a refund still owed; set exactly when the status is `refund_due` (constraint). Each claim moves it 5 minutes ahead. A partial index on it covers `refund_due` rows. |
 
-Fulfilment locks the buyer's `users` row (`FOR NO KEY UPDATE`) before writing, as account deletion and every ledger write do, so a payment and a deletion never interleave: a payment waiting on a deletion is recorded as `refund_due`. A `paid` payment's coins are credited in the same transaction. Kept on account deletion. Indexed by `user_id`. A trigger rejects deleting or truncating rows and any update that changes the charge, buyer, invoice, amount, or creation time, or moves the status anywhere but forward (`paid` to `refund_due` or `refunded`, and `refund_due` to `refunded`; a `refund_due` row may also have its retry time moved). The worker claims due refunds with `FOR UPDATE SKIP LOCKED` and commits the claim before calling Telegram.
+Fulfilment locks the buyer's `users` row (`FOR NO KEY UPDATE`) before writing, as account deletion and every ledger write do, so a payment and a deletion never interleave: a payment waiting on a deletion is recorded as `refund_due`. A `paid` payment's coins are credited in the same transaction. Kept on account deletion. Indexed by `user_id`. A trigger rejects deleting or truncating rows and any update that changes the charge, buyer, invoice, amount, creation time, or VIP end date, or moves the status anywhere but forward (`paid` to `refund_due` or `refunded`, and `refund_due` to `refunded`; a `refund_due` row may also have its retry time moved). The worker claims due refunds with `FOR UPDATE SKIP LOCKED` and commits the claim before calling Telegram.
 
 ### `invite_codes`
 
