@@ -96,6 +96,18 @@ async def vip_users(session: AsyncSession, user_ids: Iterable[int], now: datetim
     return {int(user_id) for user_id in rows}
 
 
+async def set_ghost_mode(session: AsyncSession, user_id: int, on: bool, now: datetime) -> bool:
+    """Turn Ghost mode on or off (D-064); returns False, changing nothing, unless the
+    user is VIP now. One conditional update, so VIP ending meanwhile can't be missed."""
+    changed = await session.scalar(
+        update(User)
+        .where(User.id == user_id, User.vip_until > now)
+        .values(ghost_mode=on)
+        .returning(User.id)
+    )
+    return changed is not None
+
+
 def can_buy_vip(user: User, now: datetime, days: int) -> bool:
     """A pass can be bought while at most one pass's length of VIP is left, so VIP never
     runs more than two passes ahead."""
@@ -289,7 +301,10 @@ async def fulfil(
     if invoice.product == "vip":
         if invoice.coins:
             await coins.credit(session, user.id, invoice.coins, "vip_coins", key)
-        await session.execute(update(User).where(User.id == user.id).values(vip_until=vip_until))
+        # A new VIP period starts with Ghost mode on; an extension keeps the choice (D-064).
+        new_period = user.vip_until is None or user.vip_until <= now
+        values = {"vip_until": vip_until, **({"ghost_mode": True} if new_period else {})}
+        await session.execute(update(User).where(User.id == user.id).values(**values))
     else:
         await coins.credit(session, user.id, invoice.coins, "coin_purchase", key)
     return Fulfilled(

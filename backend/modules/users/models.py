@@ -73,6 +73,9 @@ class User(Base):
     # VIP lasts until this time (D-062): the user is VIP while it is in the future, so
     # expiry needs no job. Cleared on account deletion.
     vip_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # Ghost mode (D-064): while VIP and on, opening a card records no visit. Each new
+    # VIP period turns it on; it means nothing without VIP.
+    ghost_mode: Mapped[bool] = mapped_column(Boolean, server_default="true")
 
 
 class Profile(Base):

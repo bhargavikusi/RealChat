@@ -241,6 +241,7 @@ async def delete_account(session: AsyncSession, user_id: int, now: datetime) -> 
     user.coin_history_after_id = (await coins.forfeit_all(session, user_id, now)).history_after_id
     await rewards.retire_invites(session, user_id, now)
     user.vip_until = None
+    user.ghost_mode = True
     if user.status not in RESTRICTED_STATUSES:
         user.status = "deleted"
     user.deleted_at = now

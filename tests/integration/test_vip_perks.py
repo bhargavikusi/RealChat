@@ -42,9 +42,12 @@ async def world(bot_settings: BotSettings, redis: Redis, session_factory: Sessio
 
 
 async def set_vip(sessions: Sessions, telegram_id: int, until: datetime | None) -> None:
+    """VIP until `until`, with Ghost mode off so the VIP's visits are seen (D-064)."""
     async with sessions() as session:
         await session.execute(
-            update(User).where(User.telegram_user_id == telegram_id).values(vip_until=until)
+            update(User)
+            .where(User.telegram_user_id == telegram_id)
+            .values(vip_until=until, ghost_mode=False)
         )
         await session.commit()
 
