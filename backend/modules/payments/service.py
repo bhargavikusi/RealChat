@@ -12,6 +12,10 @@ The flow, following Telegram's rules for digital goods:
    this confirmation grants anything.
 4. A payment that can't be fulfilled is refunded: the bot tries at once, and the
    worker retries any refund still owed (`claim_refunds`, `mark_refunded`).
+5. A fulfilled purchase is refunded by an admin (`refund_by_admin`, sent by the worker as
+   in 4), or reported refunded by Telegram (`record_refund`, D-065). Either takes back
+   what it gave: its coins, by one ledger entry under `refund_key`, and for a VIP pass
+   the days of it not yet used.
 """
 
 import logging
@@ -20,7 +24,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from enum import StrEnum
 
-from sqlalchemy import select, update
+from sqlalchemy import ColumnElement, select, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -329,6 +333,7 @@ class RefundDue:
     telegram_user_id: int
     charge_id: str
     stars: int
+    reason: str  # a `REFUND_REASONS` value
 
 
 async def claim_refunds(session: AsyncSession, now: datetime, limit: int) -> list[RefundDue]:
@@ -352,10 +357,241 @@ async def claim_refunds(session: AsyncSession, now: datetime, limit: int) -> lis
                 User.telegram_user_id,
                 StarsPayment.telegram_charge_id,
                 StarsPayment.stars,
+                StarsPayment.refund_reason,
             )
         )
     ).all()
     return [
-        RefundDue(int(row.id), row.telegram_user_id, row.telegram_charge_id, row.stars)
+        RefundDue(
+            int(row.id), row.telegram_user_id, row.telegram_charge_id, row.stars, row.refund_reason
+        )
         for row in sorted(claimed, key=lambda row: row.id)
+    ]
+
+
+# --- Refunding a fulfilled purchase (D-065) ----------------------------------------------
+
+
+def refund_key(payment_id: int) -> str:
+    """The ledger key of the entry that takes a refunded purchase's coins back."""
+    return f"refund:{payment_id}"
+
+
+class RefundRefusal(StrEnum):
+    NOT_FOUND = "not_found"
+    NOT_PAID = "not_paid"  # already refunded, or a refund is already owed
+    COINS_SPENT = "coins_spent"
+
+
+class RefundRefusedError(Exception):
+    def __init__(self, refusal: RefundRefusal, available: int = 0, needed: int = 0) -> None:
+        super().__init__(refusal.value)
+        self.refusal = refusal
+        self.available = available
+        self.needed = needed
+
+
+@dataclass(frozen=True)
+class Reversed:
+    """What a refund took back."""
+
+    coins: int  # coins removed
+    shortfall: int  # coins it couldn't remove, because they were spent
+    vip_days_removed: bool  # for a VIP pass: whether unused days were taken off
+
+
+async def _locked_payment(
+    session: AsyncSession, where: ColumnElement[bool]
+) -> tuple[StarsPayment, StarsInvoice] | None:
+    row = (
+        await session.execute(
+            select(StarsPayment, StarsInvoice)
+            .join(StarsInvoice, StarsInvoice.id == StarsPayment.invoice_id)
+            .where(where)
+            .with_for_update(of=StarsPayment)
+            .execution_options(populate_existing=True)
+        )
+    ).one_or_none()
+    return None if row is None else (row[0], row[1])
+
+
+def unused_vip(payment: StarsPayment, invoice: StarsInvoice, now: datetime) -> timedelta:
+    """The part of a VIP pass's days still ahead. A pass covers the `days` before the end
+    date it produced; later passes were added after it, so taking this part off the
+    current end date leaves their days whole."""
+    if payment.vip_until is None or invoice.days is None:
+        return timedelta(0)
+    start = payment.vip_until - timedelta(days=invoice.days)
+    return max(timedelta(0), payment.vip_until - max(start, now))
+
+
+async def _reverse(
+    session: AsyncSession,
+    payment: StarsPayment,
+    invoice: StarsInvoice,
+    now: datetime,
+    *,
+    all_coins: bool,
+) -> Reversed:
+    """Take back what the purchase gave. With `all_coins`, refuse unless every coin it
+    added is still available; otherwise take what is available (held coins stay put)
+    and report the rest as a shortfall."""
+    user = (
+        await session.execute(
+            select(User)
+            .where(User.id == payment.user_id)
+            .with_for_update(key_share=True)
+            .execution_options(populate_existing=True)
+        )
+    ).scalar_one()
+    available = (await coins.balance(session, user.id)).available
+    if all_coins and available < invoice.coins:
+        raise RefundRefusedError(RefundRefusal.COINS_SPENT, available, invoice.coins)
+    taken = min(available, invoice.coins)
+    if taken:
+        await coins.debit(session, user.id, taken, "purchase_refund", refund_key(payment.id))
+    unused = unused_vip(payment, invoice, now)
+    removed = False
+    if unused > timedelta(0) and user.vip_until is not None and user.vip_until > now:
+        await session.execute(
+            update(User).where(User.id == user.id).values(vip_until=user.vip_until - unused)
+        )
+        removed = True
+    return Reversed(taken, invoice.coins - taken, removed)
+
+
+async def refund_by_admin(
+    session: AsyncSession, payment_id: int, note: str, now: datetime
+) -> Reversed:
+    """Take back a paid purchase and mark its Stars owed, for the worker to refund.
+
+    Refused unless the purchase is paid and every coin it added is still available, so
+    nothing is ever taken back only in part. The payment row is locked first, so a
+    second refund or Telegram's own report waits and then finds it no longer paid.
+    """
+    found = await _locked_payment(session, StarsPayment.id == payment_id)
+    if found is None:
+        raise RefundRefusedError(RefundRefusal.NOT_FOUND)
+    payment, invoice = found
+    if payment.status != "paid":
+        raise RefundRefusedError(RefundRefusal.NOT_PAID)
+    done = await _reverse(session, payment, invoice, now, all_coins=True)
+    payment.status = "refund_due"
+    payment.refund_reason = "admin"
+    payment.refund_note = note
+    payment.refund_retry_at = now  # the worker's next pass sends it
+    return done
+
+
+class RefundOutcome(StrEnum):
+    REVERSED = "reversed"  # a paid purchase, taken back now
+    RECORDED = "recorded"  # a refund that was owed is now recorded as made
+    ALREADY = "already"  # recorded before
+    UNKNOWN = "unknown"  # no payment of ours with that charge
+
+
+@dataclass(frozen=True)
+class RefundRecorded:
+    outcome: RefundOutcome
+    payment_id: int = 0
+    reason: str | None = None
+    taken: Reversed | None = None  # for REVERSED
+
+
+async def record_refund(
+    session: AsyncSession, telegram_user_id: int, charge_id: str, now: datetime
+) -> RefundRecorded:
+    """Telegram reports the charge refunded. Applied once per charge, under the payment
+    row's lock: a paid purchase is taken back as far as its coins are available, the
+    rest recorded as a shortfall; a refund that was owed is recorded as made."""
+    found = await _locked_payment(
+        session,
+        (StarsPayment.telegram_charge_id == charge_id)
+        & (StarsPayment.user_id == User.id)
+        & (User.telegram_user_id == telegram_user_id),
+    )
+    if found is None:
+        return RefundRecorded(RefundOutcome.UNKNOWN)
+    payment, invoice = found
+    if payment.status == "refunded":
+        return RefundRecorded(RefundOutcome.ALREADY, payment.id, payment.refund_reason)
+    if payment.status == "refund_due":
+        await mark_refunded(session, payment.id, now)
+        return RefundRecorded(RefundOutcome.RECORDED, payment.id, payment.refund_reason)
+    taken = await _reverse(session, payment, invoice, now, all_coins=False)
+    payment.status = "refunded"
+    payment.refund_reason = "telegram"
+    payment.refunded_at = now
+    payment.refund_shortfall = taken.shortfall or None
+    if taken.shortfall:
+        logger.warning("a refunded purchase's coins were partly spent")
+    return RefundRecorded(RefundOutcome.REVERSED, payment.id, "telegram", taken)
+
+
+@dataclass(frozen=True)
+class RefundSummary:
+    """What a user is told about a refund of a fulfilled purchase."""
+
+    stars: int
+    product: str
+    coins: int  # coins taken back
+    vip_until: datetime | None  # for a VIP pass: the user's VIP end now, if still VIP
+
+
+async def refund_summary(session: AsyncSession, payment_id: int, now: datetime) -> RefundSummary:
+    payment, invoice = (
+        await session.execute(
+            select(StarsPayment, StarsInvoice)
+            .join(StarsInvoice, StarsInvoice.id == StarsPayment.invoice_id)
+            .where(StarsPayment.id == payment_id)
+        )
+    ).one()
+    entry = await coins.recorded(session, refund_key(payment_id))
+    user = (
+        await session.execute(
+            select(User).where(User.id == payment.user_id).execution_options(populate_existing=True)
+        )
+    ).scalar_one()
+    return RefundSummary(
+        payment.stars,
+        invoice.product,
+        0 if entry is None else -entry.amount,
+        user.vip_until if is_vip(user, now) else None,
+    )
+
+
+@dataclass(frozen=True)
+class Purchase:
+    payment_id: int
+    created_at: datetime
+    product: str
+    stars: int
+    coins: int
+    days: int | None
+    status: str
+    refund_reason: str | None
+    refund_shortfall: int | None
+
+
+async def purchases(session: AsyncSession, user_id: int) -> list[Purchase]:
+    """An account's purchases, newest first, for admins."""
+    rows = await session.execute(
+        select(StarsPayment, StarsInvoice)
+        .join(StarsInvoice, StarsInvoice.id == StarsPayment.invoice_id)
+        .where(StarsPayment.user_id == user_id)
+        .order_by(StarsPayment.id.desc())
+    )
+    return [
+        Purchase(
+            int(p.id),
+            p.created_at,
+            i.product,
+            p.stars,
+            i.coins,
+            i.days,
+            p.status,
+            p.refund_reason,
+            p.refund_shortfall,
+        )
+        for p, i in rows
     ]

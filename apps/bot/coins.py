@@ -48,6 +48,7 @@ LABELS = {
     "activity_alert_refund": "Activity alert returned",
     "coin_purchase": "Bought with Stars",
     "vip_coins": "Included with VIP",
+    "purchase_refund": "Refunded purchase",
 }
 NO_ACTIVITY = "No coin activity yet."
 DAILY_AVAILABLE = "🎁 Daily reward: {amount} today."

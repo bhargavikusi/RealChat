@@ -7,7 +7,7 @@ from sqlalchemy.orm import Mapped, mapped_column
 
 from backend.database.engine import Base
 
-AUDIT_ACTIONS = ("role_changed", "setting_changed", "coins_adjusted")
+AUDIT_ACTIONS = ("role_changed", "setting_changed", "coins_adjusted", "purchase_refunded")
 
 
 class AppSetting(Base):

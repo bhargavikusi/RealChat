@@ -7,10 +7,17 @@ Run on the server, with the same configuration as the bot:
     uv run python -m apps.admin_cli list
     uv run python -m apps.admin_cli coins <telegram_user_id> <amount> --reason "<why>" [--key <id>]
     uv run python -m apps.admin_cli balance <telegram_user_id>
+    uv run python -m apps.admin_cli purchases <telegram_user_id>
+    uv run python -m apps.admin_cli refund <purchase_id> --reason "<why>"
 
 `coins` grants coins (a positive amount) or corrects a balance (a negative amount), for
 promotions or support (D-050); the reason is kept with the ledger entry. With --key,
 running the same adjustment again (for example after an unclear failure) changes nothing.
+
+`purchases` lists an account's Stars purchases, newest first, with their ids. `refund`
+refunds one (D-065): it takes back the purchase's coins (refused if any were spent) and a
+VIP pass's unused days now, and the worker returns the Stars within about a minute,
+retrying until Telegram accepts. Running it again changes nothing.
 
 The account must already exist, i.e. the person has started the bot. Every change is
 written to the admin audit log with no actor account, meaning "the server CLI".
@@ -20,6 +27,7 @@ import argparse
 import asyncio
 import sys
 from collections.abc import Sequence
+from datetime import UTC, datetime
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
@@ -27,12 +35,13 @@ from backend.config.settings import SettingsError, load_settings
 from backend.database.engine import create_engine, create_session_factory
 from backend.modules.admin import service
 from backend.modules.admin.service import AdminError
+from backend.modules.payments.service import Purchase
 from backend.modules.users.models import ROLES
 
 
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        prog="admin_cli", description="Manage RealChat roles and coins."
+        prog="admin_cli", description="Manage RealChat roles, coins, and purchases."
     )
     commands = parser.add_subparsers(dest="command", required=True)
     set_role = commands.add_parser("set-role", help="give an account a role")
@@ -51,13 +60,63 @@ def _parser() -> argparse.ArgumentParser:
     )
     show = commands.add_parser("balance", help="show an account's coins")
     show.add_argument("telegram_user_id", type=int)
+    bought = commands.add_parser("purchases", help="list an account's Stars purchases")
+    bought.add_argument("telegram_user_id", type=int)
+    refund = commands.add_parser("refund", help="refund a Stars purchase")
+    refund.add_argument("purchase_id", type=int)
+    refund.add_argument("--reason", required=True, help="why, kept with the purchase")
     return parser
+
+
+def _purchase_line(purchase: Purchase) -> str:
+    what = (
+        f"VIP {purchase.days} days + {purchase.coins} coins"
+        if purchase.product == "vip"
+        else f"{purchase.coins} coins"
+    )
+    status = purchase.status
+    if purchase.refund_reason is not None:
+        status += f" ({purchase.refund_reason})"
+    if purchase.refund_shortfall:
+        status += f", {purchase.refund_shortfall} coins not recovered"
+    return (
+        f"#{purchase.payment_id}\t{purchase.created_at:%Y-%m-%d %H:%M}\t"
+        f"{purchase.stars} Stars\t{what}\t{status}"
+    )
+
+
+async def _purchases(session: AsyncSession, args: argparse.Namespace) -> int:
+    try:
+        if args.command == "purchases":
+            found = await service.purchases(session, args.telegram_user_id)
+            for purchase in found:
+                print(_purchase_line(purchase))
+            if not found:
+                print("No purchases.")
+            return 0
+        taken = await service.refund_purchase(
+            session, args.purchase_id, args.reason, datetime.now(UTC)
+        )
+    except AdminError as error:
+        print(error.message, file=sys.stderr)
+        return 1
+    await session.commit()
+    if taken is None:
+        print("That purchase is already refunded or being refunded. Nothing changed.")
+        return 0
+    parts = [f"Purchase #{args.purchase_id}: {taken.coins} coins taken back"]
+    if taken.vip_days_removed:
+        parts.append("its unused VIP days removed")
+    print(", ".join(parts) + ". The worker will return the Stars.")
+    return 0
 
 
 async def run(argv: Sequence[str], sessions: async_sessionmaker[AsyncSession]) -> int:
     """Run one command; returns the process exit code."""
     args = _parser().parse_args(argv)
     async with sessions() as session:
+        if args.command in ("purchases", "refund"):
+            return await _purchases(session, args)
         if args.command == "list":
             staff = await service.list_staff(session)
             for telegram_user_id, role, status in staff:

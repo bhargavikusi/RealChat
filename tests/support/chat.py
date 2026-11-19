@@ -27,6 +27,7 @@ from tests.support.telegram import (
     payment_update,
     photo_update,
     pre_checkout_update,
+    refund_update,
 )
 
 Sessions = async_sessionmaker[AsyncSession]
@@ -114,6 +115,12 @@ class Chat:
         await self.dispatcher.feed_update(
             self.bot,
             payment_update(next(self._ids), self.user_id, charge_id, payload, stars, currency),
+        )
+
+    async def refunded(self, charge_id: str, payload: str, stars: int) -> None:
+        """Telegram reports the payment refunded."""
+        await self.dispatcher.feed_update(
+            self.bot, refund_update(next(self._ids), self.user_id, charge_id, payload, stars)
         )
 
     def last(self) -> str:

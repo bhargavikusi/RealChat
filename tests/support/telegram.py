@@ -41,6 +41,7 @@ from aiogram.types import (
     MessageId,
     PhotoSize,
     PreCheckoutQuery,
+    RefundedPayment,
     SuccessfulPayment,
     Update,
     User,
@@ -376,6 +377,25 @@ def payment_update(
                 invoice_payload=payload,
                 telegram_payment_charge_id=charge_id,
                 provider_payment_charge_id="",
+            ),
+        ),
+    )
+
+
+def refund_update(update_id: int, user_id: int, charge_id: str, payload: str, stars: int) -> Update:
+    """Telegram reporting a payment refunded: a service message in the user's chat."""
+    return Update(
+        update_id=update_id,
+        message=Message(
+            message_id=update_id,
+            date=datetime.now(UTC),
+            chat=Chat(id=user_id, type="private"),
+            from_user=_user(user_id),
+            refunded_payment=RefundedPayment(
+                currency="XTR",
+                total_amount=stars,
+                invoice_payload=payload,
+                telegram_payment_charge_id=charge_id,
             ),
         ),
     )
