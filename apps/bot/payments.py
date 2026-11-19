@@ -226,7 +226,7 @@ async def on_paid(message: Message, bot: Bot, session: AsyncSession) -> None:
             message.from_user.id,
             paid.telegram_payment_charge_id,
             paid.total_amount,
-            "account_deleted",
+            fulfilled.refund_reason or "account_deleted",
         )
         await refund(bot, session, due)
 
@@ -243,11 +243,9 @@ async def refund(bot: Bot, session: AsyncSession, due: RefundDue) -> bool:
         if ALREADY_REFUNDED not in exc.message:
             logger.warning("could not refund a payment", extra=exception_summary(exc))
             return False
-        # Refunded before, but not recorded: record it, without a second notice.
-        await payments.mark_refunded(session, due.payment_id, _now())
-        await session.commit()
-        return True
-    # Telegram's own report of the refund may have recorded it, and told the user, first.
+        # Refunded by an earlier call whose result wasn't recorded, so nobody was told.
+    # Only the call that records the refund tells the user: Telegram's own report of it
+    # may have recorded it, and told them, first.
     if await payments.mark_refunded(session, due.payment_id, _now()):
         text = await _refund_text(session, due.payment_id, due.reason)
         await session.commit()

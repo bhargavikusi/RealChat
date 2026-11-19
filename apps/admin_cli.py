@@ -16,7 +16,7 @@ running the same adjustment again (for example after an unclear failure) changes
 
 `purchases` lists an account's Stars purchases, newest first, with their ids. `refund`
 refunds one (D-065): it takes back the purchase's coins (refused if any were spent) and a
-VIP pass's unused days now, and the worker returns the Stars within about a minute,
+VIP pass's days now, and the worker returns the Stars within about a minute,
 retrying until Telegram accepts. Running it again changes nothing.
 
 The account must already exist, i.e. the person has started the bot. Every change is
@@ -80,7 +80,7 @@ def _purchase_line(purchase: Purchase) -> str:
     if purchase.refund_shortfall:
         status += f", {purchase.refund_shortfall} coins not recovered"
     return (
-        f"#{purchase.payment_id}\t{purchase.created_at:%Y-%m-%d %H:%M}\t"
+        f"#{purchase.payment_id}\t{purchase.created_at.astimezone(UTC):%Y-%m-%d %H:%M} UTC\t"
         f"{purchase.stars} Stars\t{what}\t{status}"
     )
 
@@ -106,7 +106,7 @@ async def _purchases(session: AsyncSession, args: argparse.Namespace) -> int:
         return 0
     parts = [f"Purchase #{args.purchase_id}: {taken.coins} coins taken back"]
     if taken.vip_days_removed:
-        parts.append("its unused VIP days removed")
+        parts.append("its VIP days removed")
     print(", ".join(parts) + ". The worker will return the Stars.")
     return 0
 

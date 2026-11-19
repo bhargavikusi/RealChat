@@ -14,8 +14,8 @@ The flow, following Telegram's rules for digital goods:
    worker retries any refund still owed (`claim_refunds`, `mark_refunded`).
 5. A fulfilled purchase is refunded by an admin (`refund_by_admin`, sent by the worker as
    in 4), or reported refunded by Telegram (`record_refund`, D-065). Either takes back
-   what it gave: its coins, by one ledger entry under `refund_key`, and for a VIP pass
-   the days of it not yet used.
+   what it gave: its coins, by one ledger entry under `refund_key` when there are any,
+   and for a VIP pass its days, by working VIP out again as if it was never bought.
 """
 
 import logging
@@ -217,6 +217,8 @@ class Fulfilled:
     product: str = "coins"
     # For a granted VIP pass: the VIP end date it produced.
     vip_until: datetime | None = None
+    # Why a refund is owed or was made, for any status but "paid".
+    refund_reason: str | None = None
 
 
 class UnknownPaymentError(Exception):
@@ -284,9 +286,12 @@ async def fulfil(
     if payment_id is None:
         existing = (
             await session.execute(
-                select(StarsPayment.id, StarsPayment.status, StarsPayment.vip_until).where(
-                    StarsPayment.telegram_charge_id == charge_id
-                )
+                select(
+                    StarsPayment.id,
+                    StarsPayment.status,
+                    StarsPayment.vip_until,
+                    StarsPayment.refund_reason,
+                ).where(StarsPayment.telegram_charge_id == charge_id)
             )
         ).one()
         return Fulfilled(
@@ -296,10 +301,16 @@ async def fulfil(
             existing.status,
             invoice.product,
             existing.vip_until,
+            existing.refund_reason,
         )
     if deleted:
         return Fulfilled(
-            Outcome.REFUND_DUE, int(payment_id), invoice.coins, "refund_due", invoice.product
+            Outcome.REFUND_DUE,
+            int(payment_id),
+            invoice.coins,
+            "refund_due",
+            invoice.product,
+            refund_reason="account_deleted",
         )
     key = f"payment:{payment_id}"
     if invoice.product == "vip":
@@ -397,7 +408,7 @@ class Reversed:
 
     coins: int  # coins removed
     shortfall: int  # coins it couldn't remove, because they were spent
-    vip_days_removed: bool  # for a VIP pass: whether unused days were taken off
+    vip_days_removed: bool  # for a VIP pass: whether VIP was shortened
 
 
 async def _locked_payment(
@@ -415,21 +426,41 @@ async def _locked_payment(
     return None if row is None else (row[0], row[1])
 
 
-def unused_vip(payment: StarsPayment, invoice: StarsInvoice, now: datetime) -> timedelta:
-    """The part of a VIP pass's days still ahead. A pass covers the `days` before the end
-    date it produced; later passes were added after it, so taking this part off the
-    current end date leaves their days whole."""
-    if payment.vip_until is None or invoice.days is None:
-        return timedelta(0)
-    start = payment.vip_until - timedelta(days=invoice.days)
-    return max(timedelta(0), payment.vip_until - max(start, now))
+def vip_end(passes: Iterable[tuple[datetime, int]]) -> datetime | None:
+    """The VIP end date that these passes, as (bought at, days) in purchase order, give
+    together: each adds its days to the later of when it was bought and the end so far,
+    as `fulfil` does. None without any."""
+    end: datetime | None = None
+    for bought_at, days in passes:
+        end = (bought_at if end is None or end < bought_at else end) + timedelta(days=days)
+    return end
+
+
+async def _vip_without(session: AsyncSession, user: User, payment_id: int) -> datetime | None:
+    """VIP's end date as if this pass had never been bought (D-065): rebuilt from the
+    user's other granted passes that stand, since their account was last deleted. Time
+    already used counts against those passes."""
+    query = (
+        select(StarsPayment.created_at, StarsInvoice.days)
+        .join(StarsInvoice, StarsInvoice.id == StarsPayment.invoice_id)
+        .where(
+            StarsPayment.user_id == user.id,
+            StarsPayment.id != payment_id,
+            StarsPayment.status == "paid",
+            StarsPayment.vip_until.is_not(None),
+        )
+        .order_by(StarsPayment.created_at, StarsPayment.id)
+    )
+    if user.deleted_at is not None:
+        query = query.where(StarsPayment.created_at > user.deleted_at)
+    rows = await session.execute(query)
+    return vip_end((bought_at, days) for bought_at, days in rows if days is not None)
 
 
 async def _reverse(
     session: AsyncSession,
     payment: StarsPayment,
     invoice: StarsInvoice,
-    now: datetime,
     *,
     all_coins: bool,
 ) -> Reversed:
@@ -450,13 +481,14 @@ async def _reverse(
     taken = min(available, invoice.coins)
     if taken:
         await coins.debit(session, user.id, taken, "purchase_refund", refund_key(payment.id))
-    unused = unused_vip(payment, invoice, now)
     removed = False
-    if unused > timedelta(0) and user.vip_until is not None and user.vip_until > now:
-        await session.execute(
-            update(User).where(User.id == user.id).values(vip_until=user.vip_until - unused)
-        )
-        removed = True
+    if invoice.product == "vip" and payment.vip_until is not None and user.vip_until is not None:
+        rebuilt = await _vip_without(session, user, payment.id)
+        # Never longer than it is now.
+        until = None if rebuilt is None else min(rebuilt, user.vip_until)
+        if until != user.vip_until:
+            await session.execute(update(User).where(User.id == user.id).values(vip_until=until))
+            removed = True
     return Reversed(taken, invoice.coins - taken, removed)
 
 
@@ -475,7 +507,7 @@ async def refund_by_admin(
     payment, invoice = found
     if payment.status != "paid":
         raise RefundRefusedError(RefundRefusal.NOT_PAID)
-    done = await _reverse(session, payment, invoice, now, all_coins=True)
+    done = await _reverse(session, payment, invoice, all_coins=True)
     payment.status = "refund_due"
     payment.refund_reason = "admin"
     payment.refund_note = note
@@ -518,7 +550,7 @@ async def record_refund(
     if payment.status == "refund_due":
         await mark_refunded(session, payment.id, now)
         return RefundRecorded(RefundOutcome.RECORDED, payment.id, payment.refund_reason)
-    taken = await _reverse(session, payment, invoice, now, all_coins=False)
+    taken = await _reverse(session, payment, invoice, all_coins=False)
     payment.status = "refunded"
     payment.refund_reason = "telegram"
     payment.refunded_at = now
@@ -579,7 +611,7 @@ async def purchases(session: AsyncSession, user_id: int) -> list[Purchase]:
         select(StarsPayment, StarsInvoice)
         .join(StarsInvoice, StarsInvoice.id == StarsPayment.invoice_id)
         .where(StarsPayment.user_id == user_id)
-        .order_by(StarsPayment.id.desc())
+        .order_by(StarsPayment.created_at.desc(), StarsPayment.id.desc())
     )
     return [
         Purchase(

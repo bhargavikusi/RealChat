@@ -83,11 +83,17 @@ class StarsPayment(Base):
             "(status = 'refund_due') = (refund_retry_at IS NOT NULL)", name="refund_retry"
         ),
         CheckConstraint("stars > 0", name="stars"),
+        # An admin refund says why, in a note that isn't blank.
         CheckConstraint(
-            "(refund_reason IS NOT DISTINCT FROM 'admin') = (refund_note IS NOT NULL)",
+            "(refund_reason IS NOT DISTINCT FROM 'admin') = (refund_note IS NOT NULL) "
+            "AND btrim(refund_note) <> ''",
             name="refund_note",
         ),
-        CheckConstraint("refund_shortfall IS NULL OR refund_shortfall > 0", name="shortfall"),
+        # Only a refund reported by Telegram can find coins already spent.
+        CheckConstraint(
+            "refund_shortfall IS NULL OR (refund_shortfall > 0 AND refund_reason = 'telegram')",
+            name="shortfall",
+        ),
         Index("ix_stars_payments_user_id", "user_id"),
         Index(
             "ix_stars_payments_refund_retry_at",

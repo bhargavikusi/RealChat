@@ -68,8 +68,9 @@ confirms the payment. If RealChat can't deliver a purchase, for example because 
 account was deleted before the payment arrived, RealChat asks Telegram to refund the \
 Stars and keeps asking until Telegram accepts. If a purchase is refunded, by RealChat \
 or by Telegram, the coins it added are removed from your balance (as many as are left) \
-and a VIP pass's unused days are taken off your VIP. For help with a purchase, use \
-/paysupport: Telegram's support can't help with purchases made in RealChat.
+and your VIP is worked out again as if that pass had never been bought. For help with \
+a purchase, use /paysupport: Telegram's support can't help with purchases made in \
+RealChat.
 • You can buy a VIP pass with Telegram Stars from /vip. It's paid once and never \
 renews. VIP lasts until the end date shown in /vip; buying another pass while VIP is \
 running adds its days to that date, and can be done once the time left is no longer \

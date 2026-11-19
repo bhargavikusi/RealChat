@@ -92,12 +92,13 @@ def upgrade() -> None:
     op.create_check_constraint(
         op.f("ck_stars_payments_refund_note"),
         "stars_payments",
-        "(refund_reason IS NOT DISTINCT FROM 'admin') = (refund_note IS NOT NULL)",
+        "(refund_reason IS NOT DISTINCT FROM 'admin') = (refund_note IS NOT NULL) "
+        "AND btrim(refund_note) <> ''",
     )
     op.create_check_constraint(
         op.f("ck_stars_payments_shortfall"),
         "stars_payments",
-        "refund_shortfall IS NULL OR refund_shortfall > 0",
+        "refund_shortfall IS NULL OR (refund_shortfall > 0 AND refund_reason = 'telegram')",
     )
     op.execute(PAYMENT_TRANSITION_FUNCTION.format(refund_fields=REFUND_FIELDS))
 
