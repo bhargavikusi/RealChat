@@ -8,7 +8,7 @@ message retention, are not given as numbers, so the text stays true when they ch
 (D-046).
 """
 
-TERMS_VERSION = "draft-22"
+TERMS_VERSION = "draft-23"
 
 TERMS_TEXT = """\
 DRAFT - not for launch
@@ -66,7 +66,9 @@ for money or transferred to other users. This includes coins you buy.
 • You can buy coins with Telegram Stars from /coins. They're added once Telegram \
 confirms the payment. If RealChat can't deliver a purchase, for example because your \
 account was deleted before the payment arrived, RealChat asks Telegram to refund the \
-Stars and keeps asking until Telegram accepts. For help with \
+Stars and keeps asking until Telegram accepts. If a purchase is refunded, by RealChat \
+or by Telegram, the coins it added are removed from your balance (as many as are left) \
+and your VIP is worked out again as if that pass had never been bought. For help with \
 a purchase, use /paysupport: Telegram's support can't help with purchases made in \
 RealChat.
 • You can buy a VIP pass with Telegram Stars from /vip. It's paid once and never \

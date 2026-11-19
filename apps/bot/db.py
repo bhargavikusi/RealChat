@@ -10,7 +10,7 @@ from aiogram.enums import ChatType
 from aiogram.types import TelegramObject
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from apps.bot.middlewares import Handler
+from apps.bot.middlewares import Handler, is_refund
 from backend.modules.users import service as users
 
 
@@ -35,7 +35,8 @@ class ActivityMiddleware(BaseMiddleware):
     """Records RealChat activity for every private-chat update that reaches the handlers.
 
     Registered after the access gate, so suspended and banned users are not counted, and
-    committed before the handler runs, so the write holds no lock while it works.
+    committed before the handler runs, so the write holds no lock while it works. A
+    refund reported by Telegram is not the user's activity (D-065).
     """
 
     def __init__(self, clock: Callable[[], datetime] = lambda: datetime.now(UTC)) -> None:
@@ -50,6 +51,7 @@ class ActivityMiddleware(BaseMiddleware):
             and session is not None
             and chat is not None
             and chat.type == ChatType.PRIVATE
+            and not is_refund(event)
         ):
             await users.record_activity(session, user.id, self._clock(), ACTIVITY_INTERVAL)
             await session.commit()

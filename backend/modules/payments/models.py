@@ -18,6 +18,7 @@ from sqlalchemy import (
     Index,
     Integer,
     String,
+    Text,
     func,
     text,
 )
@@ -32,8 +33,10 @@ PRODUCTS = ("coins", "vip")
 # were returned. A trigger keeps rows from being deleted and lets the status only move
 # forward (see the migration).
 PAYMENT_STATUSES = ("paid", "refund_due", "refunded")
-# account_deleted: the payment arrived after the account was deleted.
-REFUND_REASONS = ("account_deleted",)
+# account_deleted: the payment arrived after the account was deleted. admin: an admin
+# refunded it with the server CLI, giving a note (D-065). telegram: Telegram reported it
+# refunded, for example after a dispute.
+REFUND_REASONS = ("account_deleted", "admin", "telegram")
 
 
 def _in(column: str, values: tuple[str, ...]) -> str:
@@ -80,6 +83,17 @@ class StarsPayment(Base):
             "(status = 'refund_due') = (refund_retry_at IS NOT NULL)", name="refund_retry"
         ),
         CheckConstraint("stars > 0", name="stars"),
+        # An admin refund says why, in a note that isn't blank.
+        CheckConstraint(
+            "(refund_reason IS NOT DISTINCT FROM 'admin') = (refund_note IS NOT NULL) "
+            "AND btrim(refund_note) <> ''",
+            name="refund_note",
+        ),
+        # Only a refund reported by Telegram can find coins already spent.
+        CheckConstraint(
+            "refund_shortfall IS NULL OR (refund_shortfall > 0 AND refund_reason = 'telegram')",
+            name="shortfall",
+        ),
         Index("ix_stars_payments_user_id", "user_id"),
         Index(
             "ix_stars_payments_refund_retry_at",
@@ -102,3 +116,8 @@ class StarsPayment(Base):
     refund_retry_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     # For a VIP pass that was granted: the VIP end date it produced (D-062).
     vip_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # Why an admin refunded it (D-065).
+    refund_note: Mapped[str | None] = mapped_column(Text)
+    # Coins a refund reported by Telegram couldn't take back, because they were spent
+    # (D-065). NULL when none were missing.
+    refund_shortfall: Mapped[int | None] = mapped_column(Integer)

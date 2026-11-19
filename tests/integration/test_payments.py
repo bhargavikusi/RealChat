@@ -467,15 +467,16 @@ async def test_the_worker_retries_a_failed_refund(chat: Chat, session_factory: S
     assert len(chat.session.refunds()) == 3
 
 
-async def test_a_refund_telegram_already_made_is_recorded_without_a_second_notice(
+async def test_a_refund_telegram_already_made_is_recorded_and_told_once(
     chat: Chat, session_factory: Sessions
 ) -> None:
     await _refund_owed(chat, session_factory, "Bad Request: temporarily unavailable")
+    # An earlier call went through, but its result wasn't recorded, so nobody was told.
     chat.session.refund_error = "Bad Request: CHARGE_ALREADY_REFUNDED"
     retries = bot_payments.RefundRetries(chat.bot, session_factory)
     assert await retries.tick(datetime.now(UTC) + payments.REFUND_RETRY) == 1
     assert await _payments(session_factory) == [("charge-1", "refunded", "account_deleted")]
-    assert bot_payments.REFUNDED.format(stars=80) not in _notices(chat)
+    assert _notices(chat).count(bot_payments.REFUNDED.format(stars=80)) == 1
 
 
 async def test_a_refund_stands_when_its_notice_cant_be_sent(

@@ -47,6 +47,8 @@ TRANSACTION_KINDS = (
     # Coins bought with Telegram Stars (D-061), and those included with a VIP pass (D-062).
     "coin_purchase",
     "vip_coins",
+    # Coins a refunded purchase added, taken back (D-065).
+    "purchase_refund",
 )
 # Kinds that add coins, and kinds that remove them; the database checks the sign.
 CREDIT_KINDS = (
@@ -65,6 +67,7 @@ DEBIT_KINDS = (
     "direct_message",
     "chat_request",
     "activity_alert",
+    "purchase_refund",
 )
 # Admin entries must say why.
 ADMIN_KINDS = ("admin_grant", "admin_correction")

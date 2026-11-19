@@ -12,7 +12,9 @@ ended before any Telegram call.
 
 A payment that can't be fulfilled is refunded at once; if Telegram refuses or can't be
 reached, the worker retries it (`RefundRetries`), since Telegram doesn't send the
-confirmation again.
+confirmation again. The worker also sends refunds an admin made (D-065). When Telegram
+reports a payment refunded, the purchase is taken back (`on_refunded`). Whichever
+records a refund first tells the user, once.
 """
 
 import logging
@@ -44,6 +46,7 @@ from backend.modules.payments.service import (
     Outcome,
     Pack,
     RefundDue,
+    RefundOutcome,
     Refusal,
     UnknownPaymentError,
 )
@@ -76,6 +79,11 @@ REFUNDED = (
     "Your RealChat account was deleted before this payment arrived, so your {stars} Stars "
     "were refunded."
 )
+# A fulfilled purchase refunded (D-065); the parts after the first are added as they apply.
+REFUND_NOTICE = "💸 Your payment of ⭐ {stars} was refunded."
+REFUND_COINS = " {coins} were removed from your balance."
+REFUND_VIP_LEFT = " Your VIP now lasts until {until}."
+REFUND_VIP_ENDED = " You don't have VIP any more."
 UNMATCHED = (
     "We received your payment but couldn't match it to a purchase. Please send "
     "/paysupport so we can sort it out."
@@ -218,6 +226,7 @@ async def on_paid(message: Message, bot: Bot, session: AsyncSession) -> None:
             message.from_user.id,
             paid.telegram_payment_charge_id,
             paid.total_amount,
+            fulfilled.refund_reason or "account_deleted",
         )
         await refund(bot, session, due)
 
@@ -234,18 +243,60 @@ async def refund(bot: Bot, session: AsyncSession, due: RefundDue) -> bool:
         if ALREADY_REFUNDED not in exc.message:
             logger.warning("could not refund a payment", extra=exception_summary(exc))
             return False
-        # Refunded before, but not recorded: record it, without a second notice.
-        await payments.mark_refunded(session, due.payment_id, _now())
+        # Refunded by an earlier call whose result wasn't recorded, so nobody was told.
+    # Only the call that records the refund tells the user: Telegram's own report of it
+    # may have recorded it, and told them, first.
+    if await payments.mark_refunded(session, due.payment_id, _now()):
+        text = await _refund_text(session, due.payment_id, due.reason)
         await session.commit()
-        return True
-    await payments.mark_refunded(session, due.payment_id, _now())
-    await session.commit()
+        await _tell(bot, due.telegram_user_id, text)
+    else:
+        await session.commit()
+    return True
+
+
+async def _refund_text(session: AsyncSession, payment_id: int, reason: str | None) -> str:
+    summary = await payments.refund_summary(session, payment_id, _now())
+    if reason == "account_deleted":
+        return REFUNDED.format(stars=summary.stars)
+    text = REFUND_NOTICE.format(stars=summary.stars)
+    if summary.coins:
+        text += REFUND_COINS.format(coins=coins_label(summary.coins))
+    if summary.product == "vip":
+        text += (
+            REFUND_VIP_ENDED
+            if summary.vip_until is None
+            else REFUND_VIP_LEFT.format(until=vip_date(summary.vip_until))
+        )
+    return text
+
+
+async def _tell(bot: Bot, chat_id: int, text: str) -> None:
     try:
-        await bot.send_message(due.telegram_user_id, REFUNDED.format(stars=due.stars))
+        await bot.send_message(chat_id, text)
     except TelegramAPIError as exc:
         # The refund stands; the user may have blocked the bot after deleting.
         logger.info("could not send a refund notice", extra=exception_summary(exc))
-    return True
+
+
+async def on_refunded(message: Message, bot: Bot, session: AsyncSession) -> None:
+    """Telegram reports a payment refunded, by us or for example after a dispute."""
+    refunded = message.refunded_payment
+    if refunded is None or message.from_user is None:
+        return
+    recorded = await payments.record_refund(
+        session, message.from_user.id, refunded.telegram_payment_charge_id, _now()
+    )
+    if recorded.outcome == RefundOutcome.UNKNOWN:
+        await session.rollback()
+        logger.error("a refunded payment matches no payment")
+        return
+    if recorded.outcome == RefundOutcome.ALREADY:
+        await session.commit()
+        return
+    text = await _refund_text(session, recorded.payment_id, recorded.reason)
+    await session.commit()
+    await _tell(bot, message.chat.id, text)
 
 
 class RefundRetries:
@@ -293,6 +344,7 @@ def create_router() -> Router:
     router = Router(name="payments")
     router.message.filter(F.chat.type == ChatType.PRIVATE)
     router.message.register(on_paid, F.successful_payment)
+    router.message.register(on_refunded, F.refunded_payment)
     router.message.register(show_terms, Command("terms"))
     router.message.register(show_paysupport, Command("paysupport"))
     router.callback_query.filter(F.message.chat.type == ChatType.PRIVATE)

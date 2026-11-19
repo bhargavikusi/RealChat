@@ -1,5 +1,5 @@
-"""Role, runtime-setting, and coin changes, each recorded in the admin audit log
-(D-034, D-035, D-050).
+"""Role, runtime-setting, and coin changes, and purchase refunds, each recorded in the
+admin audit log (D-034, D-035, D-050, D-065).
 
 Like the users service, these functions take an AsyncSession and leave committing
 to the caller. Roles are changed only by the server-side CLI (`apps/admin_cli.py`);
@@ -8,6 +8,7 @@ which can only lower a role to `user` (D-034).
 """
 
 import uuid
+from datetime import datetime
 
 from sqlalchemy import func, select
 from sqlalchemy.dialects.postgresql import insert
@@ -16,6 +17,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from backend.modules.admin.models import AdminAuditEntry, AppSetting
 from backend.modules.admin.settings import SPECS, SettingKey, load_values
 from backend.modules.coins import service as coins
+from backend.modules.payments import service as payments
+from backend.modules.payments.models import StarsPayment
+from backend.modules.payments.service import Purchase, RefundRefusal, RefundRefusedError, Reversed
 from backend.modules.users.models import ROLES, User
 
 
@@ -223,3 +227,47 @@ async def change_setting(
         )
     )
     return old
+
+
+# --- Purchases (D-065) ------------------------------------------------------------------
+
+
+async def purchases(session: AsyncSession, telegram_user_id: int) -> list[Purchase]:
+    user_id = await session.scalar(select(User.id).where(User.telegram_user_id == telegram_user_id))
+    if user_id is None:
+        raise AdminError("No account for that Telegram user ID. They must start the bot first.")
+    return await payments.purchases(session, user_id)
+
+
+async def refund_purchase(
+    session: AsyncSession, payment_id: int, reason: str, now: datetime
+) -> Reversed | None:
+    """Take back a paid purchase and have the worker refund its Stars; returns what was
+    taken back, or None if it was already refunded or being refunded (so running the
+    same refund again changes nothing). Refused if any of its coins were spent."""
+    reason = reason.strip()
+    if not reason:
+        raise AdminError("Give a reason for the refund.")
+    try:
+        taken = await payments.refund_by_admin(session, payment_id, reason, now)
+    except RefundRefusedError as error:
+        if error.refusal is RefundRefusal.NOT_PAID:
+            return None
+        if error.refusal is RefundRefusal.NOT_FOUND:
+            raise AdminError("No purchase with that id.") from error
+        raise AdminError(
+            f"Only {error.available} of the purchase's {error.needed} coins are available, "
+            "so it can't be refunded."
+        ) from error
+    user_id = await session.scalar(
+        select(StarsPayment.user_id).where(StarsPayment.id == payment_id)
+    )
+    session.add(
+        AdminAuditEntry(
+            actor_user_id=None,
+            action="purchase_refunded",
+            target_user_id=user_id,
+            new_value=str(payment_id),
+        )
+    )
+    return taken

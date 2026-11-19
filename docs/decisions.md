@@ -736,6 +736,19 @@ Work happens on short-lived issue branches, such as `feature/12-onboarding`, cre
 
 **Why:** Owner decisions to cover the chat partner's card too, and to turn Ghost mode on with every new VIP period.
 
+### D-065 — Refunding Stars purchases
+
+**Date:** 2026-11-19
+**Decision:**
+
+* A refund takes back what the purchase gave: its coins, by one `purchase_refund` ledger entry keyed to the payment when there are coins to take, and for a VIP pass its days. VIP is worked out again as if the pass had never been bought: from the user's other passes that stand (since their account was last deleted), each adding its days from the later of its purchase and the end so far. Time already used counts against those passes, and VIP never gets longer. Balances never go below 0, and held coins are never taken.
+* Admins refund with the server CLI (`purchases <telegram_user_id>`, `refund <purchase_id> --reason`). A refund is allowed only for a paid purchase while all of its coins are available, so nothing is taken back only in part. In one transaction it takes the coins and days back, marks the Stars owed (reason `admin`, the note kept on the payment), and writes an audit entry. The worker's existing refund job returns the Stars within about a minute and keeps retrying until Telegram accepts. Running it again changes nothing.
+* When Telegram reports a payment refunded (`refunded_payment`, for example after a dispute), a paid purchase is taken back as far as its coins are available; the rest is recorded on the payment as a shortfall for admins, and a warning is logged without user data. A refund already owed is recorded as made; one already recorded changes nothing. The payment row is locked, so each charge is applied once.
+* The user is told what was removed, at most once, when the refund is recorded: after Telegram accepts an admin refund, or on Telegram's report, whichever records it first, including when Telegram answers that an earlier call already refunded it. A refund for a deleted account keeps its own notice. Like the bot's other notices, it is sent after the commit and not retried, so a crash in between loses it. Refund reports are payment updates: never dropped by flood control or the restricted-account gate, and not counted as RealChat activity.
+* The terms say what a refund removes (terms version `draft-23`). Partial and self-service refunds are not offered.
+
+**Why:** Owner decisions to remove the refunded pass's days as if it had never been bought, to send admin refunds through the worker, and to tell users what a refund removed.
+
 ## Open
 
 Each of these needs the owner's decision. Until then, the behavior stays configurable and is not presented to users as final.

@@ -19,14 +19,25 @@ DONE = "done"
 
 
 def is_payment(event: TelegramObject) -> bool:
-    """Telegram asking whether to take a payment, or confirming one (D-061).
+    """Telegram asking whether to take a payment, confirming one (D-061), or reporting
+    one refunded (D-065).
 
-    These are never dropped: an unanswered question cancels the user's payment, and a
-    confirmation means the Stars were already taken.
+    These are never dropped: an unanswered question cancels the user's payment, a
+    confirmation means the Stars were already taken, and a refund means they went back.
     """
     return isinstance(event, Update) and (
         event.pre_checkout_query is not None
         or (event.message is not None and event.message.successful_payment is not None)
+        or is_refund(event)
+    )
+
+
+def is_refund(event: TelegramObject) -> bool:
+    """Telegram reporting a payment refunded (D-065), which is not the user's activity."""
+    return (
+        isinstance(event, Update)
+        and event.message is not None
+        and event.message.refunded_payment is not None
     )
 
 
