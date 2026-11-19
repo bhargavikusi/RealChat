@@ -3,6 +3,7 @@
 from datetime import UTC, datetime, timedelta
 
 import pytest
+from aiogram.types import PhotoSize
 from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
@@ -297,6 +298,12 @@ async def test_restricted_users_are_stopped_but_keep_help_and_deletion(
     # While the warning waits, commands are still stopped; a reply gets through. A photo
     # ends the request, like any other reply.
     assert await chat.send("/vip") == notice
+    # A command in a caption is still a command.
+    await chat.send_content(
+        photo=[PhotoSize(file_id="photo-2", file_unique_id="p", width=90, height=90)],
+        caption="/vip",
+    )
+    assert chat.last() == notice
     assert await chat.send_photo("photo-1") == ac.NOT_CONFIRMED
     await chat.send("/profile")
     await chat.press(ac.DELETE_BUTTON)
