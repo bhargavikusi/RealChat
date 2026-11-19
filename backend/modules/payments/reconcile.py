@@ -78,19 +78,22 @@ def _compare(
     charge: str, paid: TelegramTransaction, refund: TelegramTransaction | None, ours: _Stored
 ) -> Found | None:
     refunded = refund is not None
-    # A refund goes back in full to the payer, so it must match the payment too.
-    for listed, what in ((paid, "Telegram"), (refund, "Telegram's refund")):
-        if listed is not None and (ours.telegram_user_id, ours.stars) != (
-            listed.telegram_user_id,
-            listed.stars,
-        ):
-            return Found(
-                Difference.MISMATCH,
-                charge,
-                listed.telegram_user_id,
-                f"{what}: user {listed.telegram_user_id}, {listed.stars} Stars; "
-                f"here: user {ours.telegram_user_id}, {ours.stars} Stars",
-            )
+    # A refund goes back in full to the payer, so it must match the payment too. Both are
+    # shown when both differ.
+    differing = [
+        (listed, what)
+        for listed, what in ((paid, "Telegram"), (refund, "Telegram's refund"))
+        if listed is not None
+        and (ours.telegram_user_id, ours.stars) != (listed.telegram_user_id, listed.stars)
+    ]
+    if differing:
+        shown = [f"{what}: user {t.telegram_user_id}, {t.stars} Stars" for t, what in differing]
+        return Found(
+            Difference.MISMATCH,
+            charge,
+            differing[0][0].telegram_user_id,
+            "; ".join([*shown, f"here: user {ours.telegram_user_id}, {ours.stars} Stars"]),
+        )
     if ours.status == "paid" and refunded:
         return Found(Difference.REFUNDED_AT_TELEGRAM, charge, paid.telegram_user_id)
     if ours.status == "refunded" and not refunded:

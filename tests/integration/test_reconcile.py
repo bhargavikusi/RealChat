@@ -227,3 +227,16 @@ async def test_a_refund_to_another_user_or_for_other_stars_is_a_difference(
         f"other-stars\tuser {USER_ID}\tdifferent at Telegram (Telegram's refund: user "
         f"{USER_ID}, 40 Stars; here: user {USER_ID}, 80 Stars)",
     ]
+
+
+async def test_a_payment_and_refund_that_both_differ_are_both_shown(
+    chat: Chat, session_factory: Sessions, capsys: pytest.CaptureFixture[str]
+) -> None:
+    payload = await buy_pack(chat, "charge-1")
+    await chat.refunded("charge-1", payload, 80)
+    capsys.readouterr()
+    await run(session_factory, [paid("charge-1", stars=81), refunded("charge-1", user_id=OTHER_ID)])
+    assert capsys.readouterr().out.splitlines()[0] == (
+        f"charge-1\tuser {USER_ID}\tdifferent at Telegram (Telegram: user {USER_ID}, 81 Stars; "
+        f"Telegram's refund: user {OTHER_ID}, 80 Stars; here: user {USER_ID}, 80 Stars)"
+    )
