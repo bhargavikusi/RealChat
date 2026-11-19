@@ -3,7 +3,7 @@
 
 Telegram lists a user's payment under its charge id, and a refund of it under the same
 id. Only those are compared; anything else Telegram lists (withdrawals, for example) is
-not a purchase. Admins fix differences with the existing admin commands.
+not a purchase. It is read-only; see D-066 for which differences admin commands can fix.
 """
 
 from dataclasses import dataclass
@@ -74,15 +74,23 @@ async def _stored(session: AsyncSession) -> dict[str, _Stored]:
     }
 
 
-def _compare(charge: str, paid: TelegramTransaction, refunded: bool, ours: _Stored) -> Found | None:
-    if (ours.telegram_user_id, ours.stars) != (paid.telegram_user_id, paid.stars):
-        return Found(
-            Difference.MISMATCH,
-            charge,
-            paid.telegram_user_id,
-            f"Telegram: user {paid.telegram_user_id}, {paid.stars} Stars; "
-            f"here: user {ours.telegram_user_id}, {ours.stars} Stars",
-        )
+def _compare(
+    charge: str, paid: TelegramTransaction, refund: TelegramTransaction | None, ours: _Stored
+) -> Found | None:
+    refunded = refund is not None
+    # A refund goes back in full to the payer, so it must match the payment too.
+    for listed, what in ((paid, "Telegram"), (refund, "Telegram's refund")):
+        if listed is not None and (ours.telegram_user_id, ours.stars) != (
+            listed.telegram_user_id,
+            listed.stars,
+        ):
+            return Found(
+                Difference.MISMATCH,
+                charge,
+                listed.telegram_user_id,
+                f"{what}: user {listed.telegram_user_id}, {listed.stars} Stars; "
+                f"here: user {ours.telegram_user_id}, {ours.stars} Stars",
+            )
     if ours.status == "paid" and refunded:
         return Found(Difference.REFUNDED_AT_TELEGRAM, charge, paid.telegram_user_id)
     if ours.status == "refunded" and not refunded:
@@ -95,7 +103,7 @@ def _compare(charge: str, paid: TelegramTransaction, refunded: bool, ours: _Stor
 async def reconcile(session: AsyncSession, transactions: list[TelegramTransaction]) -> Report:
     """Compare Telegram's transactions with every stored payment."""
     paid = {t.charge_id: t for t in transactions if not t.refund}
-    refunded = {t.charge_id for t in transactions if t.refund}
+    refunds = {t.charge_id: t for t in transactions if t.refund}
     stored = await _stored(session)
     differences: list[Found] = []
     owed = 0
@@ -111,7 +119,7 @@ async def reconcile(session: AsyncSession, transactions: list[TelegramTransactio
                 )
             )
             continue
-        found = _compare(charge, payment, charge in refunded, ours)
+        found = _compare(charge, payment, refunds.get(charge), ours)
         if found is not None:
             differences.append(found)
         elif ours.status == "refund_due":

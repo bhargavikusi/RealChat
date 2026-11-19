@@ -203,3 +203,27 @@ async def test_a_full_last_page_is_followed_by_an_empty_one(
 async def test_reconcile_needs_a_bot(session_factory: Sessions) -> None:
     with pytest.raises(ValueError, match="reconcile needs a bot"):
         await admin_cli.run(["reconcile"], session_factory)
+
+
+async def test_a_refund_to_another_user_or_for_other_stars_is_a_difference(
+    chat: Chat, session_factory: Sessions, capsys: pytest.CaptureFixture[str]
+) -> None:
+    for charge in ("other-user", "other-stars"):
+        payload = await buy_pack(chat, charge)
+        await chat.refunded(charge, payload, 80)
+    capsys.readouterr()
+    await run(
+        session_factory,
+        [
+            paid("other-user"),
+            refunded("other-user", user_id=OTHER_ID),
+            paid("other-stars"),
+            refunded("other-stars", stars=40),
+        ],
+    )
+    assert capsys.readouterr().out.splitlines()[:2] == [
+        f"other-user\tuser {OTHER_ID}\tdifferent at Telegram (Telegram's refund: user "
+        f"{OTHER_ID}, 80 Stars; here: user {USER_ID}, 80 Stars)",
+        f"other-stars\tuser {USER_ID}\tdifferent at Telegram (Telegram's refund: user "
+        f"{USER_ID}, 40 Stars; here: user {USER_ID}, 80 Stars)",
+    ]

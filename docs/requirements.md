@@ -459,7 +459,7 @@ Approved (D-064): VIP users have 👻 Ghost mode in Advanced settings, on at the
 
 Approved (D-065): admins refund a Stars purchase from the server CLI, only while all of its coins are still available; the worker returns the Stars and retries until Telegram accepts. A refund reported by Telegram, for example after a dispute, takes back as many of the purchase's coins as are available and records the rest as a shortfall. Either way the coins are taken back by one ledger entry linked to the purchase, when there are coins to take (coins held for a running search are never taken), VIP is worked out again as if a refunded pass had never been bought (other passes keep their full days, but time already used counts against them), balances never go negative, each refund is applied once, and the user is told what was removed. Partial and self-service refunds are not offered.
 
-Approved (D-066): an admin can compare stored payments with Telegram's list of the bot's Stars transactions from the server CLI. It reports payments missing on either side, refund status that differs, and a different amount or user for the same charge, each with the charge id and user. It is read-only and run by hand; fixes use the existing admin commands.
+Approved (D-066): an admin can compare stored payments with Telegram's list of the bot's Stars transactions from the server CLI. It reports payments missing on either side, refund status that differs, and a different amount or user for the same charge, each with the charge id and user. It is read-only and run by hand; existing admin commands fix only some differences, and the rest need manual handling.
 
 ## 18. Advertising and Announcements
 
