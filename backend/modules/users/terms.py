@@ -8,7 +8,7 @@ message retention, are not given as numbers, so the text stays true when they ch
 (D-046).
 """
 
-TERMS_VERSION = "draft-23"
+TERMS_VERSION = "draft-24"
 
 TERMS_TEXT = """\
 DRAFT - not for launch
@@ -82,11 +82,12 @@ they don't verify anyone's identity.
 • Accounts that break these rules may be restricted or banned. A purchase whose \
 payment arrives after your account was restricted or banned is still delivered, and \
 VIP time keeps running while an account is restricted or banned.
-• You can delete your account at any time from your profile (Advanced settings). \
-Your profile is erased immediately, and so are your coins, any VIP time left, and \
-your invite link; a \
-new account doesn't get one-time rewards, like the welcome bonus, again. A minimal \
-record (your Telegram user ID, account status, and dates) is kept so that \
+• You can delete your account at any time from your profile (Advanced settings), by \
+replying DELETE to the warning. Your profile is erased immediately, and so are your \
+coins, including coins you bought, any VIP time left, and your invite link. Coins and \
+VIP time aren't refunded. A new account doesn't get one-time rewards, like the welcome \
+bonus, again. A minimal record (your Telegram user ID, account status, and dates) is \
+kept so that \
 restrictions can't be avoided by signing up again. Blocks and reports you made or \
 received are kept too."""
 

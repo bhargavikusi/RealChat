@@ -241,7 +241,7 @@ Work happens on short-lived issue branches, such as `feature/12-onboarding`, cre
 **Date:** 2026-10-27
 **Decision:**
 
-* Deletion is reached from the **⚙️ Advanced settings** button on the profile card, which opens a **🗑 Delete account** button. A second, explicit "Yes, delete my account" confirmation is always required. The confirmation buttons belong to one request, so an old or repeated confirmation does nothing.
+* Deletion is reached from the **⚙️ Advanced settings** button on the profile card, which opens a **🗑 Delete account** button. A second, explicit confirmation is always required: since D-067, typing DELETE (the one-tap "Yes, delete my account" button was replaced). The Cancel button belongs to one request, so an old or repeated one does nothing.
 * Deletion follows D-016 and also erases the age and gender change history (D-024) and the terms acceptances.
 * A returning user starts onboarding from the terms. Accepting them makes a deleted account active again. `deleted_at` keeps the time of the last deletion.
 * Accepting the current terms comes first. Deletion is available to users who have accepted the current terms, through the profile card. A profile card sent before a terms update shows the new terms instead. The one exception is suspended and banned users, who can delete from their notice without accepting the terms (D-026).
@@ -760,6 +760,19 @@ Work happens on short-lived issue branches, such as `feature/12-onboarding`, cre
 * It is read-only: it never changes payments or balances. Existing commands fix only some differences: `refund` refunds a recorded purchase, and `coins` can deliver the coins of a payment that was never recorded or correct a balance. No command yet records a missing payment, grants its VIP, or refunds a payment that was never recorded; those need manual handling. It isn't scheduled; a payment confirmed in the last few minutes can show as not recorded until the bot records it.
 
 **Why:** Approved scope of the reconciliation issue: a read-only report run by an admin, with fixes kept manual and audited.
+
+### D-067 — Typed confirmation for account deletion
+
+**Date:** 2026-11-19
+**Decision:**
+
+* After the deletion warning, the user must reply with exactly `DELETE`, in capitals; any other reply (other text, other case or spacing, media) ends the request and keeps the account, with a message saying how to start again. Cancel still ends it. The one-tap confirm button is gone; an old one answers that it has expired.
+* The warning lists the current coins, saying they include any bought and aren't refunded, and while VIP runs, the days left (a part day counts as one) and the end date, saying VIP isn't refunded.
+* While the warning waits, any reply goes to the deletion check before the chat, so it is never relayed to a chat partner; commands are still handled as usual.
+* Suspended and banned users still delete from their notice: the access gate lets their text reply through only while their warning waits, and never a command.
+* The terms say deletion needs replying DELETE and that coins, including bought ones, and VIP time aren't refunded (terms version `draft-24`).
+
+**Why:** The approved issue scope, and the owner's choice of an exact `DELETE`.
 
 ## Open
 

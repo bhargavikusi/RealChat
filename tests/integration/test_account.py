@@ -1,6 +1,6 @@
 """Account deletion and the access gate for restricted users (D-016, D-025, D-026)."""
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 import pytest
 from sqlalchemy import func, select, update
@@ -10,6 +10,7 @@ from apps.bot import account as ac
 from apps.bot import onboarding as ob
 from apps.bot import profile as pr
 from apps.bot.menu import HELP_TEXT
+from apps.bot.payments import vip_date
 from backend.modules.users import service
 from backend.modules.users.models import Profile, ProfileChange, TermsAcceptance, User
 from backend.modules.users.terms import TERMS_VERSION
@@ -153,15 +154,12 @@ async def test_delete_account_from_the_profile_and_start_again(
 ) -> None:
     await complete_onboarding(chat)
     await _open_delete_confirmation(chat)
-    confirm = chat.session.last_buttons()[ac.CONFIRM_BUTTON]
+    assert list(chat.session.last_buttons()) == [ac.KEEP_BUTTON]
 
-    assert await chat.press(ac.CONFIRM_BUTTON) == ac.DELETED
+    assert await chat.send(ac.CONFIRM_WORD) == ac.DELETED
     assert (await load_profile(session_factory)).nickname is None
     assert (await _user(session_factory)).status == "deleted"
     assert await _count(session_factory, TermsAcceptance) == 0
-
-    await chat.press_data(confirm)  # repeated press
-    assert chat.session.callback_answers()[-1] == ac.EXPIRED
 
     # A returning user starts a fresh onboarding, terms included.
     await complete_required_steps(chat)
@@ -174,17 +172,16 @@ async def test_cancelled_or_superseded_confirmations_delete_nothing(
 ) -> None:
     await complete_onboarding(chat)
     await _open_delete_confirmation(chat)
-    first_confirm = chat.session.last_buttons()[ac.CONFIRM_BUTTON]
+    first_cancel = chat.session.last_buttons()[ac.KEEP_BUTTON]
 
     # Asking again replaces the first request.
     await chat.press_data(ac.AccountAction(action="delete").pack())
-    await chat.press_data(first_confirm)
+    await chat.press_data(first_cancel)
     assert chat.session.callback_answers()[-1] == ac.EXPIRED
 
-    second_confirm = chat.session.last_buttons()[ac.CONFIRM_BUTTON]
     assert await chat.press(ac.KEEP_BUTTON) == ac.KEPT
-    await chat.press_data(second_confirm)
-    assert chat.session.callback_answers()[-1] == ac.EXPIRED
+    # Cancelled: the word no longer deletes anything.
+    await chat.send(ac.CONFIRM_WORD)
 
     assert (await load_profile(session_factory)).nickname == "Night Owl"
     assert (await _user(session_factory)).status == "active"
@@ -199,16 +196,70 @@ async def test_old_buttons_cannot_delete_without_the_current_terms(
     await chat.press(ac.ADVANCED_SETTINGS)
     delete = chat.session.last_buttons()[ac.DELETE_BUTTON]
     await chat.press(ac.DELETE_BUTTON)
-    confirm = chat.session.last_buttons()[ac.CONFIRM_BUTTON]
 
     monkeypatch.setattr(ob, "TERMS_VERSION", "draft-99")  # the terms change
-    for data in (confirm, settings, delete):
+    sent = len(chat.session.sent_texts())
+    await chat.send(ac.CONFIRM_WORD)
+    assert chat.session.sent_texts()[sent:] == TERMS_PARTS  # the new terms, nothing else
+    for data in (settings, delete):
         sent = len(chat.session.sent_texts())
         await chat.press_data(data)
-        assert chat.session.sent_texts()[sent:] == TERMS_PARTS  # the new terms, nothing else
+        assert chat.session.sent_texts()[sent:] == TERMS_PARTS
 
     assert (await load_profile(session_factory)).nickname == "Night Owl"
     assert (await _user(session_factory)).status == "active"
+
+
+@pytest.mark.parametrize("reply", ["delete", "Delete", " DELETE", "DELETE.", "yes"])
+async def test_any_other_reply_keeps_the_account(
+    chat: Chat, session_factory: Sessions, reply: str
+) -> None:
+    await complete_onboarding(chat)
+    await _open_delete_confirmation(chat)
+    assert await chat.send(reply) == ac.NOT_CONFIRMED
+    # The request is over: the word alone now deletes nothing.
+    await chat.send(ac.CONFIRM_WORD)
+    assert (await _user(session_factory)).status == "active"
+    assert (await load_profile(session_factory)).nickname == "Night Owl"
+
+
+async def test_a_photo_reply_keeps_the_account(chat: Chat, session_factory: Sessions) -> None:
+    await complete_onboarding(chat)
+    await _open_delete_confirmation(chat)
+    assert await chat.send_photo("photo-1") == ac.NOT_CONFIRMED
+    assert (await _user(session_factory)).status == "active"
+
+
+async def test_an_old_one_tap_confirm_button_has_expired(
+    chat: Chat, session_factory: Sessions
+) -> None:
+    await complete_onboarding(chat)
+    await _open_delete_confirmation(chat)
+    await chat.press_data(ac.AccountAction(action="confirm", request="0123abcd").pack())
+    assert chat.session.callback_answers()[-1] == ac.EXPIRED
+    assert (await _user(session_factory)).status == "active"
+
+
+async def test_the_warning_shows_vip_days_left(chat: Chat, session_factory: Sessions) -> None:
+    await complete_onboarding(chat)
+    until = datetime.now(UTC) + timedelta(days=41, hours=3)
+    async with session_factory() as session:
+        await session.execute(
+            update(User).where(User.telegram_user_id == USER_ID).values(vip_until=until)
+        )
+        await session.commit()
+    await chat.send("/profile")
+    await chat.press(ac.ADVANCED_SETTINGS)
+    assert await chat.press(ac.DELETE_BUTTON) == ac.DELETE_CONFIRM.format(
+        coins="10 coins", vip=ac.VIP_LOST.format(days="42 days", until=vip_date(until))
+    )
+
+
+def test_vip_days_left_counts_a_part_day() -> None:
+    now = datetime(2026, 11, 19, tzinfo=UTC)
+    assert ac.vip_days_left(now + timedelta(days=2), now) == 2
+    assert ac.vip_days_left(now + timedelta(days=2, seconds=1), now) == 3
+    assert ac.vip_days_left(now + timedelta(seconds=1), now) == 1
 
 
 # --- Bot: access gate ------------------------------------------------------------------
@@ -243,7 +294,9 @@ async def test_restricted_users_are_stopped_but_keep_help_and_deletion(
     # The notice offers deletion, which erases the profile but keeps the restriction.
     await chat.send("/profile")
     assert await chat.press(ac.DELETE_BUTTON) == ac.DELETE_CONFIRM.format(coins="10 coins", vip="")
-    assert await chat.press(ac.CONFIRM_BUTTON) == ac.DELETED_RESTRICTED
+    # While the warning waits, commands are still stopped; the reply gets through.
+    assert await chat.send("/vip") == notice
+    assert await chat.send(ac.CONFIRM_WORD) == ac.DELETED_RESTRICTED
     assert (await load_profile(session_factory)).nickname is None
     assert (await _user(session_factory)).status == status
 
@@ -275,7 +328,7 @@ async def test_profile_rows_are_never_duplicated_by_deletion(
 ) -> None:
     await complete_onboarding(chat)
     await _open_delete_confirmation(chat)
-    await chat.press(ac.CONFIRM_BUTTON)
+    await chat.send(ac.CONFIRM_WORD)
 
     async with session_factory() as session:
         assert await session.scalar(select(func.count()).select_from(Profile)) == 1
