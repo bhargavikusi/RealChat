@@ -442,13 +442,14 @@ async def _allowed_when_restricted(update: Update, bot: Bot, raw_state: str | No
     """Help, the terms, payment support, and account deletion stay available to
     restricted users (D-026, D-061). Payment updates pass too: checkout declines
     restricted users itself, with a reason, and a confirmed payment must be recorded.
-    The reply to a deletion warning passes while the warning waits for it (D-067), but
-    no command does: a command would reach handlers before the deletion check."""
+    Any reply to a deletion warning, text or media, passes while the warning waits for it
+    (D-067), but no command does: a command would reach handlers before the deletion
+    check."""
     if is_payment(update):
         return True
     if update.message is not None:
         text = update.message.text or ""
-        if raw_state == AccountDeletion.confirm.state and text and not text.startswith("/"):
+        if raw_state == AccountDeletion.confirm.state and not text.startswith("/"):
             return True
         command = text.split(maxsplit=1)[:1]
         if not command:

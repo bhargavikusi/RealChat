@@ -82,8 +82,9 @@ they don't verify anyone's identity.
 • Accounts that break these rules may be restricted or banned. A purchase whose \
 payment arrives after your account was restricted or banned is still delivered, and \
 VIP time keeps running while an account is restricted or banned.
-• You can delete your account at any time from your profile (Advanced settings), by \
-replying DELETE to the warning. Your profile is erased immediately, and so are your \
+• You can delete your account at any time from your profile (Advanced settings), or, \
+if your account is restricted, from the notice you're shown, by replying DELETE to the \
+warning. Your profile is erased immediately, and so are your \
 coins, including coins you bought, any VIP time left, and your invite link. Coins and \
 VIP time aren't refunded. A new account doesn't get one-time rewards, like the welcome \
 bonus, again. A minimal record (your Telegram user ID, account status, and dates) is \

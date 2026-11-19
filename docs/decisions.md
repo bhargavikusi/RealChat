@@ -769,7 +769,7 @@ Work happens on short-lived issue branches, such as `feature/12-onboarding`, cre
 * After the deletion warning, the user must reply with exactly `DELETE`, in capitals; any other reply (other text, other case or spacing, media) ends the request and keeps the account, with a message saying how to start again. Cancel still ends it. The one-tap confirm button is gone; an old one answers that it has expired.
 * The warning lists the current coins, saying they include any bought and aren't refunded, and while VIP runs, the days left (a part day counts as one) and the end date, saying VIP isn't refunded.
 * While the warning waits, any reply goes to the deletion check before the chat, so it is never relayed to a chat partner; commands are still handled as usual.
-* Suspended and banned users still delete from their notice: the access gate lets their text reply through only while their warning waits, and never a command.
+* Suspended and banned users still delete from their notice: the access gate lets their reply, text or media, through only while their warning waits, and never a command.
 * The terms say deletion needs replying DELETE and that coins, including bought ones, and VIP time aren't refunded (terms version `draft-24`).
 
 **Why:** The approved issue scope, and the owner's choice of an exact `DELETE`.

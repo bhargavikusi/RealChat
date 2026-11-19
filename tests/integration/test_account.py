@@ -294,8 +294,12 @@ async def test_restricted_users_are_stopped_but_keep_help_and_deletion(
     # The notice offers deletion, which erases the profile but keeps the restriction.
     await chat.send("/profile")
     assert await chat.press(ac.DELETE_BUTTON) == ac.DELETE_CONFIRM.format(coins="10 coins", vip="")
-    # While the warning waits, commands are still stopped; the reply gets through.
+    # While the warning waits, commands are still stopped; a reply gets through. A photo
+    # ends the request, like any other reply.
     assert await chat.send("/vip") == notice
+    assert await chat.send_photo("photo-1") == ac.NOT_CONFIRMED
+    await chat.send("/profile")
+    await chat.press(ac.DELETE_BUTTON)
     assert await chat.send(ac.CONFIRM_WORD) == ac.DELETED_RESTRICTED
     assert (await load_profile(session_factory)).nickname is None
     assert (await _user(session_factory)).status == status
