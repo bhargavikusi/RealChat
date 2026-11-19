@@ -18,6 +18,7 @@ from aiogram.methods import (
     DeleteMessage,
     DeleteMessages,
     GetMe,
+    GetStarTransactions,
     RefundStarPayment,
     SendAnimation,
     SendAudio,
@@ -42,6 +43,8 @@ from aiogram.types import (
     PhotoSize,
     PreCheckoutQuery,
     RefundedPayment,
+    StarTransaction,
+    StarTransactions,
     SuccessfulPayment,
     Update,
     User,
@@ -82,6 +85,8 @@ class RecordingSession(BaseSession):
         # Failed sends go to `failed_sends`, not `requests`, so they never count as sent.
         self.send_error: TelegramAPIError | None = None
         self.failed_sends: list[SendMessage] = []
+        # The bot's Stars transactions, oldest first, served by getStarTransactions.
+        self.star_transactions: list[StarTransaction] = []
 
     async def make_request(
         self,
@@ -158,6 +163,10 @@ class RecordingSession(BaseSession):
             return True  # type: ignore[return-value]
         if isinstance(method, GetMe):
             return BOT_USER  # type: ignore[return-value]
+        if isinstance(method, GetStarTransactions):
+            offset = method.offset or 0
+            page = self.star_transactions[offset : offset + (method.limit or 100)]
+            return StarTransactions(transactions=page)  # type: ignore[return-value]
         if isinstance(method, RefundStarPayment) and self.refund_error is not None:
             raise TelegramBadRequest(method=method, message=self.refund_error)
         # Most other methods (answerCallbackQuery, etc.) return True.

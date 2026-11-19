@@ -9,6 +9,7 @@ Run on the server, with the same configuration as the bot:
     uv run python -m apps.admin_cli balance <telegram_user_id>
     uv run python -m apps.admin_cli purchases <telegram_user_id>
     uv run python -m apps.admin_cli refund <purchase_id> --reason "<why>"
+    uv run python -m apps.admin_cli reconcile
 
 `coins` grants coins (a positive amount) or corrects a balance (a negative amount), for
 promotions or support (D-050); the reason is kept with the ledger entry. With --key,
@@ -18,6 +19,10 @@ running the same adjustment again (for example after an unclear failure) changes
 refunds one (D-065): it takes back the purchase's coins (refused if any were spent) and a
 VIP pass's days now, and the worker returns the Stars within about a minute,
 retrying until Telegram accepts. Running it again changes nothing.
+
+`reconcile` compares stored payments with Telegram's list of the bot's Stars
+transactions and reports every difference (D-066). It changes nothing, and needs the
+bot token, like the bot.
 
 The account must already exist, i.e. the person has started the bot. Every change is
 written to the admin audit log with no actor account, meaning "the server CLI".
@@ -29,12 +34,17 @@ import sys
 from collections.abc import Sequence
 from datetime import UTC, datetime
 
+from aiogram import Bot
+from aiogram.exceptions import TelegramAPIError
+from aiogram.types import StarTransaction, TransactionPartnerUser
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from backend.config.settings import SettingsError, load_settings
+from apps.bot.main import create_bot
+from backend.config.settings import BotSettings, SettingsError, load_bot_settings, load_settings
 from backend.database.engine import create_engine, create_session_factory
 from backend.modules.admin import service
 from backend.modules.admin.service import AdminError
+from backend.modules.payments.reconcile import Report, TelegramTransaction, reconcile
 from backend.modules.payments.service import Purchase
 from backend.modules.users.models import ROLES
 
@@ -65,6 +75,9 @@ def _parser() -> argparse.ArgumentParser:
     refund = commands.add_parser("refund", help="refund a Stars purchase")
     refund.add_argument("purchase_id", type=int)
     refund.add_argument("--reason", required=True, help="why, kept with the purchase")
+    commands.add_parser(
+        "reconcile", help="compare stored payments with Telegram's Stars transactions"
+    )
     return parser
 
 
@@ -111,10 +124,87 @@ async def _purchases(session: AsyncSession, args: argparse.Namespace) -> int:
     return 0
 
 
-async def run(argv: Sequence[str], sessions: async_sessionmaker[AsyncSession]) -> int:
-    """Run one command; returns the process exit code."""
+# getStarTransactions returns at most this many per call.
+TRANSACTIONS_PAGE = 100
+
+
+def _user_transaction(transaction: StarTransaction) -> TelegramTransaction | None:
+    """A user's payment (incoming, for an invoice) or a refund to a user (outgoing, under
+    the payment's id); None for anything else."""
+    if (
+        isinstance(transaction.source, TransactionPartnerUser)
+        and transaction.source.transaction_type == "invoice_payment"
+    ):
+        partner, refund = transaction.source, False
+    elif isinstance(transaction.receiver, TransactionPartnerUser):
+        # Gifts and the like have ids of their own, so they match no payment.
+        partner, refund = transaction.receiver, True
+    else:
+        return None
+    return TelegramTransaction(
+        transaction.id,
+        partner.user.id,
+        transaction.amount,
+        refund,
+        transaction.date.astimezone(UTC),
+    )
+
+
+async def fetch_transactions(bot: Bot) -> list[TelegramTransaction]:
+    """Every user payment and refund Telegram lists for the bot, page by page."""
+    found: list[TelegramTransaction] = []
+    offset = 0
+    while True:
+        page = (
+            await bot.get_star_transactions(offset=offset, limit=TRANSACTIONS_PAGE)
+        ).transactions
+        found += [t for t in map(_user_transaction, page) if t is not None]
+        if len(page) < TRANSACTIONS_PAGE:
+            return found
+        offset += len(page)
+
+
+def _count(number: int, noun: str) -> str:
+    return f"{number or 'no'} {noun}{'' if number == 1 else 's'}"
+
+
+def _print_report(report: Report) -> None:
+    for found in report.differences:
+        detail = f" ({found.detail})" if found.detail else ""
+        print(f"{found.charge_id}\tuser {found.telegram_user_id}\t{found.difference}{detail}")
+    print(
+        f"Checked {_count(report.payments, 'payment')} at Telegram: "
+        f"{_count(len(report.differences), 'difference')}, "
+        f"{_count(report.refunds_owed, 'refund')} still owed for the worker to send."
+    )
+    if report.differences:
+        print(
+            "A payment confirmed in the last few minutes may show as not recorded until "
+            "the bot records it."
+        )
+
+
+async def _reconcile(session: AsyncSession, bot: Bot) -> int:
+    try:
+        transactions = await fetch_transactions(bot)
+    except TelegramAPIError as error:
+        print(f"Telegram refused the request: {error.message}", file=sys.stderr)
+        return 1
+    _print_report(await reconcile(session, transactions))
+    # Read-only: the session is closed without committing.
+    return 0
+
+
+async def run(
+    argv: Sequence[str], sessions: async_sessionmaker[AsyncSession], bot: Bot | None = None
+) -> int:
+    """Run one command; returns the process exit code. `reconcile` needs `bot`."""
     args = _parser().parse_args(argv)
     async with sessions() as session:
+        if args.command == "reconcile":
+            if bot is None:
+                raise ValueError("reconcile needs a bot")
+            return await _reconcile(session, bot)
         if args.command in ("purchases", "refund"):
             return await _purchases(session, args)
         if args.command == "list":
@@ -162,15 +252,19 @@ async def _main(argv: Sequence[str]) -> int:
     # Parsed before the configuration is loaded, so --help and usage errors work
     # without a database configured. run() parses the same arguments again.
     _parser().parse_args(argv)
+    reconciling = _parser().parse_args(argv).command == "reconcile"
     try:
-        settings = load_settings()
+        settings = load_bot_settings() if reconciling else load_settings()
     except SettingsError as error:
         print(error, file=sys.stderr)
         return 2
     engine = create_engine(settings.database_url.get_secret_value())
+    bot = create_bot(settings) if isinstance(settings, BotSettings) else None
     try:
-        return await run(argv, create_session_factory(engine))
+        return await run(argv, create_session_factory(engine), bot)
     finally:
+        if bot is not None:
+            await bot.session.close()
         await engine.dispose()
 
 
