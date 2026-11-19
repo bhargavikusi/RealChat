@@ -433,7 +433,7 @@ Never grant purchased coins based solely on a client callback or a request param
 
 Do not hard-code payment prices or product identifiers throughout the codebase.
 
-Approved (D-061): four coin packs in Stars, admin settings (150 coins for 80 Stars, 350 for 150, 800 for 290, 1,900 for 580 by default), shown in Stars only. Each invoice is stored and honoured at what it showed for 1 hour. Coins are credited once per Telegram charge on the payment confirmation; a payment for an account deleted meanwhile is refunded, with failed refund calls retried until Telegram accepts them, and one for a restricted account is credited. A confirmation that can't be recorded at all is not yet reconciled automatically. /terms and /paysupport are available, and a support contact is required in production.
+Approved (D-061): four coin packs in Stars, admin settings (150 coins for 80 Stars, 350 for 150, 800 for 290, 1,900 for 580 by default), shown in Stars only. Each invoice is stored and honoured at what it showed for 1 hour. Coins are credited once per Telegram charge on the payment confirmation; a payment for an account deleted meanwhile is refunded, with failed refund calls retried until Telegram accepts them, and one for a restricted account is credited. A confirmation that can't be recorded at all is found by the admin `reconcile` command (D-066), not corrected automatically. /terms and /paysupport are available, and a support contact is required in production.
 
 ### VIP subscription
 
@@ -458,6 +458,8 @@ Approved (D-063): while VIP lasts, ✅ 👑 VIP follows the nickname on profile 
 Approved (D-064): VIP users have 👻 Ghost mode in Advanced settings, on at the start of every new VIP period (an extension keeps their choice). While VIP lasts and it is on, opening any profile card, including the chat partner's, records no visit and sends no visit alert, so the visit never appears in Visited you. Turning it off or VIP ending restores normal visits from then on; earlier visits are unchanged. It does not hide the VIP user's own profile.
 
 Approved (D-065): admins refund a Stars purchase from the server CLI, only while all of its coins are still available; the worker returns the Stars and retries until Telegram accepts. A refund reported by Telegram, for example after a dispute, takes back as many of the purchase's coins as are available and records the rest as a shortfall. Either way the coins are taken back by one ledger entry linked to the purchase, when there are coins to take (coins held for a running search are never taken), VIP is worked out again as if a refunded pass had never been bought (other passes keep their full days, but time already used counts against them), balances never go negative, each refund is applied once, and the user is told what was removed. Partial and self-service refunds are not offered.
+
+Approved (D-066): an admin can compare stored payments with Telegram's list of the bot's Stars transactions from the server CLI. It reports payments missing on either side, refund status that differs, and a different amount or user for the same charge, each with the charge id and user. It is read-only and run by hand; fixes use the existing admin commands.
 
 ## 18. Advertising and Announcements
 
