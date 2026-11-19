@@ -547,27 +547,36 @@ def test_vip_end_adds_each_pass_from_the_later_of_its_purchase_and_the_end_so_fa
 
 
 @pytest.mark.parametrize(
-    "values",
+    ("values", "constraint"),
     [
         # An admin refund with a blank note.
-        {"status": "refund_due", "refund_reason": "admin", "refund_note": "  "},
+        (
+            {"status": "refund_due", "refund_reason": "admin", "refund_note": "  "},
+            "ck_stars_payments_refund_note",
+        ),
         # A shortfall on anything but a refund Telegram reported.
-        {
-            "status": "refund_due",
-            "refund_reason": "admin",
-            "refund_note": "x",
-            "refund_shortfall": 5,
-        },
+        (
+            {
+                "status": "refund_due",
+                "refund_reason": "admin",
+                "refund_note": "x",
+                "refund_shortfall": 5,
+            },
+            "ck_stars_payments_shortfall",
+        ),
     ],
 )
 async def test_the_database_refuses_inconsistent_refunds(
-    chat: Chat, session_factory: Sessions, values: dict[str, object]
+    chat: Chat, session_factory: Sessions, values: dict[str, object], constraint: str
 ) -> None:
     await buy_pack(chat, "charge-1")
     async with session_factory() as session:
-        with pytest.raises(IntegrityError):
+        with pytest.raises(IntegrityError) as refused:
             await session.execute(
                 update(StarsPayment)
                 .where(StarsPayment.telegram_charge_id == "charge-1")
                 .values(refund_retry_at=datetime.now(UTC), **values)
             )
+    # A check violation (SQLSTATE 23514) of exactly this constraint.
+    assert getattr(refused.value.orig, "sqlstate", None) == "23514"
+    assert constraint in str(refused.value.orig)
