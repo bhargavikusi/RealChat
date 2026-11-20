@@ -432,7 +432,11 @@ async def test_flooding_is_rate_limited(
 ) -> None:
     world = await onboarded_world(bot_settings, redis, session_factory)
     await match(world)
-    limited = bot_settings.model_copy(update={"bot_flood_limit": 3})
+    # Windows are aligned to the clock, so a short one could end mid-test and restart
+    # the count; one about 30 years long can't.
+    limited = bot_settings.model_copy(
+        update={"bot_flood_limit": 3, "bot_flood_window_seconds": 10**9}
+    )
     world.alice = Chat(limited, redis, session_factory)
     # Start from a clean window: onboarding and matching already counted updates.
     for key in await redis.keys("bot:flood:*"):
