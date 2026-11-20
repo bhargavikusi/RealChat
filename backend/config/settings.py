@@ -83,6 +83,14 @@ class BotSettings(Settings):
             raise ValueError("must be an https:// link")
         return value
 
+    @field_validator("public_base_url")
+    @classmethod
+    def _plain_base_url(cls, value: HttpUrl | None) -> HttpUrl | None:
+        # The page paths are appended to it, so it can't carry a query or fragment.
+        if value is not None and (value.query or value.fragment):
+            raise ValueError("must not contain ? or #")
+        return value
+
     @field_validator("telegram_bot_token")
     @classmethod
     def _check_token_format(cls, value: SecretStr) -> SecretStr:

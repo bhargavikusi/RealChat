@@ -4,6 +4,8 @@ Creating the engine and Redis client does not open connections, so these tests
 run without PostgreSQL or Redis as long as no endpoint touches them.
 """
 
+from html import escape
+
 import pytest
 from fastapi.testclient import TestClient
 from pydantic import SecretStr
@@ -58,8 +60,15 @@ def test_the_terms_and_privacy_pages(
         response = client.get(path)
     assert response.status_code == 200
     assert response.headers["content-type"].startswith("text/html")
-    assert response.headers["content-security-policy"].startswith("default-src 'none'")
-    assert response.headers["x-content-type-options"] == "nosniff"
+    for header, value in pages.HEADERS.items():
+        assert response.headers[header] == value
+    assert pages.HEADERS["Content-Security-Policy"] == (
+        "default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; "
+        "form-action 'none'; frame-ancestors 'none'"
+    )
+    assert pages.HEADERS["Referrer-Policy"] == "no-referrer"
+    assert pages.HEADERS["Cache-Control"] == "no-cache"
+    assert pages.HEADERS["X-Content-Type-Options"] == "nosniff"
     page = response.text
     assert f"<h1>{heading}</h1>" in page
     assert "DRAFT - not for launch" in page
@@ -68,18 +77,18 @@ def test_the_terms_and_privacy_pages(
     assert "<script" not in page
 
 
-def _bullet_count(text: str) -> int:
-    return sum(1 for line in text.split("\n") if line.startswith("• "))
-
-
 def test_the_pages_show_the_current_text(client: TestClient) -> None:
     with client:
         terms = client.get("/terms").text
         privacy = client.get("/privacy").text
     # The configured age is filled in; apostrophes and the like are escaped.
     assert "<li>You must be at least 21 years old.</li>" in terms
-    assert terms.count("<li>") == _bullet_count(terms_of_use(21))
-    assert privacy.count("<li>") == _bullet_count(privacy_notice())
+    # Every bullet, word for word, and nothing more.
+    for page, text in ((terms, terms_of_use(21)), (privacy, privacy_notice())):
+        bullets = [line[2:] for line in text.split("\n") if line.startswith("• ")]
+        assert page.count("<li>") == len(bullets)
+        for bullet in bullets:
+            assert f"<li>{escape(bullet)}</li>" in page
     assert "you&#x27;ve chatted with" in privacy
 
 

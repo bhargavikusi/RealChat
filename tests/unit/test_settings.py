@@ -259,5 +259,9 @@ def test_the_public_address_is_optional_and_https(monkeypatch: pytest.MonkeyPatc
     monkeypatch.setenv("PUBLIC_BASE_URL", "http://realchat.example")
     with pytest.raises(SettingsError, match="PUBLIC_BASE_URL"):
         load_bot_settings(env_file=None)
+    for unusable in ("https://realchat.example/?x=1", "https://realchat.example/#top"):
+        monkeypatch.setenv("PUBLIC_BASE_URL", unusable)
+        with pytest.raises(SettingsError, match="PUBLIC_BASE_URL"):
+            load_bot_settings(env_file=None)
     monkeypatch.setenv("PUBLIC_BASE_URL", "https://realchat.example")
     assert str(load_bot_settings(env_file=None).public_base_url) == "https://realchat.example/"

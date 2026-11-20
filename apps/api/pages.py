@@ -22,9 +22,9 @@ from backend.modules.users.terms import (
 STYLE = """
 body { font: 16px/1.5 system-ui, sans-serif; max-width: 42rem; margin: 2rem auto;
   padding: 0 1rem; color: #1a1a1a; background: #fff; }
-@media (prefers-color-scheme: dark) { body { color: #e6e6e6; background: #121212; }
-  a { color: #8ab4f8; } }
 .draft { font-weight: bold; color: #b00020; }
+@media (prefers-color-scheme: dark) { body { color: #e6e6e6; background: #121212; }
+  a { color: #8ab4f8; } .draft { color: #ff8a80; } }
 ul { padding-left: 1.25rem; } li { margin-bottom: 0.75rem; }
 footer { margin-top: 2rem; font-size: 0.875rem; opacity: 0.8; }
 """

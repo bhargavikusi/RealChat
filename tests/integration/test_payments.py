@@ -551,7 +551,8 @@ async def test_terms_and_paysupport_are_in_the_menu() -> None:
 async def test_terms_shows_the_current_terms(
     bot_settings: BotSettings, redis: Redis, session_factory: Sessions
 ) -> None:
-    chat = Chat(bot_settings, redis, session_factory)
+    unset = bot_settings.model_copy(update={"public_base_url": None})
+    chat = Chat(unset, redis, session_factory)
     await chat.send("/terms")
     parts = terms_parts(bot_settings.min_age)
     assert len(parts) > 1  # the terms are longer than one message
@@ -572,9 +573,17 @@ async def test_terms_links_to_the_web_pages_once_their_address_is_set(
         TERMS_WEB_BUTTON: "https://realchat.example/terms",
         PRIVACY_WEB_BUTTON: "https://realchat.example/privacy",
     }
-    # Help's Terms button sends the same.
+    # Help's Terms button sends the same, links included.
+    sent = len(chat.session.requests)
     await chat.press_data(HelpAction(action="terms").pack())
-    assert chat.session.last_buttons()[PRIVACY_WEB_BUTTON] == "https://realchat.example/privacy"
+    new = [m for m in chat.session.requests[sent:] if isinstance(m, SendMessage)]
+    assert [m.text for m in new] == terms_parts(bot_settings.min_age)
+    markup = new[-1].reply_markup
+    assert isinstance(markup, InlineKeyboardMarkup)
+    assert [b.url for row in markup.inline_keyboard for b in row] == [
+        "https://realchat.example/terms",
+        "https://realchat.example/privacy",
+    ]
 
 
 async def test_paysupport_points_to_support_not_telegram(
