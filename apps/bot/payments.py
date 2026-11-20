@@ -43,6 +43,7 @@ from backend.core.logging import exception_summary
 from backend.modules.admin.settings import load_values
 from backend.modules.payments import service as payments
 from backend.modules.payments.service import (
+    Fulfilled,
     Outcome,
     Pack,
     RefundDue,
@@ -210,22 +211,45 @@ async def on_paid(message: Message, bot: Bot, session: AsyncSession) -> None:
         await bot.send_message(message.chat.id, UNMATCHED)
         return
     await session.commit()
+    await settle(
+        bot,
+        session,
+        fulfilled,
+        message.from_user.id,
+        paid.telegram_payment_charge_id,
+        paid.total_amount,
+    )
+
+
+async def settle(
+    bot: Bot,
+    session: AsyncSession,
+    fulfilled: Fulfilled,
+    telegram_user_id: int,
+    charge_id: str,
+    stars: int,
+) -> None:
+    """After a payment is recorded and committed: send the receipt, or return the Stars
+    of one that can't be fulfilled. Also used by the admin CLI's `record-payment`
+    (D-068). Call with no transaction open."""
     if fulfilled.outcome == Outcome.CREDITED and fulfilled.vip_until is not None:
         added = VIP_COINS_ADDED.format(coins=coins_label(fulfilled.coins).capitalize())
         await bot.send_message(
-            message.chat.id,
+            telegram_user_id,
             VIP_GRANTED.format(
                 until=vip_date(fulfilled.vip_until), coins=added if fulfilled.coins else ""
             ),
         )
     elif fulfilled.outcome == Outcome.CREDITED:
-        await bot.send_message(message.chat.id, CREDITED.format(coins=coins_label(fulfilled.coins)))
+        await bot.send_message(
+            telegram_user_id, CREDITED.format(coins=coins_label(fulfilled.coins))
+        )
     elif fulfilled.status == "refund_due":
         due = RefundDue(
             fulfilled.payment_id,
-            message.from_user.id,
-            paid.telegram_payment_charge_id,
-            paid.total_amount,
+            telegram_user_id,
+            charge_id,
+            stars,
             fulfilled.refund_reason or "account_deleted",
         )
         await refund(bot, session, due)

@@ -10,6 +10,7 @@ Run on the server, with the same configuration as the bot:
     uv run python -m apps.admin_cli purchases <telegram_user_id>
     uv run python -m apps.admin_cli refund <purchase_id> --reason "<why>"
     uv run python -m apps.admin_cli reconcile
+    uv run python -m apps.admin_cli record-payment <charge_id>
 
 `coins` grants coins (a positive amount) or corrects a balance (a negative amount), for
 promotions or support (D-050); the reason is kept with the ledger entry. With --key,
@@ -22,7 +23,9 @@ retrying until Telegram accepts. Running it again changes nothing.
 
 `reconcile` compares stored payments with Telegram's list of the bot's Stars
 transactions and reports every difference (D-066). It changes nothing, and needs the
-bot token, like the bot.
+bot token, like the bot. `record-payment` records a payment Telegram has that was never
+recorded, as its confirmation would have (D-068), and sends the user the usual receipt;
+it also needs the bot token.
 
 The account must already exist, i.e. the person has started the bot. Every change is
 written to the admin audit log with no actor account, meaning "the server CLI".
@@ -39,13 +42,19 @@ from aiogram.exceptions import TelegramAPIError
 from aiogram.types import StarTransaction, TransactionPartnerUser
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from apps.bot import payments as bot_payments
 from apps.bot.main import create_bot
 from backend.config.settings import BotSettings, SettingsError, load_bot_settings, load_settings
 from backend.database.engine import create_engine, create_session_factory
 from backend.modules.admin import service
 from backend.modules.admin.service import AdminError
-from backend.modules.payments.reconcile import Report, TelegramTransaction, reconcile
-from backend.modules.payments.service import Purchase
+from backend.modules.payments.reconcile import (
+    Difference,
+    Report,
+    TelegramTransaction,
+    reconcile,
+)
+from backend.modules.payments.service import Outcome, Purchase
 from backend.modules.users.models import ROLES
 
 
@@ -78,6 +87,10 @@ def _parser() -> argparse.ArgumentParser:
     commands.add_parser(
         "reconcile", help="compare stored payments with Telegram's Stars transactions"
     )
+    record = commands.add_parser(
+        "record-payment", help="record a payment Telegram has that was never recorded"
+    )
+    record.add_argument("charge_id")
     return parser
 
 
@@ -147,6 +160,7 @@ def _user_transaction(transaction: StarTransaction) -> TelegramTransaction | Non
         transaction.amount,
         refund,
         transaction.date.astimezone(UTC),
+        None if refund else partner.invoice_payload,
     )
 
 
@@ -177,10 +191,10 @@ def _print_report(report: Report) -> None:
         f"{_count(len(report.differences), 'difference')}, "
         f"{_count(report.refunds_owed, 'refund')} still owed for the worker to send."
     )
-    if report.differences:
+    if any(found.difference is Difference.NOT_RECORDED for found in report.differences):
         print(
             "A payment confirmed in the last few minutes may show as not recorded until "
-            "the bot records it."
+            "the bot records it. Otherwise, record one with: record-payment <charge_id>"
         )
 
 
@@ -195,15 +209,63 @@ async def _reconcile(session: AsyncSession, bot: Bot) -> int:
     return 0
 
 
+async def _record_payment(session: AsyncSession, bot: Bot, charge_id: str) -> int:
+    try:
+        transactions = await fetch_transactions(bot)
+    except TelegramAPIError as error:
+        print(f"Telegram refused the request: {error.message}", file=sys.stderr)
+        return 1
+    found = [t for t in transactions if t.charge_id == charge_id]
+    payment = next((t for t in found if not t.refund), None)
+    if payment is None:
+        print("Telegram doesn't list that charge as a user's payment.", file=sys.stderr)
+        return 1
+    if any(t.refund for t in found):
+        print(
+            "Telegram already refunded that payment, so there is nothing to record.",
+            file=sys.stderr,
+        )
+        return 1
+    try:
+        fulfilled = await service.record_payment(session, payment, datetime.now(UTC))
+    except AdminError as error:
+        print(error.message, file=sys.stderr)
+        return 1
+    await session.commit()
+    if fulfilled.outcome == Outcome.CREDITED:
+        granted = (
+            f"VIP until {fulfilled.vip_until:%Y-%m-%d %H:%M} UTC and {fulfilled.coins} coins"
+            if fulfilled.vip_until is not None
+            else f"{fulfilled.coins} coins"
+        )
+        print(f"Recorded as purchase #{fulfilled.payment_id}: {granted} granted.")
+    else:
+        print(
+            f"Recorded as purchase #{fulfilled.payment_id}: the account was deleted, so the "
+            "Stars are owed back and are being refunded."
+        )
+    try:
+        await bot_payments.settle(
+            bot, session, fulfilled, payment.telegram_user_id, payment.charge_id, payment.stars
+        )
+    except TelegramAPIError as error:
+        # Recorded either way; a refund still owed is retried by the worker.
+        print(f"Couldn't tell the user: {error.message}", file=sys.stderr)
+    return 0
+
+
 async def run(
     argv: Sequence[str], sessions: async_sessionmaker[AsyncSession], bot: Bot | None = None
 ) -> int:
-    """Run one command; returns the process exit code. `reconcile` needs `bot`."""
+    """Run one command; returns the process exit code. `reconcile` and `record-payment`
+    need `bot`."""
     args = _parser().parse_args(argv)
     async with sessions() as session:
-        if args.command == "reconcile":
+        if args.command in ("reconcile", "record-payment"):
             if bot is None:
-                raise ValueError("reconcile needs a bot")
+                raise ValueError(f"{args.command} needs a bot")
+            if args.command == "record-payment":
+                return await _record_payment(session, bot, args.charge_id)
             return await _reconcile(session, bot)
         if args.command in ("purchases", "refund"):
             return await _purchases(session, args)
@@ -252,7 +314,7 @@ async def _main(argv: Sequence[str]) -> int:
     # Parsed before the configuration is loaded, so --help and usage errors work
     # without a database configured. run() parses the same arguments again.
     _parser().parse_args(argv)
-    reconciling = _parser().parse_args(argv).command == "reconcile"
+    reconciling = _parser().parse_args(argv).command in ("reconcile", "record-payment")
     try:
         settings = load_bot_settings() if reconciling else load_settings()
     except SettingsError as error:

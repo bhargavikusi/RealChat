@@ -3,7 +3,8 @@
 
 Telegram lists a user's payment under its charge id, and a refund of it under the same
 id. Only those are compared; anything else Telegram lists (withdrawals, for example) is
-not a purchase. It is read-only; see D-066 for which differences admin commands can fix.
+not a purchase. It is read-only; see D-066 and D-068 for which differences admin
+commands can fix.
 """
 
 from dataclasses import dataclass
@@ -26,6 +27,7 @@ class TelegramTransaction:
     stars: int
     refund: bool  # False for the payment, True for its refund
     at: datetime
+    payload: str | None = None  # the invoice reference a payment carried
 
 
 class Difference(StrEnum):

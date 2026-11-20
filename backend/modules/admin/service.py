@@ -19,7 +19,17 @@ from backend.modules.admin.settings import SPECS, SettingKey, load_values
 from backend.modules.coins import service as coins
 from backend.modules.payments import service as payments
 from backend.modules.payments.models import StarsPayment
-from backend.modules.payments.service import Purchase, RefundRefusal, RefundRefusedError, Reversed
+from backend.modules.payments.reconcile import TelegramTransaction
+from backend.modules.payments.service import (
+    CURRENCY,
+    Fulfilled,
+    Outcome,
+    Purchase,
+    RefundRefusal,
+    RefundRefusedError,
+    Reversed,
+    UnknownPaymentError,
+)
 from backend.modules.users.models import ROLES, User
 
 
@@ -271,3 +281,40 @@ async def refund_purchase(
         )
     )
     return taken
+
+
+async def record_payment(
+    session: AsyncSession, payment: TelegramTransaction, now: datetime
+) -> Fulfilled:
+    """Record a payment Telegram has that was never recorded (D-068), with the same
+    code as a payment confirmation and Telegram's own user, amount, and invoice
+    reference. Refused if it is already recorded or matches none of our invoices."""
+    try:
+        fulfilled = await payments.fulfil(
+            session,
+            payment.telegram_user_id,
+            payment.charge_id,
+            payment.payload or "",
+            CURRENCY,
+            payment.stars,
+            now,
+        )
+    except UnknownPaymentError as error:
+        raise AdminError(
+            "That payment matches none of our invoices, so it can't be recorded; "
+            "handle it manually."
+        ) from error
+    if fulfilled.outcome == Outcome.ALREADY:
+        raise AdminError("That payment is already recorded. Nothing changed.")
+    user_id = await session.scalar(
+        select(StarsPayment.user_id).where(StarsPayment.id == fulfilled.payment_id)
+    )
+    session.add(
+        AdminAuditEntry(
+            actor_user_id=None,
+            action="payment_recorded",
+            target_user_id=user_id,
+            new_value=str(fulfilled.payment_id),
+        )
+    )
+    return fulfilled

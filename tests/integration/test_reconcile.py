@@ -159,7 +159,7 @@ async def test_each_difference_is_reported_and_nothing_is_written(
         "Checked 7 payments at Telegram: 6 differences, 1 refund still owed for the worker "
         "to send.",
         "A payment confirmed in the last few minutes may show as not recorded until the bot "
-        "records it.",
+        "records it. Otherwise, record one with: record-payment <charge_id>",
     ]
     # Read-only.
     assert await stored_rows(session_factory) == before
