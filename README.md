@@ -107,10 +107,11 @@ uv run python -m apps.admin_cli purchases <telegram_user_id>
 uv run python -m apps.admin_cli refund <purchase_id> --reason "<why>"
 ```
 
-To check purchases against Telegram's own record of the bot's Stars transactions, run `reconcile`. It needs the bot token (the same `.env` as the bot), changes nothing, and lists each difference with its charge id and Telegram user id, such as a payment Telegram has that wasn't recorded, or a refund recorded on only one side. `refund` and `coins` fix some of them; a payment that was never recorded can't be recorded, granted VIP, or refunded by a command yet:
+To check purchases against Telegram's own record of the bot's Stars transactions, run `reconcile`. It needs the bot token (the same `.env` as the bot), changes nothing, and lists each difference with its charge id and Telegram user id, such as a payment Telegram has that wasn't recorded, or a refund recorded on only one side. `refund` and `coins` fix some of them, and `record-payment` records a payment that was never recorded, as its confirmation would have, dated when it is recorded (a VIP pass starts then, or after VIP already running). It also needs the bot token. The user gets the usual receipt, or, for an account deleted meanwhile, the Stars are refunded. A payment that matches none of our invoices needs manual handling:
 
 ```bash
 uv run python -m apps.admin_cli reconcile
+uv run python -m apps.admin_cli record-payment <charge_id>
 ```
 
 Admins then find **🛠 Admin settings** under `/profile` → ⚙️ Advanced settings, where runtime settings such as the search time limit and chat retention can be changed without a restart (D-035). Deleting an account resets its role to `user`.

@@ -188,8 +188,8 @@ An append-only record of administrative changes. Rows are never updated or delet
 |---|---|---|
 | `id` | bigint identity | |
 | `actor_user_id` | bigint, nullable | References `users.id`. NULL means the server-side admin CLI. |
-| `action` | varchar(32) | `role_changed`, `setting_changed`, `coins_adjusted` (an admin grant or correction; `new_value` is the amount), or `purchase_refunded` (an admin refund of a Stars purchase, D-065; `new_value` is the `stars_payments` id). |
-| `target_user_id` | bigint, nullable | References `users.id`. The account whose role or coins changed, or whose purchase was refunded. |
+| `action` | varchar(32) | `role_changed`, `setting_changed`, `coins_adjusted` (an admin grant or correction; `new_value` is the amount), `purchase_refunded` (an admin refund of a Stars purchase, D-065; `new_value` is the `stars_payments` id), or `payment_recorded` (a payment that was never recorded, recorded by an admin, D-068; `new_value` is the `stars_payments` id). |
+| `target_user_id` | bigint, nullable | References `users.id`. The account whose role or coins changed, whose purchase was refunded, or whose payment was recorded. |
 | `setting_key` | varchar(64), nullable | The setting that changed. |
 | `old_value`, `new_value` | varchar(64), nullable | |
 | `created_at` | timestamptz | |

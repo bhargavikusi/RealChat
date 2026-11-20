@@ -461,6 +461,8 @@ Approved (D-065): admins refund a Stars purchase from the server CLI, only while
 
 Approved (D-066): an admin can compare stored payments with Telegram's list of the bot's Stars transactions from the server CLI. It reports payments missing on either side, refund status that differs, and a different amount or user for the same charge, each with the charge id and user. It is read-only and run by hand; existing admin commands fix only some differences, and the rest need manual handling.
 
+Approved (D-068): an admin can record a payment Telegram has that was never recorded, from the server CLI. It is processed as its confirmation would have been, from Telegram's own record, but dated when it is recorded: a VIP pass starts then (or after VIP already running), so a late-recorded pass loses the days in between. It is granted once and audited, and the user gets the usual receipt; a payment for a deleted account is refunded instead. A payment that matches none of our invoices is left to manual handling.
+
 Approved (D-067): deleting an account needs replying exactly `DELETE` to the warning; any other reply keeps the account. The warning shows the current coins (including bought coins) and, while VIP runs, the VIP days left and end date, and says they aren't refunded. Restricted users can still delete from their notice.
 
 ## 18. Advertising and Announcements

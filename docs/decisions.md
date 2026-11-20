@@ -688,7 +688,7 @@ Work happens on short-lived issue branches, such as `feature/12-onboarding`, cre
 * Coins are credited only on Telegram's payment confirmation. The payment is recorded once per Telegram charge id (unique) and the coins are a `coin_purchase` ledger entry keyed by the payment, in the same transaction, after the account row is locked. A repeated confirmation changes nothing.
 * A payment confirmed after the account was suspended or banned is still credited; the coins stay with the account like any other balance. One confirmed after the account was deleted is refunded (`refundStarPayment`): the bot tries at once, and if Telegram refuses or can't be reached, the payment stays owed and the worker tries again every few minutes until Telegram accepts the refund (Telegram doesn't send a confirmation again once the bot has received it). Telegram's answer that the charge was already refunded is recorded as refunded.
 * Payment rows are guarded in the database like the coin ledger: they can't be deleted or truncated, the charge, buyer, invoice, amount, and time never change, and the status only moves forward: paid to refund owed to refunded, or paid straight to refunded (for refunds made by admins later).
-* Known gap: if recording a confirmation fails (for example, the database is unavailable), Telegram doesn't send it again, so the payment isn't recorded or credited until it is reconciled against Telegram's transaction list. Such a case shows in the error log and is found by the admin `reconcile` command (D-066). No command records it yet: an admin can deliver a coin pack's coins with `coins`, while a VIP pass, or returning the Stars, needs manual handling.
+* Known gap: if recording a confirmation fails (for example, the database is unavailable), Telegram doesn't send it again, so the payment isn't recorded or credited until it is reconciled against Telegram's transaction list. Such a case shows in the error log and is found by the admin `reconcile` command (D-066). An admin records it with `record-payment` (D-068); one that matches none of our invoices needs manual handling.
 * Payment updates are never dropped by flood control or the restricted-account gate: an unanswered pre-checkout cancels the user's payment, and a confirmation means the Stars were taken.
 * For testing, `TELEGRAM_TEST_ENVIRONMENT` connects the bot to Telegram's test environment, where Stars payments cost nothing; it is refused in production.
 * /terms shows the terms, and /paysupport points to RealChat support and says Telegram's support can't help with purchases; both are in the command menu and available to restricted users. `SUPPORT_CONTACT` is required in production. The draft terms cover buying coins (terms version `draft-19`).
@@ -757,7 +757,7 @@ Work happens on short-lived issue branches, such as `feature/12-onboarding`, cre
 * The admin CLI's `reconcile` command reads Telegram's whole list of the bot's Stars transactions (`getStarTransactions`, 100 per page) and compares it with every stored payment. It needs the bot token, read from the same configuration as the bot.
 * Only users' invoice payments and refunds sent to users are compared: Telegram lists a refund under its payment's charge id, so outgoing transactions that match no payment (gifts, for example) and everything else (withdrawals, paid media) are skipped.
 * It reports, each with the charge id and Telegram user id: paid at Telegram but not recorded here; recorded here but not at Telegram; refunded at Telegram but still paid here; refunded here with no refund at Telegram; a refund owed here that Telegram already made (the worker records it on its next pass); and a different Stars amount or user for the same charge. Refunds still owed with nothing at Telegram yet are only counted, as the worker's normal work.
-* It is read-only: it never changes payments or balances. Existing commands fix only some differences: `refund` refunds a recorded purchase, and `coins` can deliver the coins of a payment that was never recorded or correct a balance. No command yet records a missing payment, grants its VIP, or refunds a payment that was never recorded; those need manual handling. It isn't scheduled; a payment confirmed in the last few minutes can show as not recorded until the bot records it.
+* It is read-only: it never changes payments or balances. Existing commands fix only some differences: `refund` refunds a recorded purchase, and `coins` can deliver the coins of a payment that was never recorded or correct a balance. Since D-068, `record-payment` records a payment that was never recorded; one that matches none of our invoices needs manual handling. It isn't scheduled; a payment confirmed in the last few minutes can show as not recorded until the bot records it.
 
 **Why:** Approved scope of the reconciliation issue: a read-only report run by an admin, with fixes kept manual and audited.
 
@@ -773,6 +773,18 @@ Work happens on short-lived issue branches, such as `feature/12-onboarding`, cre
 * The terms say deletion needs replying DELETE and that coins, including bought ones, and VIP time aren't refunded (terms version `draft-24`).
 
 **Why:** The approved issue scope, and the owner's choice of an exact `DELETE`.
+
+### D-068 — Recording a payment that was never recorded
+
+**Date:** 2026-11-20
+**Decision:**
+
+* The admin CLI's `record-payment <charge_id>` records a payment Telegram has that was never recorded. It finds the charge in Telegram's Stars transactions and processes it with the same code as a payment confirmation (`fulfil`), using Telegram's own user, amount, and invoice reference, so nothing the admin types decides what is granted: a coin pack's coins or a VIP pass, once; for an account deleted meanwhile, a refund owed, which is sent at once (and retried by the worker if Telegram refuses).
+* It is refused, writing nothing, if Telegram doesn't list the charge as a user's payment, has refunded it, it is already recorded, or it matches none of our invoices; those last are handled manually, outside the bot.
+* The payment is recorded with the time it is recorded, as `fulfil` does: a VIP pass adds its days to the later of that time and the end of VIP already running, so a pass recorded late loses the days between the payment and the recording unless VIP was running. Each recording is audited (`payment_recorded`, `new_value` the `stars_payments` id).
+* The user gets the receipt they would have got at the time, or the deleted-account refund notice, best effort. `reconcile` points to the command for payments that weren't recorded.
+
+**Why:** Owner decisions to replay the payment from Telegram's own record, to send the usual receipt, and to leave payments matching none of our invoices to manual handling.
 
 ## Open
 
