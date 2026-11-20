@@ -194,7 +194,8 @@ def _print_report(report: Report) -> None:
     if any(found.difference is Difference.NOT_RECORDED for found in report.differences):
         print(
             "A payment confirmed in the last few minutes may show as not recorded until "
-            "the bot records it. Otherwise, record one with: record-payment <charge_id>"
+            "the bot records it. Otherwise, record one with: record-payment <charge_id> "
+            "(one that matches none of our invoices needs manual handling)."
         )
 
 
