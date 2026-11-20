@@ -8,15 +8,15 @@ from aiogram.types import FSInputFile
 from redis.asyncio import Redis
 from sqlalchemy import func, select
 
+from apps.bot import legal
 from apps.bot import onboarding as ob
 from apps.bot import profile as pr
 from apps.bot.account import ADVANCED_SETTINGS
 from apps.bot.avatars import avatar_path
-from apps.bot.menu import BOT_COMMANDS, HELP_TEXT
+from apps.bot.menu import BOT_COMMANDS, DOCUMENTS_BUTTON, HELP_TEXT
 from apps.bot.people import PEOPLE_BUTTON
 from backend.config.settings import BotSettings
 from backend.modules.users.models import ProfileChange
-from backend.modules.users.terms import terms_parts
 from backend.modules.users.validation import Gender
 from tests.support.chat import (
     TERMS,
@@ -335,11 +335,11 @@ async def test_terms_update_blocks_profile_edits(
 
 async def test_help_shows_the_guide_and_terms_without_unset_links(chat: Chat) -> None:
     assert await chat.send("/help") == HELP_TEXT
-    assert set(chat.session.last_buttons()) == {"📄 Terms and privacy"}
+    assert set(chat.session.last_buttons()) == {DOCUMENTS_BUTTON}
 
     sent = len(chat.session.sent_texts())
-    await chat.press("📄 Terms and privacy")
-    assert chat.session.sent_texts()[sent:] == terms_parts(18)
+    await chat.press(DOCUMENTS_BUTTON)
+    assert chat.session.sent_texts()[sent:] == [legal.documents_summary().as_kwargs()["text"]]
     assert all(f"/{c.command}" in HELP_TEXT for c in BOT_COMMANDS)
     assert "not end-to-end encrypted" in HELP_TEXT
 

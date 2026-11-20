@@ -13,6 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from apps.bot import coins as cn
 from apps.bot import reminders as rm
+from apps.bot.legal import CONTINUE_BUTTON as CONTINUE
 from backend.config.settings import BotSettings
 from backend.modules.admin.models import AppSetting
 from backend.modules.admin.settings import RuntimeSettings, SettingKey
@@ -221,7 +222,7 @@ async def test_no_reminder_before_onboarding_is_finished(
 ) -> None:
     chat = Chat(bot_settings, redis, session_factory)
     await chat.send("/start")
-    await chat.press("I agree")
+    await chat.send(CONTINUE)
     await set_setting(session_factory, SettingKey.DAILY_REWARD_ON, 1)
     # No country yet, so it would be UTC's evening: well past it.
     assert await job(session_factory, chat).tick(datetime.combine(TODAY, time(19), tzinfo=UTC)) == 0

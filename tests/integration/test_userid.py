@@ -22,6 +22,7 @@ from apps.bot.endings import (
     ProfileSafetyAction,
 )
 from apps.bot.keyboards import END_CHAT
+from apps.bot.legal import CONTINUE_BUTTON as CONTINUE
 from apps.bot.menu import HELP_TEXT
 from backend.config.settings import BotSettings
 from backend.modules.admin.models import AppSetting
@@ -276,7 +277,7 @@ async def test_lookups_need_a_finished_onboarding(
     carol = Chat(bot_settings, redis, session_factory, user_id=6464)
     bob_id = await public_id(session_factory, BOB_ID)
     assert await carol.send(f"/userid_{bob_id}") == TERMS
-    await carol.press("I agree")
+    await carol.send(CONTINUE)
     assert await carol.send("/userid") == ob.PROMPTS["nickname"]
     assert await visit_pairs(session_factory) == set()
 

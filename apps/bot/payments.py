@@ -36,7 +36,7 @@ from aiogram.types import (
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from apps.bot.endings import coins_label
-from apps.bot.menu import send_terms
+from apps.bot.legal import send_documents
 from apps.bot.onboarding import load_context
 from backend.config.settings import BotSettings
 from backend.core.logging import exception_summary
@@ -349,7 +349,7 @@ class RefundRetries:
 
 
 async def show_terms(message: Message, bot: Bot, settings: BotSettings) -> None:
-    await send_terms(bot, message.chat.id, settings)
+    await send_documents(bot, message.chat.id, settings)
 
 
 async def show_paysupport(message: Message, settings: BotSettings) -> None:

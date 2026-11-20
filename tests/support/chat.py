@@ -12,12 +12,12 @@ from aiogram.types import InlineKeyboardMarkup
 from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from apps.bot import legal
 from apps.bot import onboarding as ob
 from apps.bot.main import create_dispatcher
 from backend.config.settings import BotSettings
 from backend.modules.users import service
 from backend.modules.users.models import Profile
-from backend.modules.users.terms import terms_prompt_parts
 from tests.support.telegram import (
     RecordingSession,
     callback_update,
@@ -32,9 +32,15 @@ from tests.support.telegram import (
 
 Sessions = async_sessionmaker[AsyncSession]
 USER_ID = 4242
-# The terms are sent in parts (they exceed one message); the last asks to accept.
-TERMS_PARTS = terms_prompt_parts(18)
+# The welcome (without a public address, so the document names aren't links), then the
+# message carrying the ✅ Continue keyboard (D-070).
+TERMS_PARTS = [
+    legal.welcome_text(updated=False),
+    legal.CONTINUE_HINT,
+]
 TERMS = TERMS_PARTS[-1]
+# The same, for someone who accepted an earlier version.
+UPDATED_TERMS_PARTS = [legal.welcome_text(updated=True), legal.CONTINUE_HINT]
 
 
 class Chat:
@@ -140,7 +146,7 @@ async def load_profile(sessions: Sessions) -> Profile:
 
 async def complete_required_steps(chat: Chat) -> None:
     assert await chat.send("/start") == TERMS
-    assert await chat.press("I agree") == ob.PROMPTS["nickname"]
+    assert await chat.send(legal.CONTINUE_BUTTON) == ob.PROMPTS["nickname"]
     assert await chat.send("Night Owl") == ob.PROMPTS["age"]
     assert await chat.send("24") == ob.PROMPTS["gender"]
     assert await chat.press("Female") == ob.PROMPTS["country"]

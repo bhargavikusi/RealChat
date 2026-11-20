@@ -17,8 +17,8 @@ from aiogram.types import (
     Message,
 )
 
+from apps.bot.legal import send_documents
 from backend.config.settings import BotSettings
-from backend.modules.users.terms import terms_parts
 
 
 class HelpAction(CallbackData, prefix="help"):
@@ -33,9 +33,10 @@ COMMANDS = (
     ("vip", "VIP status and the VIP pass"),
     ("userid", "Open a profile by its RealChat ID, or see yours"),
     ("help", "How RealChat works, terms, and contacts"),
-    ("terms", "Terms of use and privacy notice"),
+    ("terms", "Privacy Policy and User Agreement"),
     ("paysupport", "Help with a purchase"),
 )
+DOCUMENTS_BUTTON = "📜 Privacy Policy and User Agreement"
 BOT_COMMANDS = [BotCommand(command=name, description=text) for name, text in COMMANDS]
 
 HELP_TEXT = (
@@ -53,7 +54,8 @@ def help_keyboard(settings: BotSettings) -> InlineKeyboardMarkup:
     rows = [
         [
             InlineKeyboardButton(
-                text="📄 Terms and privacy", callback_data=HelpAction(action="terms").pack()
+                text=DOCUMENTS_BUTTON,
+                callback_data=HelpAction(action="terms").pack(),
             )
         ]
     ]
@@ -74,41 +76,9 @@ async def show_help(message: Message, settings: BotSettings) -> None:
     await message.answer(HELP_TEXT, reply_markup=help_keyboard(settings))
 
 
-async def send_parts(
-    bot: Bot, chat_id: int, parts: list[str], reply_markup: InlineKeyboardMarkup | None = None
-) -> None:
-    """Send a text split into several messages (`split_message`), in order; any buttons
-    go on the last one."""
-    for part in parts[:-1]:
-        await bot.send_message(chat_id, part)
-    await bot.send_message(chat_id, parts[-1], reply_markup=reply_markup)
-
-
-TERMS_WEB_BUTTON = "📄 Terms on the web"
-PRIVACY_WEB_BUTTON = "🔒 Privacy on the web"
-
-
-def web_links(settings: BotSettings) -> InlineKeyboardMarkup | None:
-    """Links to the terms and privacy web pages (D-069), once their address is set."""
-    if settings.public_base_url is None:
-        return None
-    base = str(settings.public_base_url).rstrip("/")
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
-            [InlineKeyboardButton(text=TERMS_WEB_BUTTON, url=f"{base}/terms")],
-            [InlineKeyboardButton(text=PRIVACY_WEB_BUTTON, url=f"{base}/privacy")],
-        ]
-    )
-
-
-async def send_terms(bot: Bot, chat_id: int, settings: BotSettings) -> None:
-    """The terms of use and privacy notice for reading again, with the web links."""
-    await send_parts(bot, chat_id, terms_parts(settings.min_age), web_links(settings))
-
-
 async def show_terms(query: CallbackQuery, bot: Bot, settings: BotSettings) -> None:
     await query.answer()
-    await send_terms(bot, query.from_user.id, settings)
+    await send_documents(bot, query.from_user.id, settings)
 
 
 def create_router() -> Router:

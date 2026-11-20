@@ -795,9 +795,24 @@ Work happens on short-lived issue branches, such as `feature/12-onboarding`, cre
 * The bot shows both everywhere it shows the terms, under "📄 Terms of use" and "🔒 Privacy notice", below one draft label, so users accept the same text as before (terms version `draft-25`).
 * The API serves `/terms` and `/privacy` as self-contained HTML pages, with no scripts, fonts, images, or tracking, a content security policy that allows nothing else, the draft label, the terms version, and a link to the other page. The minimum age moves to the shared settings, so the page and the bot show the same one, and production requires it to be set for the API too.
 * An optional `PUBLIC_BASE_URL` (https) makes the bot's /terms add link buttons to both pages; while it is empty, nothing changes. At deployment, the privacy policy link in BotFather is set to the `/privacy` page.
-* The text is still the draft; final wording waits for legal review (O-007).
+* The text is still the draft; final wording waits for legal review (O-007). Superseded by D-070.
 
 **Why:** Owner decisions to serve the pages from RealChat's own server, as separate terms and privacy pages, and to link them from the bot once an address is set.
+
+### D-070 — The User Agreement, the Privacy Policy, and the welcome screen
+
+**Date:** 2026-11-20
+**Decision:**
+
+* RealChat's terms are a professional **User Agreement** (21 sections) and **Privacy Policy** (14 sections), with numbered sections and subsections, a version (`1.0`), and an effective date. They are written as plain text with headings in `backend/modules/users/legal/`, the single source for the bot and the web pages, and describe only what the product does; periods admins can change are not given as numbers.
+* The operator is named only as "RealChat" ("we", "us"). Indian law governs, with the courts of India (no city). Users must be 18 or older. The existing support contact (in /help and /paysupport) is the contact for help, privacy requests, and grievances, with the acknowledgement and resolution times applicable Indian law sets. Data is stored on Oracle Cloud Infrastructure in India. The Privacy Policy follows India's Digital Personal Data Protection Act, 2023.
+* Owner-requested protections: the Privacy Policy opens with its commitments (data never sold, handled only by Telegram and the host and disclosed only where the law requires, no ads, analytics, cookies, or AI training, and not kept forever, with the records kept after deletion named). Both documents state that personal information users share with each other is shared by their own choice, consent, and risk, and that RealChat is not responsible for it. The User Agreement adds that users are not screened, contact and meetings outside the Service are at the user's own risk, a release from disputes between users, RealChat's role as an intermediary under the IT Act, 2000, the electronic-record clause, and the usual general terms. The Service may go down, move servers, change, or end at any time without notice and without compensation, and data may not be kept. RealChat accepts no liability; only where a court finds liability that cannot be excluded is it capped at the Stars the user paid in the previous three months. Users must contact support and allow 30 days before any legal proceedings. No document can remove rights that Indian law does not allow to be waived, such as complaints to the Data Protection Board or a consumer commission, or the duty to report data breaches and handle grievances; the documents keep those and apply every exclusion to the greatest extent the law allows.
+* The documents are official once the owner approves the text; there is no lawyer review. This resolves O-001 (18+) and O-007 (owner-approved, no legal review).
+* At first start, and when the version changes ("We've updated…"), the bot sends a short welcome: a bold title, an italic tagline, one line about RealChat, and "By tapping ✅ Continue you confirm your agreement with our Privacy Policy and User Agreement", with a button for each document, then a message with a blue (`primary` style) ✅ Continue keyboard button. Tapping it accepts the version the welcome showed; a Continue after the version changed, or without the welcome's state, shows the welcome again. Old "I agree" and "Decline" buttons accept nothing. The next text step takes the keyboard away.
+* Once `PUBLIC_BASE_URL` is set, the document names are links and the buttons open the web pages; until then, the buttons send the document in the bot, as several messages with bold headings. /terms and Help's button send a short summary with the same buttons. Restricted users can read both.
+* Formatting uses Telegram message entities, never a parse mode, so user content still can't be read as markup. Continue is handled ahead of every other message handler, so it is never relayed to a chat partner.
+
+**Why:** Owner decisions on the operator's name, Indian law and courts, no legal review, the support contact as the only contact, 18+, and the welcome screen modelled on the owner's example.
 
 ## Open
 
@@ -805,8 +820,6 @@ Each of these needs the owner's decision. Until then, the behavior stays configu
 
 | ID | Question | Needed before | Notes |
 |---|---|---|---|
-| O-001 | Final minimum eligible age | Public launch | Development uses 18 (D-009). Age is user-entered, with no document verification (requirements §7). Jurisdiction-specific legal review is recommended. |
-| O-007 | Final terms of service and privacy policy text | Public launch | Development uses a versioned draft (D-015). It needs legal review. |
 | O-002 | Retention period for conversation content | Public launch | Kept separate from the retention of payment, moderation, security, and audit records (requirements §20). Development default: 7 days, changeable by admins (D-028, D-035). |
 | O-006 | Webhook or long polling for receiving Telegram updates in production | Before deployment | Development will use polling. Webhooks require a public HTTPS endpoint. |
 | O-008 | Which premium offer includes hiding the profile, and what happens when it ends | Before hidden profiles are built | D-021. VIP does not include it (owner, 2026-11-16). For example, whether the profile becomes visible again automatically. Also whether a hidden profile can still be opened by its RealChat ID (D-054); until decided, nothing hides a profile, so every finished profile can be. |

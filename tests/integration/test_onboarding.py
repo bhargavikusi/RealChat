@@ -4,18 +4,25 @@ import asyncio
 
 import pytest
 from aiogram.fsm.storage.redis import RedisEventIsolation
+from aiogram.methods import SendMessage
+from aiogram.types import InlineKeyboardMarkup, ReplyKeyboardRemove
 from redis.asyncio import Redis
 from sqlalchemy import func, select
 
 from apps.bot import onboarding as ob
+from apps.bot.legal import CONTINUE_BUTTON as CONTINUE
+from apps.bot.legal import continue_keyboard
 from apps.bot.menu import HELP_TEXT
 from backend.modules.users.models import Profile, TermsAcceptance
 from backend.modules.users.terms import TERMS_VERSION
 from tests.support.chat import (
     TERMS,
+    TERMS_PARTS,
+    UPDATED_TERMS_PARTS,
     USER_ID,
     Chat,
     Sessions,
+    complete_onboarding,
     complete_required_steps,
     load_profile,
 )
@@ -50,15 +57,23 @@ async def test_optional_steps_can_be_skipped(chat: Chat, session_factory: Sessio
 async def test_terms_must_be_accepted_before_any_profile_data(
     chat: Chat, session_factory: Sessions
 ) -> None:
+    sent = len(chat.session.sent_texts())
     assert await chat.send("/start") == TERMS
+    assert chat.session.sent_texts()[sent:] == TERMS_PARTS
+    # The welcome carries the document buttons; the next message the blue Continue.
+    keyboards = [m.reply_markup for m in chat.session.requests if isinstance(m, SendMessage)]
+    assert isinstance(keyboards[-2], InlineKeyboardMarkup)
+    assert keyboards[-1] == continue_keyboard()
     assert await chat.send("Night Owl") == ob.TERMS_REQUIRED
-    assert await chat.press("Decline") == ob.TERMS_DECLINED
     assert await chat.send("/start") == TERMS
 
     profile = await load_profile(session_factory)
     assert profile.nickname is None
 
-    assert await chat.press("I agree") == ob.PROMPTS["nickname"]
+    assert await chat.send(CONTINUE) == ob.PROMPTS["nickname"]
+    # The nickname prompt takes the Continue keyboard away.
+    last = [m for m in chat.session.requests if isinstance(m, SendMessage)][-1]
+    assert isinstance(last.reply_markup, ReplyKeyboardRemove)
     async with session_factory() as session:
         accepted = (await session.execute(select(TermsAcceptance))).scalar_one()
     assert accepted.terms_version == TERMS_VERSION
@@ -69,7 +84,7 @@ async def test_under_age_user_is_refused_and_may_correct_a_mistake(
     chat: Chat, session_factory: Sessions
 ) -> None:
     await chat.send("/start")
-    await chat.press("I agree")
+    await chat.send(CONTINUE)
     await chat.send("Night Owl")
 
     reply = await chat.send("16")
@@ -92,7 +107,7 @@ async def test_invalid_input_is_explained_and_can_be_retried(
     chat: Chat, step_inputs: list[str], bad: str, expected_start: str
 ) -> None:
     await chat.send("/start")
-    await chat.press("I agree")
+    await chat.send(CONTINUE)
     for text in step_inputs:
         await chat.send(text)
 
@@ -104,7 +119,7 @@ async def test_invalid_input_is_explained_and_can_be_retried(
 
 async def test_unknown_country_and_none_of_these(chat: Chat, session_factory: Sessions) -> None:
     await chat.send("/start")
-    await chat.press("I agree")
+    await chat.send(CONTINUE)
     await chat.send("Night Owl")
     await chat.send("24")
     await chat.press("Male")
@@ -118,7 +133,7 @@ async def test_unknown_country_and_none_of_these(chat: Chat, session_factory: Se
 
 async def test_commands_are_not_taken_as_answers(chat: Chat, session_factory: Sessions) -> None:
     await chat.send("/start")
-    await chat.press("I agree")
+    await chat.send(CONTINUE)
 
     assert await chat.send("/settings") == ob.PROMPTS["nickname"]  # unknown command
     assert await chat.send("/help") == HELP_TEXT  # help works mid-onboarding
@@ -129,7 +144,7 @@ async def test_resumes_at_the_right_step_after_a_restart(
     chat: Chat, redis: Redis, session_factory: Sessions
 ) -> None:
     await chat.send("/start")
-    await chat.press("I agree")
+    await chat.send(CONTINUE)
     await chat.send("Night Owl")
 
     chat.restart()
@@ -148,9 +163,8 @@ async def test_repeated_button_presses_do_not_duplicate_or_skip(
     chat: Chat, session_factory: Sessions
 ) -> None:
     await chat.send("/start")
-    agree = chat.session.last_buttons()["I agree"]
-    await chat.press_data(agree)
-    await chat.press_data(agree)  # double tap
+    await chat.send(CONTINUE)
+    await chat.send(CONTINUE)  # double tap: already accepted, the nickname is asked again
     await chat.send("Night Owl")
     await chat.send("24")
     female = chat.session.last_buttons()["Female"]
@@ -163,7 +177,7 @@ async def test_repeated_button_presses_do_not_duplicate_or_skip(
     profile = await load_profile(session_factory)
     assert acceptances == 1
     assert profile.gender == "female"
-    assert chat.session.sent_texts().count(ob.PROMPTS["nickname"]) == 1
+    assert chat.session.sent_texts().count(ob.PROMPTS["nickname"]) == 2
     assert chat.last() == ob.PROMPTS["country"]
 
 
@@ -179,24 +193,53 @@ async def test_skip_still_works_if_fsm_state_was_lost(
     assert chat.last() == ob.PROMPTS["photo"]
 
 
-async def test_button_for_an_older_terms_version_cannot_accept(
-    chat: Chat, session_factory: Sessions
-) -> None:
+async def test_old_agree_buttons_cannot_accept(chat: Chat, session_factory: Sessions) -> None:
     await chat.send("/start")
-    old_agree = ob.TermsChoice(version="draft-0", accept=True).pack()
-
-    await chat.press_data(old_agree)
-
-    assert chat.last() == TERMS  # the current terms are shown again
+    for old in (
+        ob.TermsChoice(version="draft-0", accept=True).pack(),
+        ob.TermsChoice(version=TERMS_VERSION, accept=True).pack(),
+    ):
+        await chat.press_data(old)
+        assert chat.last() == TERMS  # the current welcome is shown again
     async with session_factory() as session:
         assert await session.scalar(select(func.count()).select_from(TermsAcceptance)) == 0
+
+
+async def test_continue_from_an_older_welcome_cannot_accept(
+    chat: Chat, session_factory: Sessions, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    await chat.send("/start")
+    monkeypatch.setattr(ob, "TERMS_VERSION", "2.0")  # the documents change meanwhile
+    assert await chat.send(CONTINUE) == TERMS
+    async with session_factory() as session:
+        assert await session.scalar(select(func.count()).select_from(TermsAcceptance)) == 0
+    # The welcome shown now is for the new version, so Continue accepts it.
+    assert await chat.send(CONTINUE) == ob.PROMPTS["nickname"]
+
+
+async def test_continue_without_a_welcome_shows_it(chat: Chat, redis: Redis) -> None:
+    await chat.send("/start")
+    await redis.flushdb()  # the FSM state with the shown version is lost
+    chat.restart()
+    assert await chat.send(CONTINUE) == TERMS
+
+
+async def test_an_update_is_announced_to_someone_who_accepted_before(
+    chat: Chat, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    await complete_onboarding(chat)
+    monkeypatch.setattr(ob, "TERMS_VERSION", "2.0")
+    sent = len(chat.session.sent_texts())
+    await chat.send("/profile")
+    assert chat.session.sent_texts()[sent:] == UPDATED_TERMS_PARTS
+    assert await chat.send(CONTINUE) == ob.WELCOME_BACK
 
 
 async def test_terms_update_mid_onboarding_blocks_profile_data(
     chat: Chat, session_factory: Sessions, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     await chat.send("/start")
-    await chat.press("I agree")  # waiting for the nickname now
+    await chat.send(CONTINUE)  # waiting for the nickname now
 
     monkeypatch.setattr(ob, "TERMS_VERSION", "draft-99")  # the terms change
     reply = await chat.send("Night Owl")
@@ -233,7 +276,7 @@ async def test_quick_successive_messages_are_processed_in_order(
     chat: Chat, session_factory: Sessions
 ) -> None:
     await chat.send("/start")
-    await chat.press("I agree")
+    await chat.send(CONTINUE)
 
     # Both arrive before the first has been handled. Without per-user isolation the
     # second would also be routed by the "nickname" state and overwrite the nickname.

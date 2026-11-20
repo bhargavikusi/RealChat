@@ -9,13 +9,12 @@ from apps.bot.errors import GENERIC_ERROR_TEXT
 from apps.bot.main import create_dispatcher
 from backend.config.settings import BotSettings
 from backend.core.redis import create_redis
-from backend.modules.users.terms import terms_prompt_parts
+from tests.support.chat import TERMS_PARTS
 from tests.support.telegram import FAKE_TOKEN, make_bot, message_update
 
 FLOOD_LIMIT = 3
 # A frozen clock keeps every flood-test update inside one window.
 FROZEN_NOW = 1_000_000.0
-TERMS_PARTS = terms_prompt_parts(18)
 
 Sessions = async_sessionmaker[AsyncSession]
 
