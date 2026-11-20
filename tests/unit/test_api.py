@@ -94,3 +94,16 @@ def test_list_items_are_grouped_and_text_is_escaped() -> None:
     assert "<h1>A &lt;b&gt;</h1>" in body
     assert "<p>Intro &amp; more</p>" in body
     assert "<ul><li>one &lt;script&gt;</li><li>two</li></ul>\n<h2>1. Next</h2>" in body
+
+
+def test_the_page_title_and_footer_are_escaped(monkeypatch: pytest.MonkeyPatch) -> None:
+    titles = {Document.USER_AGREEMENT: "Terms <b>", Document.PRIVACY_POLICY: "Privacy & <i>"}
+
+    def blocks(document: Document, minimum_age: int) -> list[Block]:
+        return [Block("title", titles[document]), Block("paragraph", "Text")]
+
+    monkeypatch.setattr(pages, "document_blocks", blocks)
+    page = pages.render(Document.USER_AGREEMENT, 18)
+    assert "<title>RealChat · Terms &lt;b&gt;</title>" in page
+    assert '<footer>RealChat · <a href="/privacy">Privacy &amp; &lt;i&gt;</a></footer>' in page
+    assert "<b>" not in page and "<i>" not in page

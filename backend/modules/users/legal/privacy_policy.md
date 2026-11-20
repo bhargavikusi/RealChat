@@ -11,7 +11,7 @@ RealChat operates the Service and decides how and why your personal data is proc
 In short, and as explained in detail in the rest of this Privacy Policy:
 
 - We never sell, rent, or trade your personal data.
-- We do not share your personal data with anyone for their own purposes. It is handled only by Telegram and our hosting provider to run the Service, and disclosed to others only where the law requires it (section 5).
+- We do not share your personal data with anyone for their own purposes. It is handled by Telegram and our hosting provider to run the Service, and disclosed to others only as described in section 5: where the law requires it, or where necessary to prevent serious harm, investigate abuse, or protect our rights or the safety of users.
 - We do not show advertising, and we do not use third-party analytics, tracking, or cookies.
 - We do not use your messages to train artificial intelligence models.
 - We do not keep your data forever. Messages are deleted automatically after a limited period, and your profile is erased as soon as you delete your account. Only the minimal records described in section 8.4 are kept after that, for safety, accounting, and legal reasons.
@@ -58,6 +58,8 @@ We use your data to:
 
 We process your data on the basis of the consent you give when you tap "Continue", for the purposes described in this Privacy Policy, and, where applicable law allows, for legitimate uses such as complying with the law, responding to legal requests, and protecting the safety of users. We use your data only for these purposes.
 
+Before you tap "Continue", we store only what is needed to show you this Privacy Policy and our User Agreement and to record your acceptance: your Telegram user ID, an empty profile with your RealChat ID, the step of setup you are on, and, if you started RealChat through an invite link, who invited you. If you do not continue, you can ask us to delete it through the support contact shown in the bot's /help.
+
 Some of this processing is automatic: matching pairs users without anyone choosing who you meet, and automatic filters block links, contact details, and flooding in chats. Decisions to restrict or ban an account are made by people reviewing reports.
 
 ## 5. Who can see your data
@@ -66,8 +68,8 @@ Some of this processing is automatic: matching pairs users without anyone choosi
 Other users see only what the Service shows them: your profile card (nickname, age, gender, country, and any city, bio, photo, and RealChat ID), the messages you send them, and, where the feature applies, that you visited or liked their profile, sent them a direct message, or sent them a chat request. People you block or report are only told that a chat ended.
 
 ### 5.2 Service providers
-- **Telegram:** every message and button press passes through Telegram, which processes it under its own privacy policy. Purchases with Telegram Stars are processed by Telegram.
-- **Hosting:** our servers and databases are hosted on Oracle Cloud Infrastructure in India.
+- Telegram: every message and button press passes through Telegram, which processes it under its own privacy policy. Purchases with Telegram Stars are processed by Telegram.
+- Hosting: our servers and databases are hosted on Oracle Cloud Infrastructure in India.
 
 ### 5.3 Legal requirements
 We may disclose data where we are required to by law, by a court order, or by a lawful request from a government authority, or where it is necessary to prevent serious harm, investigate abuse, or protect our rights or the safety of users.

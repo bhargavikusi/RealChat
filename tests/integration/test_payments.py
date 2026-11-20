@@ -561,13 +561,15 @@ async def test_terms_offers_the_documents_in_the_bot_without_an_address(
     chat = Chat(unset, redis, session_factory)
     await chat.send("/terms")
     assert chat.session.sent_texts() == [SUMMARY]
-    # Each button sends its document in the bot (D-070).
+    [summary] = [m for m in chat.session.requests if isinstance(m, SendMessage)]
+    assert isinstance(summary.reply_markup, InlineKeyboardMarkup)
+    # Each of the summary's buttons sends its document in the bot (D-070).
     for button, document in (
         (PRIVACY_BUTTON, Document.PRIVACY_POLICY),
         (AGREEMENT_BUTTON, Document.USER_AGREEMENT),
     ):
         sent = len(chat.session.sent_texts())
-        await chat.press_on(legal.documents_keyboard(None), button)
+        await chat.press_on(summary.reply_markup, button)
         messages = legal.document_messages(document, bot_settings.min_age)
         assert chat.session.sent_texts()[sent:] == [m.as_kwargs()["text"] for m in messages]
 

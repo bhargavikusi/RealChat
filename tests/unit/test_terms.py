@@ -52,12 +52,15 @@ def test_the_documents_state_the_owner_decisions() -> None:
     for text in (agreement, privacy):
         assert "/paysupport" in text
         assert "DRAFT" not in text
+        # Blocks are shown as plain text, so the source has no inline Markdown.
+        assert "**" not in text and "__" not in text and "`" not in text
 
 
 def test_titles_and_version_line() -> None:
     assert document_title(Document.USER_AGREEMENT) == "User Agreement"
     assert document_title(Document.PRIVACY_POLICY) == "Privacy Policy"
-    assert effective_label() == f"Version {TERMS_VERSION} · Effective 20 November 2026"
+    assert TERMS_VERSION == "1.0"
+    assert effective_label() == "Version 1.0 · Effective 20 November 2026"
 
 
 def _bold(message: dict[str, object]) -> set[str]:
@@ -82,7 +85,8 @@ def test_the_bot_sends_a_document_whole_within_message_limits(document: Document
     # Every block, in order.
     position = 0
     for block in document_blocks(document, 18):
-        position = sent.index(block.text, position)
+        expected = f"• {block.text}" if block.kind == "item" else block.text
+        position = sent.index(expected, position)
     assert effective_label() in str(messages[0]["text"])
     # Headings are bold.
     assert document_title(document) in _bold(messages[0])

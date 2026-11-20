@@ -184,9 +184,9 @@ Provide sensible validation, profile editing, default avatars, duplicate-request
 
 The owner has decided not to require mandatory identity or age-document verification at launch and prefers to rely on user-entered information.
 
-The minimum eligible age has not yet been finalized. Do not silently invent a final age policy. Make the eligibility rule configurable, document the open decision, and request confirmation before public launch.
+~~The minimum eligible age has not yet been finalized. Do not silently invent a final age policy. Make the eligibility rule configurable, document the open decision, and request confirmation before public launch.~~ Superseded by D-070: users must be 18 or older.
 
-A terms-and-privacy disclaimer does not eliminate legal responsibilities. Provide appropriate notices, report and block mechanisms, moderation procedures, and data-handling safeguards. Flag the need for jurisdiction-specific legal review before launch.
+A terms-and-privacy disclaimer does not eliminate legal responsibilities. Provide appropriate notices, report and block mechanisms, moderation procedures, and data-handling safeguards. ~~Flag the need for jurisdiction-specific legal review before launch.~~ Superseded by D-070: the owner approves the User Agreement and Privacy Policy without legal review.
 
 ## 8. Free Random Matching
 

@@ -199,8 +199,10 @@ async def test_old_agree_buttons_cannot_accept(chat: Chat, session_factory: Sess
         ob.TermsChoice(version="draft-0", accept=True).pack(),
         ob.TermsChoice(version=TERMS_VERSION, accept=True).pack(),
     ):
+        sent = len(chat.session.sent_texts())
         await chat.press_data(old)
-        assert chat.last() == TERMS  # the current welcome is shown again
+        # The current welcome is shown again.
+        assert chat.session.sent_texts()[sent:] == TERMS_PARTS
     async with session_factory() as session:
         assert await session.scalar(select(func.count()).select_from(TermsAcceptance)) == 0
 
@@ -210,7 +212,9 @@ async def test_continue_from_an_older_welcome_cannot_accept(
 ) -> None:
     await chat.send("/start")
     monkeypatch.setattr(ob, "TERMS_VERSION", "2.0")  # the documents change meanwhile
-    assert await chat.send(CONTINUE) == TERMS
+    sent = len(chat.session.sent_texts())
+    await chat.send(CONTINUE)
+    assert chat.session.sent_texts()[sent:] == TERMS_PARTS
     async with session_factory() as session:
         assert await session.scalar(select(func.count()).select_from(TermsAcceptance)) == 0
     # The welcome shown now is for the new version, so Continue accepts it.
@@ -221,7 +225,9 @@ async def test_continue_without_a_welcome_shows_it(chat: Chat, redis: Redis) -> 
     await chat.send("/start")
     await redis.flushdb()  # the FSM state with the shown version is lost
     chat.restart()
-    assert await chat.send(CONTINUE) == TERMS
+    sent = len(chat.session.sent_texts())
+    await chat.send(CONTINUE)
+    assert chat.session.sent_texts()[sent:] == TERMS_PARTS
 
 
 async def test_an_update_is_announced_to_someone_who_accepted_before(
