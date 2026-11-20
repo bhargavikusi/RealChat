@@ -48,6 +48,8 @@ To check that it's running:
 * `GET /health` returns 200 while the process is running.
 * `GET /ready` returns 200 when PostgreSQL and Redis are both reachable. Otherwise it returns 503 and names the failing service.
 
+The API also serves the terms of use at `/terms` and the privacy notice at `/privacy`, as simple web pages with the same text and version the bot shows. Once the API is reachable on the internet, set `PUBLIC_BASE_URL` to its https address so the bot's /terms links to them, and set the privacy policy link in @BotFather to `<PUBLIC_BASE_URL>/privacy`.
+
 To stop the services, run `docker compose down`. Data is kept in Docker volumes. Add `-v` to delete it as well.
 
 ### Telegram bot

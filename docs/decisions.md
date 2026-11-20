@@ -786,6 +786,19 @@ Work happens on short-lived issue branches, such as `feature/12-onboarding`, cre
 
 **Why:** Owner decisions to replay the payment from Telegram's own record, to send the usual receipt, and to leave payments matching none of our invoices to manual handling.
 
+### D-069 — Terms and privacy notice as web pages
+
+**Date:** 2026-11-20
+**Decision:**
+
+* The draft's bullets are regrouped, without changing their wording, into a terms of use part (age, chat requests, blocked content, conduct, blocking and reporting, coins, purchases and refunds, VIP, restrictions) and a privacy notice part (what others see, message and direct message storage, activity alerts about you, reminders, forwarding protection, account deletion and the record kept). Both stay in `backend/modules/users/terms.py`.
+* The bot shows both everywhere it shows the terms, under "📄 Terms of use" and "🔒 Privacy notice", below one draft label, so users accept the same text as before (terms version `draft-25`).
+* The API serves `/terms` and `/privacy` as self-contained HTML pages, with no scripts, fonts, images, or tracking, a content security policy that allows nothing else, the draft label, the terms version, and a link to the other page. The minimum age moves to the shared settings, so the page and the bot show the same one, and production requires it to be set for the API too.
+* An optional `PUBLIC_BASE_URL` (https) makes the bot's /terms add link buttons to both pages; while it is empty, nothing changes. At deployment, the privacy policy link in BotFather is set to the `/privacy` page.
+* The text is still the draft; final wording waits for legal review (O-007).
+
+**Why:** Owner decisions to serve the pages from RealChat's own server, as separate terms and privacy pages, and to link them from the bot once an address is set.
+
 ## Open
 
 Each of these needs the owner's decision. Until then, the behavior stays configurable and is not presented to users as final.

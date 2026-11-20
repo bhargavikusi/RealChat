@@ -15,7 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from apps.bot import payments as bot_payments
 from apps.bot.coins import CLAIM_BUTTON, LABELS
 from apps.bot.main import create_dispatcher
-from apps.bot.menu import BOT_COMMANDS
+from apps.bot.menu import BOT_COMMANDS, PRIVACY_WEB_BUTTON, TERMS_WEB_BUTTON, HelpAction
 from backend.config.settings import BotSettings
 from backend.modules.admin.models import AppSetting
 from backend.modules.admin.settings import SettingKey
@@ -551,11 +551,39 @@ async def test_terms_and_paysupport_are_in_the_menu() -> None:
 async def test_terms_shows_the_current_terms(
     bot_settings: BotSettings, redis: Redis, session_factory: Sessions
 ) -> None:
-    chat = Chat(bot_settings, redis, session_factory)
+    unset = bot_settings.model_copy(update={"public_base_url": None})
+    chat = Chat(unset, redis, session_factory)
     await chat.send("/terms")
     parts = terms_parts(bot_settings.min_age)
     assert len(parts) > 1  # the terms are longer than one message
     assert chat.session.sent_texts() == parts
+    # No web address configured: no links, not even an empty keyboard (D-069).
+    [*_, last] = [m for m in chat.session.requests if isinstance(m, SendMessage)]
+    assert last.reply_markup is None
+
+
+@pytest.mark.parametrize("base", ["https://realchat.example", "https://realchat.example/"])
+async def test_terms_links_to_the_web_pages_once_their_address_is_set(
+    bot_settings: BotSettings, redis: Redis, session_factory: Sessions, base: str
+) -> None:
+    chat = Chat(bot_settings.model_copy(update={"public_base_url": base}), redis, session_factory)
+    await chat.send("/terms")
+    assert chat.session.sent_texts() == terms_parts(bot_settings.min_age)
+    assert chat.session.last_buttons() == {
+        TERMS_WEB_BUTTON: "https://realchat.example/terms",
+        PRIVACY_WEB_BUTTON: "https://realchat.example/privacy",
+    }
+    # Help's Terms button sends the same, links included.
+    sent = len(chat.session.requests)
+    await chat.press_data(HelpAction(action="terms").pack())
+    new = [m for m in chat.session.requests[sent:] if isinstance(m, SendMessage)]
+    assert [m.text for m in new] == terms_parts(bot_settings.min_age)
+    markup = new[-1].reply_markup
+    assert isinstance(markup, InlineKeyboardMarkup)
+    assert [b.url for row in markup.inline_keyboard for b in row] == [
+        "https://realchat.example/terms",
+        "https://realchat.example/privacy",
+    ]
 
 
 async def test_paysupport_points_to_support_not_telegram(

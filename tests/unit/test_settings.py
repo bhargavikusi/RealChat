@@ -23,6 +23,7 @@ def clean_env(monkeypatch: pytest.MonkeyPatch) -> None:
         "PROFILE_CHANGE_COOLDOWN_DAYS",
         "ANNOUNCEMENT_CHANNEL_URL",
         "SUPPORT_CONTACT",
+        "PUBLIC_BASE_URL",
         "TELEGRAM_TEST_ENVIRONMENT",
     ):
         monkeypatch.delenv(name, raising=False)
@@ -236,3 +237,31 @@ async def test_the_bot_uses_the_test_environment_only_when_asked(
     finally:
         await normal.session.close()
         await test.session.close()
+
+
+def test_the_api_also_needs_an_explicit_age_in_production(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The terms web page shows it, so the API must agree with the bot (D-069).
+    monkeypatch.setenv("APP_ENV", "production")
+    monkeypatch.setenv("DATABASE_URL", DATABASE_URL)
+    monkeypatch.setenv("REDIS_URL", REDIS_URL)
+    with pytest.raises(SettingsError, match="MIN_AGE must be set explicitly in production"):
+        load_settings(env_file=None)
+    monkeypatch.setenv("MIN_AGE", "21")
+    assert load_settings(env_file=None).min_age == 21
+
+
+def test_the_public_address_is_optional_and_https(monkeypatch: pytest.MonkeyPatch) -> None:
+    _bot_env(monkeypatch)
+    monkeypatch.setenv("PUBLIC_BASE_URL", "")
+    assert load_bot_settings(env_file=None).public_base_url is None
+    monkeypatch.setenv("PUBLIC_BASE_URL", "http://realchat.example")
+    with pytest.raises(SettingsError, match="PUBLIC_BASE_URL"):
+        load_bot_settings(env_file=None)
+    for unusable in ("https://realchat.example/?x=1", "https://realchat.example/#top"):
+        monkeypatch.setenv("PUBLIC_BASE_URL", unusable)
+        with pytest.raises(SettingsError, match="PUBLIC_BASE_URL"):
+            load_bot_settings(env_file=None)
+    monkeypatch.setenv("PUBLIC_BASE_URL", "https://realchat.example")
+    assert str(load_bot_settings(env_file=None).public_base_url) == "https://realchat.example/"

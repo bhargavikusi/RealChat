@@ -3,10 +3,15 @@
 import pytest
 
 from backend.modules.users.terms import (
+    DRAFT_LABEL,
     MESSAGE_LIMIT,
+    PRIVACY_HEADING,
+    TERMS_HEADING,
     TERMS_QUESTION,
+    privacy_notice,
     split_message,
     terms_body,
+    terms_of_use,
     terms_parts,
     terms_prompt_parts,
     terms_text,
@@ -52,3 +57,30 @@ def test_the_terms_fit_in_messages_and_rejoin(minimum_age: int) -> None:
         assert "\n".join(parts) == whole
     # The accept buttons go on the last part, which asks the question.
     assert terms_prompt_parts(minimum_age)[-1].endswith(TERMS_QUESTION)
+
+
+def _bullets(text: str) -> list[str]:
+    return [line for line in text.split("\n") if line.startswith("• ")]
+
+
+def test_the_bot_shows_the_terms_of_use_then_the_privacy_notice() -> None:
+    body = terms_body(18)
+    assert body == (
+        f"{DRAFT_LABEL}\n\n{TERMS_HEADING}\n\n{terms_of_use(18)}\n\n"
+        f"{PRIVACY_HEADING}\n\n{privacy_notice()}"
+    )
+    # Every bullet is in exactly one of the two parts (D-069).
+    assert sorted(_bullets(body)) == sorted(_bullets(terms_of_use(18)) + _bullets(privacy_notice()))
+    assert len(set(_bullets(body))) == len(_bullets(body)) == 17
+
+
+def test_the_parts_hold_what_they_should() -> None:
+    assert "• You must be at least 21 years old." in terms_of_use(21)
+    assert any(
+        b.startswith("• Coins are a virtual in-app currency.") for b in _bullets(terms_of_use(18))
+    )
+    assert any(
+        b.startswith("• Messages pass through the RealChat bot.")
+        for b in _bullets(privacy_notice())
+    )
+    assert any(b.startswith("• You can delete your account") for b in _bullets(privacy_notice()))
