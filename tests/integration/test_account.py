@@ -289,6 +289,12 @@ async def test_restricted_users_are_stopped_but_keep_help_and_deletion(
     assert (await load_profile(session_factory)).nickname == "Night Owl"
 
     assert await chat.send("/help") == HELP_TEXT
+    # In a caption too, as the command filter reads it.
+    await chat.send_content(
+        photo=[PhotoSize(file_id="photo-3", file_unique_id="h", width=90, height=90)],
+        caption="/help",
+    )
+    assert chat.last() == HELP_TEXT
     assert await chat.send("/help@RealChatTestBot") == HELP_TEXT
     assert await chat.send("/help@SomeOtherBot") == notice
 

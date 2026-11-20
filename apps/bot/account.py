@@ -448,10 +448,9 @@ async def _allowed_when_restricted(update: Update, bot: Bot, raw_state: str | No
     if is_payment(update):
         return True
     if update.message is not None:
-        text = update.message.text or ""
         # Command filters match a caption too, so a captioned "/vip" is a command.
-        command_like = (text or update.message.caption or "").startswith("/")
-        if raw_state == AccountDeletion.confirm.state and not command_like:
+        text = update.message.text or update.message.caption or ""
+        if raw_state == AccountDeletion.confirm.state and not text.startswith("/"):
             return True
         command = text.split(maxsplit=1)[:1]
         if not command:
