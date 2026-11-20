@@ -31,17 +31,9 @@ class Settings(BaseSettings):
     # D-019: age and gender can each be changed once per this many days after onboarding.
     profile_change_cooldown_days: int = Field(default=30, ge=1, le=365)
 
-    # D-009: development value 18; the launch value is still open (O-001). The bot and
-    # the terms web page (D-069) both show it.
-    min_age: int = Field(default=18, ge=13, le=99)
-
-    @model_validator(mode="after")
-    def _require_explicit_production_age(self) -> "Settings":
-        # The default is a development value; the launch value is still open (O-001),
-        # so production must never fall back to it silently.
-        if self.app_env == "production" and "min_age" not in self.model_fields_set:
-            raise ValueError("MIN_AGE must be set explicitly in production")
-        return self
+    # D-009, D-070: users must be 18 or older, so the documents' "adults only" holds; it
+    # may be set higher. The bot and the web pages both show it.
+    min_age: int = Field(default=18, ge=18, le=99)
 
 
 class BotSettings(Settings):

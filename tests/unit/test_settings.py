@@ -137,18 +137,23 @@ def test_non_bot_processes_do_not_need_a_token(monkeypatch: pytest.MonkeyPatch) 
     assert load_settings(env_file=None).app_env == "development"
 
 
-def test_production_requires_explicit_min_age(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_the_minimum_age_is_18_or_higher(monkeypatch: pytest.MonkeyPatch) -> None:
+    # The documents say the Service is for adults only (D-070).
     monkeypatch.setenv("APP_ENV", "production")
     monkeypatch.setenv("DATABASE_URL", DATABASE_URL)
     monkeypatch.setenv("REDIS_URL", REDIS_URL)
     monkeypatch.setenv("TELEGRAM_BOT_TOKEN", BOT_TOKEN)
     monkeypatch.setenv("SUPPORT_CONTACT", "https://t.me/realchat_support")
-
-    with pytest.raises(SettingsError, match="MIN_AGE must be set explicitly in production"):
-        load_bot_settings(env_file=None)
-
-    monkeypatch.setenv("MIN_AGE", "18")
     assert load_bot_settings(env_file=None).min_age == 18
+
+    monkeypatch.setenv("MIN_AGE", "17")
+    with pytest.raises(SettingsError, match="MIN_AGE"):
+        load_bot_settings(env_file=None)
+    with pytest.raises(SettingsError, match="MIN_AGE"):
+        load_settings(env_file=None)
+
+    monkeypatch.setenv("MIN_AGE", "21")
+    assert load_bot_settings(env_file=None).min_age == 21
 
 
 def test_production_requires_a_support_contact(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -237,19 +242,6 @@ async def test_the_bot_uses_the_test_environment_only_when_asked(
     finally:
         await normal.session.close()
         await test.session.close()
-
-
-def test_the_api_also_needs_an_explicit_age_in_production(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    # The terms web page shows it, so the API must agree with the bot (D-069).
-    monkeypatch.setenv("APP_ENV", "production")
-    monkeypatch.setenv("DATABASE_URL", DATABASE_URL)
-    monkeypatch.setenv("REDIS_URL", REDIS_URL)
-    with pytest.raises(SettingsError, match="MIN_AGE must be set explicitly in production"):
-        load_settings(env_file=None)
-    monkeypatch.setenv("MIN_AGE", "21")
-    assert load_settings(env_file=None).min_age == 21
 
 
 def test_the_public_address_is_optional_and_https(monkeypatch: pytest.MonkeyPatch) -> None:

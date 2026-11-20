@@ -1,166 +1,84 @@
-"""Terms of use and privacy notice shown at onboarding (D-015).
+"""RealChat's User Agreement and Privacy Policy (D-015, D-070).
 
-The two are kept apart (D-069): the bot shows both, under two headings, and the API
-serves each as its own web page, all from this one source.
-
-DRAFT for development only. It must be replaced with legally reviewed text before
-launch (O-007). Changing the text requires a new TERMS_VERSION so users re-accept.
+Both are written in `legal/` as plain text with headings, from which the bot and the
+web pages are rendered. Changing either requires a new TERMS_VERSION, so users accept
+it again; users accept both together, by tapping Continue.
 
 Only describe what the product actually does. Periods that admins can change, such as
 message retention, are not given as numbers, so the text stays true when they change
 (D-046).
 """
 
-TERMS_VERSION = "draft-25"
+from dataclasses import dataclass
+from datetime import date
+from enum import StrEnum
+from functools import cache
+from pathlib import Path
+from typing import Literal
 
-DRAFT_LABEL = "DRAFT - not for launch"
-TERMS_HEADING = "📄 Terms of use"
-PRIVACY_HEADING = "🔒 Privacy notice"
+TERMS_VERSION = "1.0"
+EFFECTIVE_DATE = date(2026, 11, 20)
 
-# The terms of use and the privacy notice (D-069): the draft's bullets, regrouped.
-TERMS_OF_USE = """\
-Welcome to RealChat. Before you start:
+LEGAL_DIR = Path(__file__).parent / "legal"
 
-• You must be at least {minimum_age} years old.
-• You can send someone a chat request from their profile card, for coins, when they \
-were recently active in RealChat. They see your nickname and RealChat ID. The coins \
-are taken once the request is delivered and aren't returned if it's declined, expires, \
-or you don't switch to them when they accept. If either of you is in a chat when it's \
-accepted, that chat ends.
-• To keep chats anonymous, contact cards and locations can't be sent, and messages \
-or captions containing links, phone numbers, or @usernames are not delivered.
-• Be respectful. Harassment, threats, hate, sexual content involving minors, spam, \
-scams, and sharing other people's private information are not allowed.
-• You can block or report a chat partner from their profile card or after a chat, \
-and anyone whose profile card you opened, or who opened yours, from their card. \
-Blocking or reporting someone you're chatting with ends the chat, and they are only \
-told that the chat ended. Reporting also blocks them. Blocking doesn't stop you being \
-matched again in a random chat, or being told when they visit or like your profile. \
-Neither of you can send the other direct messages or chat requests while either has \
-blocked the other.
-• Coins are a virtual in-app currency. They have no cash value and can't be exchanged \
-for money or transferred to other users. This includes coins you buy.
-• You can buy coins with Telegram Stars from /coins. They're added once Telegram \
-confirms the payment. If RealChat can't deliver a purchase, for example because your \
-account was deleted before the payment arrived, RealChat asks Telegram to refund the \
-Stars and keeps asking until Telegram accepts. If a purchase is refunded, by RealChat \
-or by Telegram, the coins it added are removed from your balance (as many as are left) \
-and your VIP is worked out again as if that pass had never been bought. For help with \
-a purchase, use /paysupport: Telegram's support can't help with purchases made in \
-RealChat.
-• You can buy a VIP pass with Telegram Stars from /vip. It's paid once and never \
-renews. VIP lasts until the end date shown in /vip; buying another pass while VIP is \
-running adds its days to that date, and can be done once the time left is no longer \
-than one pass. When VIP runs out, coins included with a pass and any other coins \
-stay yours. Deleting your account ends VIP and erases your coins.
-• While someone has VIP, ✅ 👑 VIP or ✅ is shown after their nickname, and their \
-searches are matched first. These marks only show that VIP was bought in RealChat; \
-they don't verify anyone's identity.
-• Accounts that break these rules may be restricted or banned. A purchase whose \
-payment arrives after your account was restricted or banned is still delivered, and \
-VIP time keeps running while an account is restricted or banned."""
 
-PRIVACY_NOTICE = """\
-• You chat anonymously with other people. Other users never see your Telegram name, \
-username, or phone number. When you're matched, your chat partner sees your profile \
-card: nickname, age, gender, country, and any city, bio, or photo you add. People \
-you've chatted with can still see your profile card for a while after the chat. \
-Your profile card shows your RealChat ID, and anyone who has it can open your \
-profile card. A new ID is given if you delete your account and come back. \
-When you view someone's profile card, they can see that you visited, and they may be \
-told, unless you have VIP with Ghost mode on. When you like someone's profile, they \
-can see that you liked it while the like stands, and they may be told.
-• Messages pass through the RealChat bot. They are not end-to-end encrypted. \
-Chat messages are stored so that reports of abuse can be checked. They are deleted \
-automatically after a set period, unless they are part of a report that is still open. \
-Deleting them from RealChat doesn't remove them from your Telegram chat.
-• You can send a direct message to someone from their profile card, for coins. They \
-see your nickname and RealChat ID with it, and you're told when they open it. Telegram \
-apps that honour RealChat's protection don't let them forward or save it. Direct \
-messages are stored so they can be opened, and deleted automatically after the same \
-set period as chat messages.
-• You can pay coins for one alert the next time someone uses RealChat. Unless you \
-turn this off in Advanced settings, others can set such an alert about you; you're \
-not told who. It's based on your use of RealChat, never your Telegram online status. \
-The coins come back if the alert can't be sent within a set period, but not if you \
-cancel it.
-• While a daily reward is offered, RealChat may remind you to claim it, at most once a \
-day: about the time you usually do, or at a set local hour in your country. You can \
-turn reminders off in Advanced settings.
-• Telegram apps that honour RealChat's protection don't let your chat partner forward \
-or save what you send. Some Telegram apps also block screenshots of it, but not all of \
-them do.
-• You can delete your account at any time from your profile (Advanced settings), or, \
-if your account is restricted, from the notice you're shown, by replying DELETE to the \
-warning. Your profile is erased immediately, and so are your \
-coins, including coins you bought, any VIP time left, and your invite link. Coins and \
-VIP time aren't refunded. A new account doesn't get one-time rewards, like the welcome \
-bonus, again. A minimal record (your Telegram user ID, account status, and dates) is \
-kept so that \
-restrictions can't be avoided by signing up again. Blocks and reports you made or \
-received are kept too."""
+class Document(StrEnum):
+    USER_AGREEMENT = "user_agreement"
+    PRIVACY_POLICY = "privacy_policy"
 
-TERMS_QUESTION = "Do you agree to these terms and the privacy notice?"
+
+BlockKind = Literal["title", "section", "subsection", "paragraph", "item"]
+
+
+@dataclass(frozen=True)
+class Block:
+    """One heading, paragraph, or list item of a document."""
+
+    kind: BlockKind
+    text: str
+
+
+@cache
+def _source(document: Document) -> str:
+    return (LEGAL_DIR / f"{document.value}.md").read_text(encoding="utf-8")
+
+
+def document_blocks(document: Document, minimum_age: int) -> list[Block]:
+    """The document as blocks: `# ` is its title, `## ` a section, `### ` a subsection,
+    `- ` a list item, and any other line a paragraph. Blank lines only separate."""
+    prefixes: tuple[tuple[str, BlockKind], ...] = (
+        ("### ", "subsection"),
+        ("## ", "section"),
+        ("# ", "title"),
+        ("- ", "item"),
+    )
+    blocks: list[Block] = []
+    for line in _source(document).format(minimum_age=minimum_age).splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        kind: BlockKind = "paragraph"
+        for prefix, prefixed in prefixes:
+            if line.startswith(prefix):
+                kind, line = prefixed, line[len(prefix) :]
+                break
+        blocks.append(Block(kind, line))
+    return blocks
+
+
+def document_title(document: Document) -> str:
+    return document_blocks(document, 0)[0].text
+
+
+def effective_label() -> str:
+    """The version line every rendering of the documents shows."""
+    return f"Version {TERMS_VERSION} · Effective {EFFECTIVE_DATE.day} {EFFECTIVE_DATE:%B %Y}"
 
 
 # The most Telegram accepts in one message, counted in UTF-16 code units.
 MESSAGE_LIMIT = 4096
 
 
-def _length(text: str) -> int:
+def text_length(text: str) -> int:
+    """A text's length as Telegram counts it."""
     return len(text.encode("utf-16-le")) // 2
-
-
-def split_message(text: str, limit: int = MESSAGE_LIMIT) -> list[str]:
-    """Split `text` at line breaks into as few parts as fit within `limit`, in order.
-
-    Each bullet of the terms is one line, so parts end between bullets, and joining
-    the parts with a line break gives `text` back. A single line over the limit can't
-    be split this way and raises ValueError.
-    """
-    parts: list[str] = []
-    current: list[str] = []
-    for line in text.split("\n"):
-        if _length(line) > limit:
-            raise ValueError("a line is longer than one message")
-        if current and _length("\n".join([*current, line])) > limit:
-            parts.append("\n".join(current))
-            current = []
-        current.append(line)
-    parts.append("\n".join(current))
-    return parts
-
-
-def terms_of_use(minimum_age: int) -> str:
-    """The terms of use alone, as the /terms web page shows them."""
-    return TERMS_OF_USE.format(minimum_age=minimum_age)
-
-
-def privacy_notice() -> str:
-    """The privacy notice alone, as the /privacy web page shows it."""
-    return PRIVACY_NOTICE
-
-
-def terms_body(minimum_age: int) -> str:
-    """The terms of use and the privacy notice, as the bot shows them for reading again
-    later (e.g. from /help)."""
-    return (
-        f"{DRAFT_LABEL}\n\n{TERMS_HEADING}\n\n{terms_of_use(minimum_age)}\n\n"
-        f"{PRIVACY_HEADING}\n\n{privacy_notice()}"
-    )
-
-
-def terms_text(minimum_age: int) -> str:
-    """The terms followed by the acceptance question, as shown at onboarding."""
-    return f"{terms_body(minimum_age)}\n\n{TERMS_QUESTION}"
-
-
-def terms_parts(minimum_age: int) -> list[str]:
-    """The terms as the messages they are sent in (`split_message`)."""
-    return split_message(terms_body(minimum_age))
-
-
-def terms_prompt_parts(minimum_age: int) -> list[str]:
-    """The terms and the acceptance question as sent at onboarding; the last part
-    carries the accept buttons."""
-    return split_message(terms_text(minimum_age))

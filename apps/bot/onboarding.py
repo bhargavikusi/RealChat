@@ -24,12 +24,18 @@ from aiogram.filters import CommandObject, CommandStart
 from aiogram.filters.callback_data import CallbackData
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
-from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
+from aiogram.types import (
+    CallbackQuery,
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+    Message,
+    ReplyKeyboardRemove,
+)
 from aiogram.types import User as TelegramUser
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from apps.bot.keyboards import NEW_CHAT, current_keyboard, main_keyboard
-from apps.bot.menu import send_parts
+from apps.bot.legal import CONTINUE_BUTTON, continue_keyboard, send_welcome
 from backend.config.settings import BotSettings
 from backend.core.logging import exception_summary
 from backend.modules.admin.settings import SettingKey, load_values
@@ -37,7 +43,7 @@ from backend.modules.coins import rewards
 from backend.modules.users import service
 from backend.modules.users.countries import match_country
 from backend.modules.users.models import Profile, User
-from backend.modules.users.terms import TERMS_VERSION, terms_prompt_parts
+from backend.modules.users.terms import TERMS_VERSION
 from backend.modules.users.validation import Gender, ProfileValidationError, parse_age
 
 
@@ -80,11 +86,8 @@ PROMPTS = {
     "city": "Which city? This is optional and you can add it later.",
     "photo": "Send a profile photo if you'd like one. This is optional.",
 }
-TERMS_DECLINED = (
-    "You need to accept the terms to use RealChat. Send /start whenever you change your mind."
-)
-TERMS_REQUIRED = "Please accept the terms first."
-TERMS_UPDATED = "The terms have been updated. Please review the current version."
+TERMS_REQUIRED = f"Please tap {CONTINUE_BUTTON} to agree to our Privacy Policy and User Agreement."
+TERMS_UPDATED = "Our Privacy Policy and User Agreement have changed. Please review them."
 UNDER_AGE_RETRY = "If you entered your age by mistake, send it again."
 COUNTRY_NOT_FOUND = "I couldn't find that country. Please type its name in English, e.g. Germany."
 COUNTRY_PICK = "Did you mean one of these?"
@@ -117,14 +120,6 @@ REQUIRED_STEPS = {
 
 def _keyboard(*rows: list[InlineKeyboardButton]) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=list(rows))
-
-
-def _terms_keyboard() -> InlineKeyboardMarkup:
-    def button(text: str, accept: bool) -> InlineKeyboardButton:
-        data = TermsChoice(version=TERMS_VERSION, accept=accept).pack()
-        return InlineKeyboardButton(text=text, callback_data=data)
-
-    return _keyboard([button("I agree", True), button("Decline", False)])
 
 
 def _gender_keyboard() -> InlineKeyboardMarkup:
@@ -187,17 +182,21 @@ async def prompt_next(
     completion timestamp, and commits it before replying.
     """
     if not ctx.terms_accepted:
+        # The welcome, or the notice of an update for someone who accepted before (D-070).
+        updated = await service.has_accepted_any_terms(session, ctx.user.id)
+        await session.commit()
         await state.set_state(Onboarding.terms)
-        await send_parts(
-            bot, chat_id, terms_prompt_parts(settings.min_age), reply_markup=_terms_keyboard()
-        )
+        # The version shown, so Continue never accepts one the user didn't see.
+        await state.set_data({"terms_version": TERMS_VERSION})
+        await send_welcome(bot, chat_id, settings, updated=updated)
         return
 
     missing = service.missing_required_fields(ctx.profile)
     if missing:
         step = missing[0]
         await state.set_state(REQUIRED_STEPS[step])
-        markup = _gender_keyboard() if step == "gender" else None
+        # Text steps also take away the Continue keyboard.
+        markup = _gender_keyboard() if step == "gender" else ReplyKeyboardRemove()
         await bot.send_message(chat_id, PROMPTS[step], reply_markup=markup)
         return
 
@@ -328,30 +327,40 @@ async def on_terms(
     state: FSMContext,
     settings: BotSettings,
 ) -> None:
+    """An "I agree" or "Decline" button from before the welcome screen (D-070): it
+    accepts nothing, and shows the current documents instead."""
     ctx = await load_context(session, query.from_user)
-    if callback_data.version != TERMS_VERSION:
-        # A button from an older version: the user has not seen the current terms.
-        await query.answer(TERMS_UPDATED, show_alert=True)
-        await prompt_next(bot, query.from_user.id, session, ctx, state, settings)
-        return
     if ctx.terms_accepted:
-        # A repeated press: nothing to record and no prompt to repeat.
+        await session.commit()
         await query.answer(ALREADY_DONE)
         return
-    if not callback_data.accept:
-        await state.clear()
-        await query.answer()
-        await bot.send_message(query.from_user.id, TERMS_DECLINED)
-        return
-    await service.accept_terms(session, ctx.user.id, TERMS_VERSION)
-    await session.commit()
-    ctx.terms_accepted = True
-    await query.answer()
+    await query.answer(TERMS_UPDATED, show_alert=True)
     await prompt_next(bot, query.from_user.id, session, ctx, state, settings)
 
 
+async def on_continue(
+    message: Message, bot: Bot, session: AsyncSession, state: FSMContext, settings: BotSettings
+) -> None:
+    """✅ Continue accepts the version the welcome showed (D-070)."""
+    if message.from_user is None:
+        return
+    ctx = await load_context(session, message.from_user)
+    shown = (await state.get_data()).get("terms_version")
+    if (
+        not ctx.terms_accepted
+        and await state.get_state() == Onboarding.terms.state
+        and shown == TERMS_VERSION
+    ):
+        await service.accept_terms(session, ctx.user.id, TERMS_VERSION)
+        await session.commit()
+        ctx.terms_accepted = True
+    # Otherwise the welcome is shown again (an older one, or one whose state was lost),
+    # or, if already accepted, the user carries on where they were.
+    await prompt_next(bot, message.chat.id, session, ctx, state, settings)
+
+
 async def terms_pending(message: Message) -> None:
-    await message.answer(TERMS_REQUIRED)
+    await message.answer(TERMS_REQUIRED, reply_markup=continue_keyboard())
 
 
 # --- Required steps ------------------------------------------------------------------
@@ -546,6 +555,15 @@ async def on_skip(
         return
     await query.answer()
     await prompt_next(bot, query.from_user.id, session, ctx, state, settings, callback_data.step)
+
+
+def create_continue_router() -> Router:
+    """✅ Continue, ahead of every other message handler: it must never be relayed to a
+    chat partner or taken as an answer to something else (D-070)."""
+    router = Router(name="continue")
+    router.message.filter(F.chat.type == ChatType.PRIVATE)
+    router.message.register(on_continue, F.text == CONTINUE_BUTTON)
+    return router
 
 
 def create_router() -> Router:

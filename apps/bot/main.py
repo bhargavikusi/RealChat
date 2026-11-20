@@ -25,6 +25,7 @@ from apps.bot import (
     coins,
     direct,
     errors,
+    legal,
     likes,
     menu,
     onboarding,
@@ -104,6 +105,10 @@ def create_dispatcher(
     dispatcher.include_routers(
         errors.create_router(),
         menu.create_router(),
+        # ✅ Continue and reading the documents in the bot (D-070): before anything that
+        # could take Continue as an ordinary message, such as the chat relay.
+        onboarding.create_continue_router(),
+        legal.create_router(),
         # Stars purchases, /terms, and /paysupport (D-061): before anything that could
         # take a payment confirmation as an ordinary message.
         payments.create_router(),

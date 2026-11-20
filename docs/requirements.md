@@ -184,9 +184,9 @@ Provide sensible validation, profile editing, default avatars, duplicate-request
 
 The owner has decided not to require mandatory identity or age-document verification at launch and prefers to rely on user-entered information.
 
-The minimum eligible age has not yet been finalized. Do not silently invent a final age policy. Make the eligibility rule configurable, document the open decision, and request confirmation before public launch.
+~~The minimum eligible age has not yet been finalized. Do not silently invent a final age policy. Make the eligibility rule configurable, document the open decision, and request confirmation before public launch.~~ Superseded by D-070: users must be 18 or older.
 
-A terms-and-privacy disclaimer does not eliminate legal responsibilities. Provide appropriate notices, report and block mechanisms, moderation procedures, and data-handling safeguards. Flag the need for jurisdiction-specific legal review before launch.
+A terms-and-privacy disclaimer does not eliminate legal responsibilities. Provide appropriate notices, report and block mechanisms, moderation procedures, and data-handling safeguards. ~~Flag the need for jurisdiction-specific legal review before launch.~~ Superseded by D-070: the owner approves the User Agreement and Privacy Policy without legal review.
 
 ## 8. Free Random Matching
 
@@ -464,6 +464,8 @@ Approved (D-066): an admin can compare stored payments with Telegram's list of t
 Approved (D-068): an admin can record a payment Telegram has that was never recorded, from the server CLI. It is processed as its confirmation would have been, from Telegram's own record, but dated when it is recorded: a VIP pass starts then (or after VIP already running), so a late-recorded pass loses the days in between. It is granted once and audited, and the user gets the usual receipt; a payment for a deleted account is refunded instead. A payment that matches none of our invoices is left to manual handling.
 
 Approved (D-069): the terms of use and the privacy notice are separate parts of the same draft, shown together in the bot and served by the API as two web pages; the bot links to them once a public address is configured. The wording remains the draft pending legal review (O-007).
+
+Approved (D-070): the terms are a professional User Agreement and Privacy Policy (version 1.0), naming the operator only as RealChat, under Indian law and the courts of India, for users 18 and older, with the support contact for help, privacy requests, and grievances. They are official once the owner approves them, without legal review. The first start, and any new version, shows a short welcome with a button for each document and a blue ✅ Continue button that accepts both.
 
 Approved (D-067): deleting an account needs replying exactly `DELETE` to the warning; any other reply keeps the account. The warning shows the current coins (including bought coins) and, while VIP runs, the VIP days left and end date, and says they aren't refunded. Restricted users can still delete from their notice.
 

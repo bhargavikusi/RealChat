@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from apps.bot import account as ac
 from apps.bot import onboarding as ob
 from apps.bot import profile as pr
+from apps.bot.legal import CONTINUE_BUTTON as CONTINUE
 from apps.bot.menu import HELP_TEXT
 from apps.bot.payments import vip_date
 from backend.modules.users import service
@@ -17,7 +18,7 @@ from backend.modules.users.models import Profile, ProfileChange, TermsAcceptance
 from backend.modules.users.terms import TERMS_VERSION
 from tests.support.chat import (
     TERMS,
-    TERMS_PARTS,
+    UPDATED_TERMS_PARTS,
     USER_ID,
     Chat,
     complete_onboarding,
@@ -201,11 +202,13 @@ async def test_old_buttons_cannot_delete_without_the_current_terms(
     monkeypatch.setattr(ob, "TERMS_VERSION", "draft-99")  # the terms change
     sent = len(chat.session.sent_texts())
     await chat.send(ac.CONFIRM_WORD)
-    assert chat.session.sent_texts()[sent:] == TERMS_PARTS  # the new terms, nothing else
+    assert (
+        chat.session.sent_texts()[sent:] == UPDATED_TERMS_PARTS
+    )  # the update notice, nothing else
     for data in (settings, delete):
         sent = len(chat.session.sent_texts())
         await chat.press_data(data)
-        assert chat.session.sent_texts()[sent:] == TERMS_PARTS
+        assert chat.session.sent_texts()[sent:] == UPDATED_TERMS_PARTS
 
     assert (await load_profile(session_factory)).nickname == "Night Owl"
     assert (await _user(session_factory)).status == "active"
@@ -323,7 +326,7 @@ async def test_restricted_users_are_stopped_but_keep_help_and_deletion(
 
 async def test_unrestricted_users_are_not_affected(chat: Chat) -> None:
     assert await chat.send("/start") == TERMS
-    assert await chat.press("I agree") == ob.PROMPTS["nickname"]
+    assert await chat.send(CONTINUE) == ob.PROMPTS["nickname"]
 
 
 async def test_restricted_users_get_no_notice_in_groups(

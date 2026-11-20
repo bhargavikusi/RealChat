@@ -145,6 +145,15 @@ async def has_accepted_terms(session: AsyncSession, user_id: int, terms_version:
     return found.first() is not None
 
 
+async def has_accepted_any_terms(session: AsyncSession, user_id: int) -> bool:
+    """Whether the user has accepted some version, so a new one is shown as an update
+    (D-070). Account deletion erases acceptances, so a returning user is welcomed anew."""
+    found = await session.execute(
+        select(TermsAcceptance.id).where(TermsAcceptance.user_id == user_id).limit(1)
+    )
+    return found.first() is not None
+
+
 async def accept_terms(session: AsyncSession, user_id: int, terms_version: str) -> None:
     """Record acceptance of a terms version. Repeating it keeps the first timestamp.
 

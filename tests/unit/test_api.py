@@ -13,13 +13,7 @@ from pydantic import SecretStr
 from apps.api import pages
 from apps.api.main import create_app
 from backend.config.settings import Settings
-from backend.modules.users.terms import (
-    PRIVACY_HEADING,
-    TERMS_HEADING,
-    TERMS_VERSION,
-    privacy_notice,
-    terms_of_use,
-)
+from backend.modules.users.terms import Block, Document, document_blocks, effective_label
 
 
 @pytest.fixture
@@ -50,11 +44,14 @@ def test_api_docs_are_not_exposed(client: TestClient) -> None:
 
 
 @pytest.mark.parametrize(
-    ("path", "heading", "other"),
-    [("/terms", TERMS_HEADING, "/privacy"), ("/privacy", PRIVACY_HEADING, "/terms")],
+    ("path", "document", "other"),
+    [
+        ("/terms", Document.USER_AGREEMENT, "/privacy"),
+        ("/privacy", Document.PRIVACY_POLICY, "/terms"),
+    ],
 )
-def test_the_terms_and_privacy_pages(
-    client: TestClient, path: str, heading: str, other: str
+def test_the_user_agreement_and_privacy_pages(
+    client: TestClient, path: str, document: Document, other: str
 ) -> None:
     with client:
         response = client.get(path)
@@ -70,30 +67,43 @@ def test_the_terms_and_privacy_pages(
     assert pages.HEADERS["Cache-Control"] == "no-cache"
     assert pages.HEADERS["X-Content-Type-Options"] == "nosniff"
     page = response.text
-    assert f"<h1>{heading}</h1>" in page
-    assert "DRAFT - not for launch" in page
-    assert f"Version {TERMS_VERSION}" in page
     assert f'<a href="{other}">' in page
+    assert f'<p class="meta">{escape(effective_label())}</p>' in page
     assert "<script" not in page
+    assert "DRAFT" not in page
+    # Every block, word for word, in its own tag, with the configured age.
+    tags = {"title": "h1", "section": "h2", "subsection": "h3", "paragraph": "p", "item": "li"}
+    blocks = document_blocks(document, 21)
+    for block in blocks:
+        tag = tags[block.kind]
+        assert f"<{tag}>{escape(block.text)}</{tag}>" in page
+    assert page.count("<li>") == sum(1 for b in blocks if b.kind == "item")
+    assert page.count("<h2>") == sum(1 for b in blocks if b.kind == "section")
+    assert "21 years old" in page
 
 
-def test_the_pages_show_the_current_text(client: TestClient) -> None:
-    with client:
-        terms = client.get("/terms").text
-        privacy = client.get("/privacy").text
-    # The configured age is filled in; apostrophes and the like are escaped.
-    assert "<li>You must be at least 21 years old.</li>" in terms
-    # Every bullet, word for word, and nothing more.
-    for page, text in ((terms, terms_of_use(21)), (privacy, privacy_notice())):
-        bullets = [line[2:] for line in text.split("\n") if line.startswith("• ")]
-        assert page.count("<li>") == len(bullets)
-        for bullet in bullets:
-            assert f"<li>{escape(bullet)}</li>" in page
-    assert "you&#x27;ve chatted with" in privacy
+def test_list_items_are_grouped_and_text_is_escaped() -> None:
+    blocks = [
+        Block("title", "A <b>"),
+        Block("paragraph", "Intro & more"),
+        Block("item", "one <script>"),
+        Block("item", "two"),
+        Block("section", "1. Next"),
+    ]
+    body = pages._body(blocks)
+    assert "<h1>A &lt;b&gt;</h1>" in body
+    assert "<p>Intro &amp; more</p>" in body
+    assert "<ul><li>one &lt;script&gt;</li><li>two</li></ul>\n<h2>1. Next</h2>" in body
 
 
-def test_page_text_is_escaped() -> None:
-    page = pages.render("A <b>", "Intro & more\n• one <script>\n• two", ("/x", "X"))
-    assert "<p>Intro &amp; more</p>" in page
-    assert "<ul><li>one &lt;script&gt;</li><li>two</li></ul>" in page
-    assert "<title>RealChat · A &lt;b&gt;</title>" in page
+def test_the_page_title_and_footer_are_escaped(monkeypatch: pytest.MonkeyPatch) -> None:
+    titles = {Document.USER_AGREEMENT: "Terms <b>", Document.PRIVACY_POLICY: "Privacy & <i>"}
+
+    def blocks(document: Document, minimum_age: int) -> list[Block]:
+        return [Block("title", titles[document]), Block("paragraph", "Text")]
+
+    monkeypatch.setattr(pages, "document_blocks", blocks)
+    page = pages.render(Document.USER_AGREEMENT, 18)
+    assert "<title>RealChat · Terms &lt;b&gt;</title>" in page
+    assert '<footer>RealChat · <a href="/privacy">Privacy &amp; &lt;i&gt;</a></footer>' in page
+    assert "<b>" not in page and "<i>" not in page

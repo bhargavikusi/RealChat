@@ -13,6 +13,7 @@ from apps.bot import chat as ch
 from apps.bot import onboarding as ob
 from apps.bot.endings import MEET_PROMPT, RANDOM_BUTTON, PaidSearchAction
 from apps.bot.keyboards import NEW_CHAT
+from apps.bot.legal import CONTINUE_BUTTON as CONTINUE
 from backend.config.settings import BotSettings
 from backend.modules.admin import service as admin
 from backend.modules.admin.models import AppSetting
@@ -35,7 +36,7 @@ WOMEN = "👩 Women · 2 coins"
 
 async def onboard_as(chat: Chat, gender: str) -> None:
     assert await chat.send("/start") == TERMS
-    assert await chat.press("I agree") == ob.PROMPTS["nickname"]
+    assert await chat.send(CONTINUE) == ob.PROMPTS["nickname"]
     assert await chat.send(f"User {chat.user_id}") == ob.PROMPTS["age"]
     assert await chat.send("30") == ob.PROMPTS["gender"]
     assert await chat.press(gender) == ob.PROMPTS["country"]

@@ -12,10 +12,11 @@ from sqlalchemy import delete, select, text, update
 from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from apps.bot import legal
 from apps.bot import payments as bot_payments
 from apps.bot.coins import CLAIM_BUTTON, LABELS
 from apps.bot.main import create_dispatcher
-from apps.bot.menu import BOT_COMMANDS, PRIVACY_WEB_BUTTON, TERMS_WEB_BUTTON, HelpAction
+from apps.bot.menu import BOT_COMMANDS, HelpAction
 from backend.config.settings import BotSettings
 from backend.modules.admin.models import AppSetting
 from backend.modules.admin.settings import SettingKey
@@ -26,7 +27,7 @@ from backend.modules.payments.models import StarsInvoice, StarsPayment
 from backend.modules.payments.service import Outcome, Refusal
 from backend.modules.users import service as users
 from backend.modules.users.models import TermsAcceptance, User
-from backend.modules.users.terms import TERMS_VERSION, terms_parts
+from backend.modules.users.terms import TERMS_VERSION, Document
 from tests.support.chat import USER_ID, Chat, complete_onboarding
 from tests.support.db import wait_until_blocked
 from tests.support.telegram import make_bot, message_update, payment_update
@@ -548,18 +549,29 @@ async def test_terms_and_paysupport_are_in_the_menu() -> None:
     assert "terms" in names and "paysupport" in names
 
 
-async def test_terms_shows_the_current_terms(
+SUMMARY = legal.documents_summary().as_kwargs()["text"]
+PRIVACY_BUTTON = legal.BUTTON_LABELS[Document.PRIVACY_POLICY]
+AGREEMENT_BUTTON = legal.BUTTON_LABELS[Document.USER_AGREEMENT]
+
+
+async def test_terms_offers_the_documents_in_the_bot_without_an_address(
     bot_settings: BotSettings, redis: Redis, session_factory: Sessions
 ) -> None:
     unset = bot_settings.model_copy(update={"public_base_url": None})
     chat = Chat(unset, redis, session_factory)
     await chat.send("/terms")
-    parts = terms_parts(bot_settings.min_age)
-    assert len(parts) > 1  # the terms are longer than one message
-    assert chat.session.sent_texts() == parts
-    # No web address configured: no links, not even an empty keyboard (D-069).
-    [*_, last] = [m for m in chat.session.requests if isinstance(m, SendMessage)]
-    assert last.reply_markup is None
+    assert chat.session.sent_texts() == [SUMMARY]
+    [summary] = [m for m in chat.session.requests if isinstance(m, SendMessage)]
+    assert isinstance(summary.reply_markup, InlineKeyboardMarkup)
+    # Each of the summary's buttons sends its document in the bot (D-070).
+    for button, document in (
+        (PRIVACY_BUTTON, Document.PRIVACY_POLICY),
+        (AGREEMENT_BUTTON, Document.USER_AGREEMENT),
+    ):
+        sent = len(chat.session.sent_texts())
+        await chat.press_on(summary.reply_markup, button)
+        messages = legal.document_messages(document, bot_settings.min_age)
+        assert chat.session.sent_texts()[sent:] == [m.as_kwargs()["text"] for m in messages]
 
 
 @pytest.mark.parametrize("base", ["https://realchat.example", "https://realchat.example/"])
@@ -568,22 +580,20 @@ async def test_terms_links_to_the_web_pages_once_their_address_is_set(
 ) -> None:
     chat = Chat(bot_settings.model_copy(update={"public_base_url": base}), redis, session_factory)
     await chat.send("/terms")
-    assert chat.session.sent_texts() == terms_parts(bot_settings.min_age)
-    assert chat.session.last_buttons() == {
-        TERMS_WEB_BUTTON: "https://realchat.example/terms",
-        PRIVACY_WEB_BUTTON: "https://realchat.example/privacy",
+    assert chat.session.sent_texts() == [SUMMARY]
+    expected = {
+        PRIVACY_BUTTON: "https://realchat.example/privacy",
+        AGREEMENT_BUTTON: "https://realchat.example/terms",
     }
-    # Help's Terms button sends the same, links included.
+    assert chat.session.last_buttons() == expected
+    # Help's button sends the same.
     sent = len(chat.session.requests)
     await chat.press_data(HelpAction(action="terms").pack())
     new = [m for m in chat.session.requests[sent:] if isinstance(m, SendMessage)]
-    assert [m.text for m in new] == terms_parts(bot_settings.min_age)
+    assert [m.text for m in new] == [SUMMARY]
     markup = new[-1].reply_markup
     assert isinstance(markup, InlineKeyboardMarkup)
-    assert [b.url for row in markup.inline_keyboard for b in row] == [
-        "https://realchat.example/terms",
-        "https://realchat.example/privacy",
-    ]
+    assert {b.text: b.url for row in markup.inline_keyboard for b in row} == expected
 
 
 async def test_paysupport_points_to_support_not_telegram(
@@ -607,9 +617,19 @@ async def test_restricted_users_can_read_terms_and_payment_support(
     sent = len(chat.session.sent_texts())
     await chat.send(command)
     assert chat.session.sent_texts()[sent:] in (
-        terms_parts(18),
+        [SUMMARY],
         [bot_payments.PAYSUPPORT.format(where="")],
     )
+
+
+async def test_restricted_users_can_read_the_documents_in_the_bot(
+    chat: Chat, session_factory: Sessions
+) -> None:
+    await _set_status(session_factory, "banned")
+    sent = len(chat.session.sent_texts())
+    await chat.press_data(legal.LegalAction(document=Document.PRIVACY_POLICY.value).pack())
+    messages = legal.document_messages(Document.PRIVACY_POLICY, 18)
+    assert chat.session.sent_texts()[sent:] == [m.as_kwargs()["text"] for m in messages]
 
 
 # --- The payments table guard ------------------------------------------------------------

@@ -41,6 +41,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from apps.bot.admin import admin_button
 from apps.bot.endings import PARTNER_LEFT, coins_label, menu_price, tell_chat_ended
+from apps.bot.legal import LegalAction
 from apps.bot.menu import HelpAction
 from apps.bot.middlewares import Handler, is_payment
 from apps.bot.onboarding import load_context, prompt_next
@@ -462,7 +463,7 @@ async def _allowed_when_restricted(update: Update, bot: Bot, raw_state: str | No
         return not mention or mention.casefold() == ((await bot.me()).username or "").casefold()
     if update.callback_query is not None:
         data = update.callback_query.data or ""
-        allowed = (HelpAction.__prefix__, AccountAction.__prefix__)
+        allowed = (HelpAction.__prefix__, LegalAction.__prefix__, AccountAction.__prefix__)
         return data.split(":", 1)[0] in allowed and data != AccountAction(action="settings").pack()
     return False
 

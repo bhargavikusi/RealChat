@@ -11,12 +11,14 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from apps.bot import account as ac
 from apps.bot import admin as ad
+from apps.bot import legal
 from apps.bot import onboarding as ob
 from apps.bot import profile as pr
 from apps.bot.errors import GENERIC_ERROR_TEXT
+from apps.bot.menu import DOCUMENTS_BUTTON
 from backend.modules.admin import service as admin_service
 from backend.modules.admin.settings import load_values
-from backend.modules.users.terms import terms_parts
+from backend.modules.users.terms import Document
 from tests.support.chat import TERMS, USER_ID, Chat, complete_onboarding
 
 Sessions = async_sessionmaker[AsyncSession]
@@ -26,15 +28,20 @@ EXPIRED = "Bad Request: query is too old and response timeout expired or query I
 async def test_onboarding_buttons(chat: Chat) -> None:
     assert await chat.send("/start") == TERMS
     chat.session.reject_callback_answers = EXPIRED
-    assert await chat.press("I agree") == ob.PROMPTS["nickname"]
+    sent = len(chat.session.sent_texts())
+    await chat.press_data(legal.LegalAction(document=Document.PRIVACY_POLICY.value).pack())
+    assert chat.session.sent_texts()[sent:] == [
+        m.as_kwargs()["text"] for m in legal.document_messages(Document.PRIVACY_POLICY, 18)
+    ]
+    assert await chat.send(legal.CONTINUE_BUTTON) == ob.PROMPTS["nickname"]
 
 
 async def test_help_buttons(chat: Chat) -> None:
     await chat.send("/help")
     chat.session.reject_callback_answers = EXPIRED
     sent = len(chat.session.sent_texts())
-    await chat.press("📄 Terms and privacy")
-    assert chat.session.sent_texts()[sent:] == terms_parts(18)
+    await chat.press(DOCUMENTS_BUTTON)
+    assert chat.session.sent_texts()[sent:] == [legal.documents_summary().as_kwargs()["text"]]
 
 
 async def test_profile_buttons(chat: Chat) -> None:
@@ -73,7 +80,7 @@ async def test_expired_acknowledgements_are_logged_without_details(
     await chat.send("/help")
     chat.session.reject_callback_answers = EXPIRED
     with caplog.at_level(logging.INFO, logger="apps.bot.telegram_session"):
-        await chat.press("📄 Terms and privacy")
+        await chat.press(DOCUMENTS_BUTTON)
     records = [r for r in caplog.records if r.name == "apps.bot.telegram_session"]
     assert [r.getMessage() for r in records] == [
         "callback acknowledgement expired; continuing without it"
@@ -88,7 +95,7 @@ async def test_other_rejections_are_still_errors(
     sent = len(chat.session.sent_texts())
     chat.session.reject_callback_answers = "Bad Request: something else went wrong"
     with caplog.at_level(logging.ERROR, logger="apps.bot.errors"):
-        await chat.press("📄 Terms and privacy")
+        await chat.press(DOCUMENTS_BUTTON)
 
     # The handler stopped and the error handler ran, as before.
     assert chat.session.sent_texts()[sent:] == []
