@@ -188,12 +188,27 @@ async def test_both_can_search_again_after_a_chat(world: World) -> None:
         assert await chat_service.active_chat(session, await world.user_id(USER_ID))
 
 
+async def test_a_reply_to_the_deletion_warning_is_not_relayed(world: World) -> None:
+    await match(world)
+    await world.alice.send("/profile")
+    await world.alice.press(ac.ADVANCED_SETTINGS)
+    await world.alice.press(ac.DELETE_BUTTON)
+    copies = len(world.alice.session.copies())
+    assert await world.alice.send("hello") == ac.NOT_CONFIRMED
+    assert len(world.alice.session.copies()) == copies
+    # The chat carries on, and messages are relayed again.
+    async with world.sessions() as session:
+        assert await chat_service.active_chat(session, await world.user_id(USER_ID))
+    await world.alice.send("hello again")
+    assert len(world.alice.session.copies()) == copies + 1
+
+
 async def test_deleting_the_account_ends_the_chat(world: World) -> None:
     await match(world)
     await world.alice.send("/profile")
     await world.alice.press(ac.ADVANCED_SETTINGS)
     await world.alice.press(ac.DELETE_BUTTON)
-    await world.alice.press(ac.CONFIRM_BUTTON)
+    await world.alice.send(ac.CONFIRM_WORD)
     assert text_of(last_to(world.alice.session, USER_ID)) == ac.DELETED
     assert_chat_ended(world.alice.session, BOB_ID, PARTNER_LEFT)
     # The partner is told before the deleting user's own reply.

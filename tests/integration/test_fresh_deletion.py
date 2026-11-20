@@ -202,7 +202,7 @@ async def test_restricted_accounts_forfeit_their_coins_too(
         await session.commit()
     await alice.send("/profile")
     assert await alice.press(ac.DELETE_BUTTON) == ac.DELETE_CONFIRM.format(coins="10 coins", vip="")
-    assert await alice.press(ac.CONFIRM_BUTTON) == ac.DELETED_RESTRICTED
+    assert await alice.send(ac.CONFIRM_WORD) == ac.DELETED_RESTRICTED
     assert await total(session_factory, await user_id_of(session_factory)) == 0
 
 

@@ -7,9 +7,10 @@ flips a setting back. Their buttons have their own prefix, which the access gate
 not let suspended or banned users through.
 
 Deletion is reached from the profile card's Advanced settings button, or from the
-notice shown to suspended and banned users. It always needs a second, explicit
-confirmation. The confirmation buttons carry a random id kept in FSM state, so a
-confirmation button from a cancelled, finished, or older request does nothing.
+notice shown to suspended and banned users. After the warning, the user must type
+exactly DELETE (D-067); any other reply keeps the account and ends the request. The
+request waits in FSM state, and its Cancel button carries a random id kept there, so a
+Cancel button from a cancelled, finished, or older request does nothing.
 
 Ordinary users must have accepted the current terms (D-025); otherwise, even from
 an older profile card, they are shown the terms instead. Suspended and banned users
@@ -18,7 +19,7 @@ may delete without that, from their notice (D-026).
 
 import logging
 import secrets
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from aiogram import BaseMiddleware, Bot, F, Router
@@ -31,9 +32,11 @@ from aiogram.types import (
     CallbackQuery,
     InlineKeyboardButton,
     InlineKeyboardMarkup,
+    Message,
     TelegramObject,
     Update,
 )
+from aiogram.types import User as TelegramUser
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from apps.bot.admin import admin_button
@@ -42,6 +45,7 @@ from apps.bot.menu import HelpAction
 from apps.bot.middlewares import Handler, is_payment
 from apps.bot.onboarding import load_context, prompt_next
 from apps.bot.payments import vip_date
+from apps.bot.people import days_label
 from backend.config.settings import BotSettings
 from backend.core.logging import exception_summary
 from backend.modules.admin import service as admin_service
@@ -82,17 +86,18 @@ class AccountDeletion(StatesGroup):
 
 ADVANCED_SETTINGS = "⚙️ Advanced settings"
 DELETE_BUTTON = "🗑 Delete account"
-CONFIRM_BUTTON = "Yes, delete my account"
+# The reply that confirms a deletion, exactly (D-067).
+CONFIRM_WORD = "DELETE"
 KEEP_BUTTON = "Cancel"
 ADVANCED_SETTINGS_TEXT = "Advanced settings"
-# What deletion removes (D-016, D-055, D-062); {coins} is the current balance, and {vip}
-# is VIP_LOST while VIP is running, or empty.
+# What deletion removes (D-016, D-055, D-062, D-067); {coins} is the current balance,
+# and {vip} is VIP_LOST while VIP is running, or empty.
 DELETE_CONFIRM = (
     "Delete your account?\n\n"
     "This can't be undone. You'll lose:\n"
     "• Your profile (nickname, age, gender, country, city, bio, and photo) and your "
     "RealChat ID\n"
-    "• Your coins (you have {coins})\n"
+    "• Your coins (you have {coins}), including any you bought. They aren't refunded.\n"
     "{vip}"
     "• Your Past chats list, visitors, and settings\n"
     "• Your invite link, and rewards for invites that haven't finished signing up\n\n"
@@ -100,9 +105,15 @@ DELETE_CONFIRM = (
     "restrictions can't be avoided by signing up again, along with blocks, reports, and "
     "coin records.\n\n"
     "You can come back later with /start and start fresh. One-time rewards you already "
-    "received, like the welcome bonus, aren't given again."
+    "received, like the welcome bonus, aren't given again.\n\n"
+    f"To delete your account, reply with {CONFIRM_WORD} in capital letters. Any other "
+    "reply, including in a chat, keeps your account."
 )
-VIP_LOST = "• Your VIP, which would last until {until}\n"
+VIP_LOST = "• Your VIP, with {days} left (until {until}). It isn't refunded.\n"
+NOT_CONFIRMED = (
+    f"Your account was not deleted. To delete it, tap 🗑 Delete account again and reply "
+    f"with exactly {CONFIRM_WORD}."
+)
 DELETED = "Your account has been deleted. Send /start if you ever want to come back."
 DELETED_RESTRICTED = "Your profile has been erased. Your account remains restricted."
 KEPT = "Your account was not deleted."
@@ -181,21 +192,23 @@ def restriction_notice(status: str) -> str:
 
 
 async def _may_delete(
-    query: CallbackQuery,
+    telegram_user: TelegramUser,
     bot: Bot,
     session: AsyncSession,
     state: FSMContext,
     settings: BotSettings,
+    query: CallbackQuery | None = None,
 ) -> bool:
     """True for restricted users and users who accepted the current terms.
 
     Anyone else is shown the current terms, as every other feature does.
     """
-    ctx = await load_context(session, query.from_user)
+    ctx = await load_context(session, telegram_user)
     if service.is_restricted(ctx.user.status) or ctx.terms_accepted:
         return True
-    await query.answer()
-    await prompt_next(bot, query.from_user.id, session, ctx, state, settings)
+    if query is not None:
+        await query.answer()
+    await prompt_next(bot, telegram_user.id, session, ctx, state, settings)
     return False
 
 
@@ -206,7 +219,7 @@ async def show_settings(
     state: FSMContext,
     settings: BotSettings,
 ) -> None:
-    if not await _may_delete(query, bot, session, state, settings):
+    if not await _may_delete(query.from_user, bot, session, state, settings, query):
         return
     # The access gate keeps suspended and banned users out of settings (D-026).
     user = await service.get_or_create_user(session, query.from_user.id)
@@ -303,31 +316,36 @@ async def ask_to_confirm(
     state: FSMContext,
     settings: BotSettings,
 ) -> None:
-    if not await _may_delete(query, bot, session, state, settings):
+    if not await _may_delete(query.from_user, bot, session, state, settings, query):
         return
     user = await service.get_or_create_user(session, query.from_user.id)
     balance = await coins.balance(session, user.id)
     await session.commit()
+    now = datetime.now(UTC)
     request = secrets.token_hex(4)
     await state.set_state(AccountDeletion.confirm)
     await state.set_data({"request": request})
     keyboard = InlineKeyboardMarkup(
-        inline_keyboard=[
-            [_button(CONFIRM_BUTTON, AccountAction(action="confirm", request=request))],
-            [_button(KEEP_BUTTON, AccountAction(action="keep", request=request))],
-        ]
+        inline_keyboard=[[_button(KEEP_BUTTON, AccountAction(action="keep", request=request))]]
     )
     await query.answer()
     await bot.send_message(
         query.from_user.id,
         DELETE_CONFIRM.format(
             coins=coins_label(balance.total),
-            vip=VIP_LOST.format(until=vip_date(user.vip_until))
-            if user.vip_until is not None and payments.is_vip(user, datetime.now(UTC))
+            vip=VIP_LOST.format(
+                days=days_label(vip_days_left(user.vip_until, now)), until=vip_date(user.vip_until)
+            )
+            if user.vip_until is not None and payments.is_vip(user, now)
             else "",
         ),
         reply_markup=keyboard,
     )
+
+
+def vip_days_left(until: datetime, now: datetime) -> int:
+    """Whole days of VIP left, counting a part day as one."""
+    return -(-(until - now) // timedelta(days=1))
 
 
 async def _is_current(state: FSMContext, request: str) -> bool:
@@ -339,20 +357,24 @@ async def _is_current(state: FSMContext, request: str) -> bool:
     )
 
 
-async def on_confirm(
-    query: CallbackQuery,
+async def on_typed(
+    message: Message,
     bot: Bot,
-    callback_data: AccountAction,
     session: AsyncSession,
     state: FSMContext,
     settings: BotSettings,
 ) -> None:
-    if not await _is_current(state, callback_data.request):
-        await query.answer(EXPIRED)
+    """The reply to the deletion warning: exactly CONFIRM_WORD deletes, anything else
+    keeps the account and ends the request (D-067)."""
+    if message.from_user is None:
         return
-    if not await _may_delete(query, bot, session, state, settings):
+    if message.text != CONFIRM_WORD:
+        await state.clear()
+        await message.answer(NOT_CONFIRMED)
         return
-    found = await service.get_or_create_user(session, query.from_user.id)
+    if not await _may_delete(message.from_user, bot, session, state, settings):
+        return
+    found = await service.get_or_create_user(session, message.from_user.id)
     # The row is locked before anything else, so a match being created for this user
     # either finishes first (and is ended below) or waits and then finds the account
     # deleted.
@@ -379,8 +401,12 @@ async def on_confirm(
             blocked=partner_blocked,
             price=price,
         )
-    await query.answer()
-    await bot.send_message(query.from_user.id, DELETED_RESTRICTED if restricted else DELETED)
+    await message.answer(DELETED_RESTRICTED if restricted else DELETED)
+
+
+async def on_old_confirm(query: CallbackQuery) -> None:
+    """The one-tap confirm button from before typed confirmation (D-067)."""
+    await query.answer(EXPIRED)
 
 
 async def on_keep(
@@ -396,27 +422,37 @@ async def on_keep(
 
 def create_router() -> Router:
     router = Router(name="account")
+    router.message.filter(F.chat.type == ChatType.PRIVATE)
     router.callback_query.filter(F.message.chat.type == ChatType.PRIVATE)
     router.callback_query.register(show_settings, AccountAction.filter(F.action == "settings"))
     router.callback_query.register(on_notify, NotifyAction.filter())
     router.callback_query.register(on_ghost, GhostAction.filter())
     router.callback_query.register(ask_to_confirm, AccountAction.filter(F.action == "delete"))
-    router.callback_query.register(on_confirm, AccountAction.filter(F.action == "confirm"))
+    router.callback_query.register(on_old_confirm, AccountAction.filter(F.action == "confirm"))
     router.callback_query.register(on_keep, AccountAction.filter(F.action == "keep"))
+    # Any message while the warning waits for its reply, before the chat relays it.
+    router.message.register(on_typed, AccountDeletion.confirm)
     return router
 
 
 # --- Access gate ---------------------------------------------------------------------
 
 
-async def _allowed_when_restricted(update: Update, bot: Bot) -> bool:
+async def _allowed_when_restricted(update: Update, bot: Bot, raw_state: str | None) -> bool:
     """Help, the terms, payment support, and account deletion stay available to
     restricted users (D-026, D-061). Payment updates pass too: checkout declines
-    restricted users itself, with a reason, and a confirmed payment must be recorded."""
+    restricted users itself, with a reason, and a confirmed payment must be recorded.
+    Any reply to a deletion warning, text or media, passes while the warning waits for it
+    (D-067), but no command does: a command would reach handlers before the deletion
+    check."""
     if is_payment(update):
         return True
     if update.message is not None:
-        command = (update.message.text or "").split(maxsplit=1)[:1]
+        # Command filters match a caption too, so a captioned "/vip" is a command.
+        text = update.message.text or update.message.caption or ""
+        if raw_state == AccountDeletion.confirm.state and not text.startswith("/"):
+            return True
+        command = text.split(maxsplit=1)[:1]
         if not command:
             return False
         name, _, mention = command[0].partition("@")
@@ -451,7 +487,7 @@ class AccessGateMiddleware(BaseMiddleware):
         if (
             status is None
             or not service.is_restricted(status)
-            or await _allowed_when_restricted(event, bot)
+            or await _allowed_when_restricted(event, bot, data.get("raw_state"))
         ):
             return await handler(event, data)
         if event.callback_query is not None:

@@ -399,10 +399,10 @@ async def test_deleting_the_account_ends_vip_after_a_warning(
     await chat.press(ac.ADVANCED_SETTINGS)
     warning = await chat.press(ac.DELETE_BUTTON)
     assert warning == ac.DELETE_CONFIRM.format(
-        coins="3760 coins", vip=ac.VIP_LOST.format(until=vip_date(until))
+        coins="3760 coins", vip=ac.VIP_LOST.format(days="180 days", until=vip_date(until))
     )
     await _set_ghost_off(session_factory)
-    await chat.press(ac.CONFIRM_BUTTON)
+    await chat.send(ac.CONFIRM_WORD)
     assert (await _user(session_factory)).vip_until is None
     assert await _ghost_mode(session_factory)  # reset with the account (D-064)
     # The payment that bought it is kept, with what it granted.
