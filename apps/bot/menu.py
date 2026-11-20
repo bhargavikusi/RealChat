@@ -84,9 +84,31 @@ async def send_parts(
     await bot.send_message(chat_id, parts[-1], reply_markup=reply_markup)
 
 
+TERMS_WEB_BUTTON = "📄 Terms on the web"
+PRIVACY_WEB_BUTTON = "🔒 Privacy on the web"
+
+
+def web_links(settings: BotSettings) -> InlineKeyboardMarkup | None:
+    """Links to the terms and privacy web pages (D-069), once their address is set."""
+    if settings.public_base_url is None:
+        return None
+    base = str(settings.public_base_url).rstrip("/")
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text=TERMS_WEB_BUTTON, url=f"{base}/terms")],
+            [InlineKeyboardButton(text=PRIVACY_WEB_BUTTON, url=f"{base}/privacy")],
+        ]
+    )
+
+
+async def send_terms(bot: Bot, chat_id: int, settings: BotSettings) -> None:
+    """The terms of use and privacy notice for reading again, with the web links."""
+    await send_parts(bot, chat_id, terms_parts(settings.min_age), web_links(settings))
+
+
 async def show_terms(query: CallbackQuery, bot: Bot, settings: BotSettings) -> None:
     await query.answer()
-    await send_parts(bot, query.from_user.id, terms_parts(settings.min_age))
+    await send_terms(bot, query.from_user.id, settings)
 
 
 def create_router() -> Router:

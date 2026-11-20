@@ -1,5 +1,8 @@
 """Terms of use and privacy notice shown at onboarding (D-015).
 
+The two are kept apart (D-069): the bot shows both, under two headings, and the API
+serves each as its own web page, all from this one source.
+
 DRAFT for development only. It must be replaced with legally reviewed text before
 launch (O-007). Changing the text requires a new TERMS_VERSION so users re-accept.
 
@@ -8,48 +11,22 @@ message retention, are not given as numbers, so the text stays true when they ch
 (D-046).
 """
 
-TERMS_VERSION = "draft-24"
+TERMS_VERSION = "draft-25"
 
-TERMS_TEXT = """\
-DRAFT - not for launch
+DRAFT_LABEL = "DRAFT - not for launch"
+TERMS_HEADING = "📄 Terms of use"
+PRIVACY_HEADING = "🔒 Privacy notice"
 
+# The terms of use and the privacy notice (D-069): the draft's bullets, regrouped.
+TERMS_OF_USE = """\
 Welcome to RealChat. Before you start:
 
 • You must be at least {minimum_age} years old.
-• You chat anonymously with other people. Other users never see your Telegram name, \
-username, or phone number. When you're matched, your chat partner sees your profile \
-card: nickname, age, gender, country, and any city, bio, or photo you add. People \
-you've chatted with can still see your profile card for a while after the chat. \
-Your profile card shows your RealChat ID, and anyone who has it can open your \
-profile card. A new ID is given if you delete your account and come back. \
-When you view someone's profile card, they can see that you visited, and they may be \
-told, unless you have VIP with Ghost mode on. When you like someone's profile, they \
-can see that you liked it while the like stands, and they may be told.
-• Messages pass through the RealChat bot. They are not end-to-end encrypted. \
-Chat messages are stored so that reports of abuse can be checked. They are deleted \
-automatically after a set period, unless they are part of a report that is still open. \
-Deleting them from RealChat doesn't remove them from your Telegram chat.
-• You can send a direct message to someone from their profile card, for coins. They \
-see your nickname and RealChat ID with it, and you're told when they open it. Telegram \
-apps that honour RealChat's protection don't let them forward or save it. Direct \
-messages are stored so they can be opened, and deleted automatically after the same \
-set period as chat messages.
 • You can send someone a chat request from their profile card, for coins, when they \
 were recently active in RealChat. They see your nickname and RealChat ID. The coins \
 are taken once the request is delivered and aren't returned if it's declined, expires, \
 or you don't switch to them when they accept. If either of you is in a chat when it's \
 accepted, that chat ends.
-• You can pay coins for one alert the next time someone uses RealChat. Unless you \
-turn this off in Advanced settings, others can set such an alert about you; you're \
-not told who. It's based on your use of RealChat, never your Telegram online status. \
-The coins come back if the alert can't be sent within a set period, but not if you \
-cancel it.
-• While a daily reward is offered, RealChat may remind you to claim it, at most once a \
-day: about the time you usually do, or at a set local hour in your country. You can \
-turn reminders off in Advanced settings.
-• Telegram apps that honour RealChat's protection don't let your chat partner forward \
-or save what you send. Some Telegram apps also block screenshots of it, but not all of \
-them do.
 • To keep chats anonymous, contact cards and locations can't be sent, and messages \
 or captions containing links, phone numbers, or @usernames are not delivered.
 • Be respectful. Harassment, threats, hate, sexual content involving minors, spam, \
@@ -81,7 +58,38 @@ searches are matched first. These marks only show that VIP was bought in RealCha
 they don't verify anyone's identity.
 • Accounts that break these rules may be restricted or banned. A purchase whose \
 payment arrives after your account was restricted or banned is still delivered, and \
-VIP time keeps running while an account is restricted or banned.
+VIP time keeps running while an account is restricted or banned."""
+
+PRIVACY_NOTICE = """\
+• You chat anonymously with other people. Other users never see your Telegram name, \
+username, or phone number. When you're matched, your chat partner sees your profile \
+card: nickname, age, gender, country, and any city, bio, or photo you add. People \
+you've chatted with can still see your profile card for a while after the chat. \
+Your profile card shows your RealChat ID, and anyone who has it can open your \
+profile card. A new ID is given if you delete your account and come back. \
+When you view someone's profile card, they can see that you visited, and they may be \
+told, unless you have VIP with Ghost mode on. When you like someone's profile, they \
+can see that you liked it while the like stands, and they may be told.
+• Messages pass through the RealChat bot. They are not end-to-end encrypted. \
+Chat messages are stored so that reports of abuse can be checked. They are deleted \
+automatically after a set period, unless they are part of a report that is still open. \
+Deleting them from RealChat doesn't remove them from your Telegram chat.
+• You can send a direct message to someone from their profile card, for coins. They \
+see your nickname and RealChat ID with it, and you're told when they open it. Telegram \
+apps that honour RealChat's protection don't let them forward or save it. Direct \
+messages are stored so they can be opened, and deleted automatically after the same \
+set period as chat messages.
+• You can pay coins for one alert the next time someone uses RealChat. Unless you \
+turn this off in Advanced settings, others can set such an alert about you; you're \
+not told who. It's based on your use of RealChat, never your Telegram online status. \
+The coins come back if the alert can't be sent within a set period, but not if you \
+cancel it.
+• While a daily reward is offered, RealChat may remind you to claim it, at most once a \
+day: about the time you usually do, or at a set local hour in your country. You can \
+turn reminders off in Advanced settings.
+• Telegram apps that honour RealChat's protection don't let your chat partner forward \
+or save what you send. Some Telegram apps also block screenshots of it, but not all of \
+them do.
 • You can delete your account at any time from your profile (Advanced settings), or, \
 if your account is restricted, from the notice you're shown, by replying DELETE to the \
 warning. Your profile is erased immediately, and so are your \
@@ -123,9 +131,23 @@ def split_message(text: str, limit: int = MESSAGE_LIMIT) -> list[str]:
     return parts
 
 
+def terms_of_use(minimum_age: int) -> str:
+    """The terms of use alone, as the /terms web page shows them."""
+    return TERMS_OF_USE.format(minimum_age=minimum_age)
+
+
+def privacy_notice() -> str:
+    """The privacy notice alone, as the /privacy web page shows it."""
+    return PRIVACY_NOTICE
+
+
 def terms_body(minimum_age: int) -> str:
-    """The terms alone, for reading again later (e.g. from /help)."""
-    return TERMS_TEXT.format(minimum_age=minimum_age)
+    """The terms of use and the privacy notice, as the bot shows them for reading again
+    later (e.g. from /help)."""
+    return (
+        f"{DRAFT_LABEL}\n\n{TERMS_HEADING}\n\n{terms_of_use(minimum_age)}\n\n"
+        f"{PRIVACY_HEADING}\n\n{privacy_notice()}"
+    )
 
 
 def terms_text(minimum_age: int) -> str:

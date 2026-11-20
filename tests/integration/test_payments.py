@@ -15,7 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from apps.bot import payments as bot_payments
 from apps.bot.coins import CLAIM_BUTTON, LABELS
 from apps.bot.main import create_dispatcher
-from apps.bot.menu import BOT_COMMANDS
+from apps.bot.menu import BOT_COMMANDS, PRIVACY_WEB_BUTTON, TERMS_WEB_BUTTON, HelpAction
 from backend.config.settings import BotSettings
 from backend.modules.admin.models import AppSetting
 from backend.modules.admin.settings import SettingKey
@@ -556,6 +556,25 @@ async def test_terms_shows_the_current_terms(
     parts = terms_parts(bot_settings.min_age)
     assert len(parts) > 1  # the terms are longer than one message
     assert chat.session.sent_texts() == parts
+    # No web address configured: no links, not even an empty keyboard (D-069).
+    [*_, last] = [m for m in chat.session.requests if isinstance(m, SendMessage)]
+    assert last.reply_markup is None
+
+
+@pytest.mark.parametrize("base", ["https://realchat.example", "https://realchat.example/"])
+async def test_terms_links_to_the_web_pages_once_their_address_is_set(
+    bot_settings: BotSettings, redis: Redis, session_factory: Sessions, base: str
+) -> None:
+    chat = Chat(bot_settings.model_copy(update={"public_base_url": base}), redis, session_factory)
+    await chat.send("/terms")
+    assert chat.session.sent_texts() == terms_parts(bot_settings.min_age)
+    assert chat.session.last_buttons() == {
+        TERMS_WEB_BUTTON: "https://realchat.example/terms",
+        PRIVACY_WEB_BUTTON: "https://realchat.example/privacy",
+    }
+    # Help's Terms button sends the same.
+    await chat.press_data(HelpAction(action="terms").pack())
+    assert chat.session.last_buttons()[PRIVACY_WEB_BUTTON] == "https://realchat.example/privacy"
 
 
 async def test_paysupport_points_to_support_not_telegram(

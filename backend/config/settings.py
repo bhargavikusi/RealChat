@@ -31,6 +31,18 @@ class Settings(BaseSettings):
     # D-019: age and gender can each be changed once per this many days after onboarding.
     profile_change_cooldown_days: int = Field(default=30, ge=1, le=365)
 
+    # D-009: development value 18; the launch value is still open (O-001). The bot and
+    # the terms web page (D-069) both show it.
+    min_age: int = Field(default=18, ge=13, le=99)
+
+    @model_validator(mode="after")
+    def _require_explicit_production_age(self) -> "Settings":
+        # The default is a development value; the launch value is still open (O-001),
+        # so production must never fall back to it silently.
+        if self.app_env == "production" and "min_age" not in self.model_fields_set:
+            raise ValueError("MIN_AGE must be set explicitly in production")
+        return self
+
 
 class BotSettings(Settings):
     """Settings for the Telegram bot process. Other processes do not need the token."""
@@ -39,9 +51,6 @@ class BotSettings(Settings):
     # Connect to Telegram's test environment instead (a separate network with its own
     # accounts and bots), to test Stars payments without real Stars (D-061).
     telegram_test_environment: bool = False
-
-    # D-009: development value 18; the launch value is still open (O-001).
-    min_age: int = Field(default=18, ge=13, le=99)
 
     # Per-user flood control: at most `bot_flood_limit` updates per window.
     bot_flood_limit: int = Field(default=20, ge=1)
@@ -55,14 +64,19 @@ class BotSettings(Settings):
     # D-023: optional links shown in /help only when set.
     announcement_channel_url: HttpUrl | None = None
     support_contact: HttpUrl | None = None
+    # Where the API serves the terms and privacy web pages (D-069); /terms links to them
+    # only when set.
+    public_base_url: HttpUrl | None = None
 
-    @field_validator("announcement_channel_url", "support_contact", mode="before")
+    @field_validator(
+        "announcement_channel_url", "support_contact", "public_base_url", mode="before"
+    )
     @classmethod
     def _empty_link_is_unset(cls, value: object) -> object:
         # An empty value in .env means the link is not configured.
         return None if value == "" else value
 
-    @field_validator("announcement_channel_url", "support_contact")
+    @field_validator("announcement_channel_url", "support_contact", "public_base_url")
     @classmethod
     def _require_https(cls, value: HttpUrl | None) -> HttpUrl | None:
         if value is not None and value.scheme != "https":
@@ -78,14 +92,6 @@ class BotSettings(Settings):
             # Raised without the original message, which may describe the token.
             raise ValueError("not a valid Telegram bot token format") from None
         return value
-
-    @model_validator(mode="after")
-    def _require_explicit_production_age(self) -> "BotSettings":
-        # The default is a development value; the launch value is still open (O-001),
-        # so production must never fall back to it silently.
-        if self.app_env == "production" and "min_age" not in self.model_fields_set:
-            raise ValueError("MIN_AGE must be set explicitly in production")
-        return self
 
     @model_validator(mode="after")
     def _require_production_support(self) -> "BotSettings":

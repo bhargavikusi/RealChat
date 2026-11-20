@@ -12,6 +12,7 @@ from typing import Any
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
+from apps.api import pages
 from backend.config.settings import Settings, load_settings
 from backend.core.logging import configure_logging
 from backend.core.redis import create_redis, ping_redis
@@ -51,6 +52,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app = FastAPI(
         title="RealChat API", lifespan=lifespan, docs_url=None, redoc_url=None, openapi_url=None
     )
+
+    # The terms of use and privacy notice as web pages (D-069).
+    app.include_router(pages.create_router(settings.min_age))
 
     @app.get("/health")
     async def health() -> dict[str, str]:
