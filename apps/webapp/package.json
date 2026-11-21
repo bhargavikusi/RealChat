@@ -5,7 +5,7 @@
   "type": "module",
   "description": "RealChat's moderation Mini App (D-071). Built files are served by the API at /moderation/.",
   "engines": {
-    "node": "^22.22.2 || >=24.15.0"
+    "node": "^22.22.2 || ^24.15.0 || >=26.0.0"
   },
   "scripts": {
     "dev": "vite",

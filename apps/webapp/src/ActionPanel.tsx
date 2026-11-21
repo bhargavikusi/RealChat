@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { ApiError, postJson, type ActionBody, type ActionKind, type Failure } from "./api";
 import { REFUSALS, RULES, SUSPENSION_DAYS } from "./labels";
@@ -21,7 +21,7 @@ const BUTTONS: { kind: ActionKind; label: string }[] = [
 
 const DONE: Record<ActionKind, string> = {
   close: "Report closed with no action.",
-  warn: "Warning sent. The report is closed.",
+  warn: "Warning recorded; they'll be notified. The report is closed.",
   suspend: "Account suspended. The report is closed.",
   ban: "Account banned. The report is closed.",
 };
@@ -41,6 +41,14 @@ export function ActionPanel({ launchData, reportId, nickname, onDone, onFailure 
   const [days, setDays] = useState<number>(SUSPENSION_DAYS[0]);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
+  // An answer that arrives after leaving this report must not change another screen.
+  const mounted = useRef(true);
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+    };
+  }, []);
 
   async function submit(chosen: ActionKind) {
     if (chosen !== "close" && !rule) {
@@ -54,8 +62,9 @@ export function ActionPanel({ launchData, reportId, nickname, onDone, onFailure 
     setMessage(null);
     try {
       await postJson(`/api/moderation/reports/${reportId}/action`, launchData, body);
-      onDone(DONE[chosen]);
+      if (mounted.current) onDone(DONE[chosen]);
     } catch (error) {
+      if (!mounted.current) return;
       if (error instanceof ApiError && error.failure === "conflict") {
         setMessage(REFUSALS[error.code ?? ""] ?? "This action no longer applies.");
       } else if (error instanceof ApiError && (error.failure === "reopen" || error.failure === "denied")) {
@@ -64,7 +73,7 @@ export function ActionPanel({ launchData, reportId, nickname, onDone, onFailure 
         setMessage("Something went wrong. Please try again.");
       }
     } finally {
-      setBusy(false);
+      if (mounted.current) setBusy(false);
     }
   }
 
@@ -103,7 +112,13 @@ export function ActionPanel({ launchData, reportId, nickname, onDone, onFailure 
         >
           <label>
             Rule broken
-            <select value={rule} onChange={(event) => setRule(event.target.value)}>
+            <select
+              value={rule}
+              onChange={(event) => {
+                setRule(event.target.value);
+                setMessage(null);
+              }}
+            >
               <option value="">Choose…</option>
               {Object.entries(RULES).map(([value, label]) => (
                 <option key={value} value={value}>

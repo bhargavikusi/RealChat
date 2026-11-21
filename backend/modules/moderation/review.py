@@ -30,7 +30,8 @@ from backend.modules.users.validation import current_age
 QUEUE_LIMIT = 100
 # The most messages a review shows, newest kept; retention keeps far fewer in practice.
 MESSAGE_LIMIT = 2000
-# How long media sent to a moderator stays in their chat (owner decision).
+# Media sent to a moderator is queued for deletion from their chat this long after
+# sending (owner decision); the worker's deletion job removes it, which can take longer.
 MEDIA_VIEW = timedelta(minutes=10)
 # Telegram deletes a bot's message only within 48 hours of sending it.
 DELETION_WINDOW = timedelta(hours=48)
@@ -417,8 +418,9 @@ async def record_media_view(
     message_id: int,
     now: datetime,
 ) -> None:
-    """Audit a media view, and queue the copy sent to the moderator for deletion after
-    MEDIA_VIEW (the worker's Telegram deletion job removes it)."""
+    """Audit a media view, and queue the copy sent to the moderator for deletion
+    MEDIA_VIEW after sending (the worker's Telegram deletion job removes it then, or as
+    soon as it can)."""
     item = "" if item_id is None else f" {item_id}"
     session.add(
         _audit(

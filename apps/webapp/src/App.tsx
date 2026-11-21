@@ -25,12 +25,14 @@ export function App() {
   const [screen, setScreen] = useState<Screen>({ name: "queue" });
   const [notice, setNotice] = useState<string | null>(null);
 
+  // Sign-in problems end the session; a missing report returns to the queue. Other
+  // failures are shown where they happen, with a way to try again.
   const fail = useCallback((failure: Failure) => {
-    if (failure === "notFound") {
-      setScreen({ name: "queue" });
-      setNotice(MESSAGES.notFound);
-    } else {
+    if (failure === "reopen" || failure === "denied") {
       setState({ kind: failure });
+    } else {
+      setScreen({ name: "queue" });
+      setNotice(MESSAGES[failure]);
     }
   }, []);
 

@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { ActionPanel } from "./ActionPanel";
 import { ApiError, getJson, postJson, type Failure, type Item, type MediaBody, type Person, type Review } from "./api";
@@ -34,7 +34,7 @@ function Card({ title, person }: { title: string; person: Person }) {
   );
 }
 
-function Message({ item, onView }: { item: Item; onView: (item: Item) => void }) {
+function Message({ item, disabled, onView }: { item: Item; disabled: boolean; onView: (item: Item) => void }) {
   const markers = [item.private && "Private mode", item.view_once && "view once", item.edited_at && "edited"].filter(Boolean);
   return (
     <li className={`message ${item.sender}`}>
@@ -46,7 +46,7 @@ function Message({ item, onView }: { item: Item; onView: (item: Item) => void })
       {item.text && <span className="text">{item.text}</span>}
       {item.edited_text && <span className="text edited">Edited to: {item.edited_text}</span>}
       {item.viewable && (
-        <button type="button" className="link" onClick={() => onView(item)}>
+        <button type="button" className="link" disabled={disabled} onClick={() => onView(item)}>
           📎 View in Telegram
         </button>
       )}
@@ -58,20 +58,45 @@ function Message({ item, onView }: { item: Item; onView: (item: Item) => void })
  * decision. */
 export function ReportView({ launchData, reportId, onDone, onFailure }: Props) {
   const [data, setData] = useState<Review | null>(null);
+  const [failed, setFailed] = useState(false);
+  const [attempt, setAttempt] = useState(0);
+  const [sending, setSending] = useState(false);
   const [mediaNotice, setMediaNotice] = useState<string | null>(null);
+  // Answers that arrive after leaving this report are ignored.
+  const mounted = useRef(true);
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+    };
+  }, []);
 
   useEffect(() => {
+    let active = true;
     getJson<Review>(`/api/moderation/reports/${reportId}`, launchData)
-      .then(setData)
-      .catch((error: unknown) => onFailure(error instanceof ApiError ? error.failure : "error"));
-  }, [launchData, reportId, onFailure]);
+      .then((loaded) => {
+        if (active) setData(loaded);
+      })
+      .catch((error: unknown) => {
+        if (!active) return;
+        const failure = error instanceof ApiError ? error.failure : "error";
+        if (failure === "reopen" || failure === "denied" || failure === "notFound") onFailure(failure);
+        else setFailed(true);
+      });
+    return () => {
+      active = false;
+    };
+  }, [launchData, reportId, onFailure, attempt]);
 
   async function view(body: MediaBody) {
+    if (sending) return;
+    setSending(true);
     setMediaNotice(null);
     try {
       await postJson(`/api/moderation/reports/${reportId}/media`, launchData, body);
-      setMediaNotice("Sent to your Telegram chat. It's deleted in 10 minutes.");
+      if (mounted.current) setMediaNotice("Sent to your Telegram chat. It's queued for deletion after 10 minutes.");
     } catch (error) {
+      if (!mounted.current) return;
       if (error instanceof ApiError && (error.failure === "reopen" || error.failure === "denied")) {
         onFailure(error.failure);
       } else if (error instanceof ApiError && error.failure === "telegram") {
@@ -79,9 +104,28 @@ export function ReportView({ launchData, reportId, onDone, onFailure }: Props) {
       } else {
         setMediaNotice("That item is no longer available.");
       }
+    } finally {
+      if (mounted.current) setSending(false);
     }
   }
 
+  if (failed) {
+    return (
+      <div className="notice" role="alert">
+        <p>This report couldn't be loaded.</p>
+        <button
+          type="button"
+          className="link"
+          onClick={() => {
+            setFailed(false);
+            setAttempt((count) => count + 1);
+          }}
+        >
+          Try again
+        </button>
+      </div>
+    );
+  }
   if (data === null) return <p className="hint">Loading…</p>;
   const open = data.status === "open";
   return (
@@ -101,7 +145,7 @@ export function ReportView({ launchData, reportId, onDone, onFailure }: Props) {
         <Card title="Reporter" person={data.reporter} />
       </div>
       {data.reported.has_photo && (
-        <button type="button" className="link" onClick={() => void view({ source: "photo" })}>
+        <button type="button" className="link" disabled={sending} onClick={() => void view({ source: "photo" })}>
           📎 View their profile photo in Telegram
         </button>
       )}
@@ -118,7 +162,7 @@ export function ReportView({ launchData, reportId, onDone, onFailure }: Props) {
             {data.record.actions.map((action, index) => (
               <li key={index}>
                 {ACTIONS[action.kind] ?? action.kind}
-                {action.days ? ` (${action.days} days)` : ""}
+                {action.days ? ` (${action.days} days${action.ends_at ? `, until ${when(action.ends_at)}` : ""})` : ""}
                 {action.rule ? ` · ${RULES[action.rule] ?? action.rule}` : ""} · {when(action.created_at)}
               </li>
             ))}
@@ -134,6 +178,7 @@ export function ReportView({ launchData, reportId, onDone, onFailure }: Props) {
             <Message
               key={`${item.source}-${item.id}`}
               item={item}
+              disabled={sending}
               onView={(chosen) => void view({ source: chosen.source, item_id: chosen.id })}
             />
           ))}

@@ -622,3 +622,24 @@ async def test_review_helpers_never_reach_another_report(
     async with session_factory() as session:
         assert await review.media_for(session, second, review.Source.CHAT, ids["photo"]) is None
         assert await review.media_for(session, first, review.Source.CHAT, ids["photo"]) is not None
+
+
+async def test_a_copy_whose_view_cannot_be_recorded_is_taken_back(
+    panel: Panel, people: dict[str, int], session_factory: Sessions, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    report_id, ids = await _chat_report(session_factory, people)
+
+    async def broken(*args: object, **kwargs: object) -> None:
+        raise RuntimeError("database unavailable")
+
+    monkeypatch.setattr(review, "record_media_view", broken)
+    with pytest.raises(RuntimeError):
+        panel.post(
+            f"/api/moderation/reports/{report_id}/media",
+            {"source": "chat", "item_id": ids["photo"]},
+        )
+
+    sent = [m for m in panel.telegram.requests if isinstance(m, SendPhoto)]
+    assert len(sent) == 1
+    # The copy was deleted at once: nothing is left untracked in the moderator's chat.
+    assert panel.telegram.deleted == [(MODERATOR, len(panel.telegram.requests) - 1)]

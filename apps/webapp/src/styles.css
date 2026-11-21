@@ -91,9 +91,11 @@ h3 {
   font-size: 0.8rem;
 }
 
+/* Destructive colour as text and outline on the theme's surface, which keeps its
+   contrast in light and dark themes. */
 .urgent {
-  background: var(--tg-theme-destructive-text-color, #d14e4e);
-  color: #ffffff;
+  border: 1px solid var(--tg-theme-destructive-text-color, #d14e4e);
+  color: var(--tg-theme-destructive-text-color, #d14e4e);
 }
 
 .cards {
@@ -206,6 +208,6 @@ button {
 
 .buttons button.danger,
 .form button.danger {
-  background: var(--tg-theme-destructive-text-color, #d14e4e);
-  color: #ffffff;
+  border: 1px solid var(--tg-theme-destructive-text-color, #d14e4e);
+  color: var(--tg-theme-destructive-text-color, #d14e4e);
 }

@@ -1,4 +1,4 @@
-import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -18,6 +18,16 @@ const QUEUE: QueueItem[] = [
     reported_nickname: "Moon Child",
   },
 ];
+
+const SPAM_REPORT: QueueItem = {
+  id: 8,
+  reason: "spam",
+  urgent: false,
+  kind: "profile",
+  created_at: "2026-11-21T13:00:00Z",
+  has_details: false,
+  reported_nickname: "Sun Ray",
+};
 
 const person = (nickname: string) => ({
   public_id: "ABC123",
@@ -44,7 +54,10 @@ const REVIEW: Review = {
   reporter: person("Night Owl"),
   reported: person("Moon Child"),
   record: {
-    actions: [{ kind: "warn", rule: "spam", days: null, ends_at: null, created_at: "2026-11-18T12:00:00Z" }],
+    actions: [
+      { kind: "suspend", rule: "threats", days: 3, ends_at: "2026-11-23T12:00:00Z", created_at: "2026-11-20T12:00:00Z" },
+      { kind: "warn", rule: "spam", days: null, ends_at: null, created_at: "2026-11-18T12:00:00Z" },
+    ],
     reports_received: 2,
     reports_open: 1,
   },
@@ -88,6 +101,9 @@ function serve(handler: Handler) {
   vi.stubGlobal(
     "fetch",
     vi.fn(async (path: string, init: RequestInit) => {
+      // Every request, reads and writes alike, is signed and carries no cookies.
+      expect(new Headers(init.headers).get("Authorization")).toBe(`tma ${LAUNCH_DATA}`);
+      expect(init.credentials).toBe("omit");
       calls.push({ path, init });
       const { status, body } = handler(path, init);
       return new Response(JSON.stringify(body), { status });
@@ -155,15 +171,25 @@ function submitButton(name: string): HTMLElement {
 }
 
 describe("signing in", () => {
-  it("sends Telegram's launch data with every request", async () => {
+  it("sends Telegram's launch data with every request, writes included", async () => {
     serve(defaultHandler);
     render(<App />);
     expect(await screen.findByText(/Mod Max · Moderator/)).toBeTruthy();
-    await screen.findByRole("button", { name: /Appears under 18/ });
-    for (const call of calls) {
-      expect(new Headers(call.init.headers).get("Authorization")).toBe(`tma ${LAUNCH_DATA}`);
-      expect(call.init.credentials).toBe("omit");
-    }
+    // The shared fetch mock checks the header on each call; make writes too.
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole("button", { name: /Appears under 18/ }));
+    await screen.findByRole("article", { name: "Report 7" });
+    await user.click(screen.getByRole("button", { name: /profile photo/ }));
+    await user.click(screen.getByRole("button", { name: "Close, no action" }));
+    await screen.findByText("Report closed with no action.");
+    expect(calls.map((call) => call.path)).toEqual([
+      "/api/moderation/me",
+      "/api/moderation/reports",
+      "/api/moderation/reports/7",
+      "/api/moderation/reports/7/media",
+      "/api/moderation/reports/7/action",
+      "/api/moderation/reports",
+    ]);
   });
 
   it("asks to reopen from the bot without launch data", async () => {
@@ -206,6 +232,8 @@ describe("a report", () => {
     expect(screen.getByText("“Says she is 15”")).toBeTruthy();
     expect(screen.getByText(/Reports received: 2 \(1 open\)/)).toBeTruthy();
     expect(screen.getByText(/Warning · Spam, scams, or advertising/)).toBeTruthy();
+    // A suspension shows when it ends.
+    expect(screen.getByText(/Suspension \(3 days, until .*2026/)).toBeTruthy();
     const chat = screen.getByRole("region", { name: "Chat" });
     expect(within(chat).getByText(/Private mode · view once/)).toBeTruthy();
     expect(within(chat).getByText("Dice")).toBeTruthy();
@@ -219,7 +247,7 @@ describe("a report", () => {
     const user = await openReport();
     const chat = screen.getByRole("region", { name: "Chat" });
     await user.click(within(chat).getByRole("button", { name: /View in Telegram/ }));
-    expect(await screen.findByText(/deleted in 10 minutes/)).toBeTruthy();
+    expect(await screen.findByText(/queued for deletion after 10 minutes/)).toBeTruthy();
     expect(calls.at(-1)?.path).toBe("/api/moderation/reports/7/media");
     expect(lastBody()).toEqual({ source: "chat", item_id: 1 });
     await user.click(screen.getByRole("button", { name: /profile photo/ }));
@@ -282,5 +310,82 @@ describe("actions", () => {
     const user = await openReport();
     await user.click(screen.getByRole("button", { name: "Close, no action" }));
     expect((await screen.findByRole("alert")).textContent).toBe("Someone already handled this report.");
+  });
+});
+
+describe("resilience", () => {
+  it("offers to retry when the queue can't be loaded", async () => {
+    let failing = true;
+    serve((path, init) =>
+      path === "/api/moderation/reports" && failing ? { status: 500, body: {} } : defaultHandler(path, init),
+    );
+    const user = userEvent.setup();
+    render(<App />);
+    const alert = await screen.findByRole("alert");
+    expect(alert.textContent).toMatch(/couldn't be loaded/);
+    failing = false;
+    await user.click(within(alert).getByRole("button", { name: "Try again" }));
+    expect(await screen.findByRole("button", { name: /Appears under 18/ })).toBeTruthy();
+    // Still signed in: the header is still there.
+    expect(screen.getByText(/Mod Max · Moderator/)).toBeTruthy();
+  });
+
+  it("sends one copy however quickly the media button is tapped", async () => {
+    let release: () => void = () => undefined;
+    serve(defaultHandler);
+    const respond = vi.mocked(fetch).getMockImplementation();
+    vi.mocked(fetch).mockImplementation(async (input, init) => {
+      if (String(input).endsWith("/media")) await new Promise<void>((resolve) => (release = resolve));
+      return respond ? respond(input, init) : new Response("{}");
+    });
+    const user = await openReport();
+    const button = within(screen.getByRole("region", { name: "Chat" })).getByRole("button", {
+      name: /View in Telegram/,
+    });
+    await user.click(button);
+    await user.click(button);
+    await user.click(button);
+    release();
+    await screen.findByText(/queued for deletion after 10 minutes/);
+    // Count every request made, including any still waiting for an answer.
+    const sent = vi.mocked(fetch).mock.calls.filter(([input]) => String(input).endsWith("/media"));
+    expect(sent).toHaveLength(1);
+  });
+
+  it("clears the missing-rule message once a rule is chosen", async () => {
+    serve(defaultHandler);
+    const user = await openReport();
+    await user.click(screen.getByRole("button", { name: "Warn" }));
+    await user.click(screen.getByRole("button", { name: "Send warning" }));
+    expect((await screen.findByRole("alert")).textContent).toMatch(/Choose the rule/);
+    await user.selectOptions(screen.getByLabelText(/Rule broken/), "spam");
+    expect(screen.queryByRole("alert")).toBeNull();
+  });
+
+  it("ignores a report that answers after the moderator went back", async () => {
+    let release: () => void = () => undefined;
+    const queue: QueueItem[] = [...QUEUE, { ...SPAM_REPORT }];
+    serve((path, init) => {
+      if (path === "/api/moderation/reports") return { status: 200, body: queue };
+      if (path === "/api/moderation/reports/8") return { status: 404, body: { error: "not_found" } };
+      return defaultHandler(path, init);
+    });
+    const respond = vi.mocked(fetch).getMockImplementation();
+    vi.mocked(fetch).mockImplementation(async (input, init) => {
+      if (String(input) === "/api/moderation/reports/8") await new Promise<void>((resolve) => (release = resolve));
+      return respond ? respond(input, init) : new Response("{}");
+    });
+    const user = userEvent.setup();
+    render(<App />);
+    await user.click(await screen.findByRole("button", { name: /Spam or scam/ }));
+    // Back to the queue before report 8 answers, then open report 7.
+    const back = vi.mocked(window.Telegram?.WebApp?.BackButton?.onClick ?? vi.fn()).mock.calls.at(-1)?.[0];
+    act(() => back?.());
+    await user.click(await screen.findByRole("button", { name: /Appears under 18/ }));
+    await screen.findByRole("article", { name: "Report 7" });
+    release(); // report 8's late "not found"
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(screen.getByRole("article", { name: "Report 7" })).toBeTruthy();
+    expect(screen.queryByText("That report wasn't found.")).toBeNull();
   });
 });

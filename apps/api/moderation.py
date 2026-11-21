@@ -170,6 +170,14 @@ async def send_media(bot: Bot, chat_id: int, kind: str, file_id: str) -> int:
     return sent.message_id
 
 
+async def _take_back(bot: Bot, chat_id: int, message_id: int) -> None:
+    """Delete a copy sent to a moderator whose view could not be recorded."""
+    try:
+        await bot.delete_message(chat_id, message_id)
+    except TelegramAPIError as exc:
+        logger.error("could not take back media sent to a moderator", extra=exception_summary(exc))
+
+
 def create_router(token: str) -> APIRouter:
     router = APIRouter(prefix=API_PATH)
 
@@ -226,19 +234,25 @@ def create_router(token: str) -> APIRouter:
         except TelegramAPIError as exc:
             logger.warning("could not send media to a moderator", extra=exception_summary(exc))
             raise TelegramUnavailable from None
-        now = datetime.now(UTC)
-        await review.record_media_view(
-            session,
-            member.user_id,
-            report_id,
-            body.source,
-            body.item_id,
-            found,
-            member.telegram_user_id,
-            message_id,
-            now,
-        )
-        await session.commit()
+        try:
+            await review.record_media_view(
+                session,
+                member.user_id,
+                report_id,
+                body.source,
+                body.item_id,
+                found,
+                member.telegram_user_id,
+                message_id,
+                datetime.now(UTC),
+            )
+            await session.commit()
+        except Exception:
+            # Without its audit entry and queued deletion the copy must not stay: take
+            # it back now, best effort, and fail the request.
+            await session.rollback()
+            await _take_back(request.app.state.bot, member.telegram_user_id, message_id)
+            raise
         return {"deleted_after_seconds": int(review.MEDIA_VIEW.total_seconds())}
 
     @router.post("/reports/{report_id}/action")
