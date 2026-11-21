@@ -34,15 +34,20 @@ export function App() {
   return (
     <main className="panel">
       <h1>🛡 Moderation</h1>
-      {state.kind === "loading" && <p className="hint">Signing in…</p>}
-      {state.kind === "signedIn" && (
-        <p>
-          Signed in as <strong>{state.me.nickname ?? "you"}</strong> ·{" "}
-          {ROLE_LABELS[state.me.role]}
-        </p>
-      )}
+      {/* Announced to screen readers when it changes; failures as alerts. */}
+      <div role="status" aria-live="polite">
+        {state.kind === "loading" && <p className="hint">Signing in…</p>}
+        {state.kind === "signedIn" && (
+          <p>
+            Signed in as <strong>{state.me.nickname ?? "you"}</strong> ·{" "}
+            {ROLE_LABELS[state.me.role]}
+          </p>
+        )}
+      </div>
       {state.kind !== "loading" && state.kind !== "signedIn" && (
-        <p className="notice">{MESSAGES[state.kind]}</p>
+        <p className="notice" role="alert">
+          {MESSAGES[state.kind]}
+        </p>
       )}
     </main>
   );

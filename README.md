@@ -53,7 +53,7 @@ The API also serves the User Agreement at `/terms` and the Privacy Policy at `/p
 
 ### Moderation Mini App
 
-Moderators and admins review reports in a Telegram Mini App (D-071), a React app in `apps/webapp` that the API serves at `/moderation/` once it is built. The API also needs `TELEGRAM_BOT_TOKEN` now, because it checks Telegram's signature on the Mini App's launch data with every request; data older than an hour is refused, and the account's role is checked each time.
+Moderators and admins will review reports in a Telegram Mini App (D-071), a React app in `apps/webapp` that the API serves at `/moderation/` once it is built. For now it signs them in and shows their role; report review and account lookup come next. The API also needs `TELEGRAM_BOT_TOKEN` now, because it checks Telegram's signature on the Mini App's launch data with every request; data older than an hour is refused, and the account's role is checked each time.
 
 Build it after installing exactly the locked packages (their install scripts are off, see `apps/webapp/.npmrc`):
 
@@ -152,9 +152,11 @@ uv run mypy                  # type checks
 uv run pytest                # tests
 ```
 
-For the moderation Mini App, CI also runs these in `apps/webapp`, and audits its packages:
+For the moderation Mini App, CI also runs these, and audits its packages:
 
 ```bash
+cd apps/webapp
+npm ci
 npm run typecheck
 npm run lint
 npm run build

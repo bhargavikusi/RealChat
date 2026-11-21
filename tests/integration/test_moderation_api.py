@@ -74,13 +74,19 @@ async def test_users_without_a_role_or_account_are_refused(
         assert (response.status_code, response.json()) == (403, {"error": "forbidden"})
 
 
-@pytest.mark.parametrize("status", ["suspended", "banned"])
-async def test_a_restricted_moderator_is_refused(
+@pytest.mark.parametrize("status", ["suspended", "banned", "deleted"])
+async def test_an_inactive_moderator_is_refused(
     client: TestClient, session_factory: Sessions, status: str
 ) -> None:
     user_id = await _account(session_factory, MODERATOR, "moderator", "Night Owl")
     async with session_factory() as session:
-        await session.execute(update(User).where(User.id == user_id).values(status=status))
+        # A deleted account keeps its row, and the CLI could give it a role again.
+        values = (
+            {"status": status, "deleted_at": datetime.now(UTC)}
+            if status == "deleted"
+            else {"status": status}
+        )
+        await session.execute(update(User).where(User.id == user_id).values(**values))
         await session.commit()
 
     assert client.get("/api/moderation/me", headers=_signed(MODERATOR)).status_code == 403

@@ -470,8 +470,10 @@ async def test_moderators_and_admins_see_the_moderation_button(
 
 
 async def test_no_moderation_button_without_a_public_address(
-    chat: Chat, session_factory: Sessions
+    bot_settings: BotSettings, redis: Redis, session_factory: Sessions
 ) -> None:
+    unset = bot_settings.model_copy(update={"public_base_url": None})
+    chat = Chat(unset, redis, session_factory)
     await complete_onboarding(chat)
     await _set_role(session_factory, "admin")
     await _open_advanced_settings(chat)

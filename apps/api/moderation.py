@@ -27,7 +27,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from backend.modules.moderation.actions import MODERATION_ROLES
-from backend.modules.users.models import RESTRICTED_STATUSES, Profile, User
+from backend.modules.users.models import Profile, User
 
 logger = logging.getLogger(__name__)
 
@@ -91,8 +91,8 @@ class StaffMember:
 
 
 async def load_staff(session: AsyncSession, telegram_user_id: int) -> StaffMember:
-    """The signed-in account, if it may use the panel: a moderator or admin that is
-    not suspended or banned. Raises Forbidden otherwise."""
+    """The signed-in account, if it may use the panel: an active moderator or admin
+    (not suspended, banned, or deleted). Raises Forbidden otherwise."""
     row = (
         await session.execute(
             select(User.id, User.role, User.status, Profile.nickname)
@@ -103,7 +103,7 @@ async def load_staff(session: AsyncSession, telegram_user_id: int) -> StaffMembe
     if row is None:
         raise Forbidden
     user_id, role, status, nickname = row
-    if role not in MODERATION_ROLES or status in RESTRICTED_STATUSES:
+    if role not in MODERATION_ROLES or status != "active":
         raise Forbidden
     return StaffMember(user_id, role, nickname)
 
