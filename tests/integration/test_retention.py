@@ -74,6 +74,7 @@ async def _report(
                 urgent=False,
                 status="closed" if closed else "open",
                 closed_at=NOW if closed else None,
+                outcome="no_action" if closed else None,
             )
         )
         await session.commit()

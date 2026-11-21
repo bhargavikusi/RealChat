@@ -170,13 +170,6 @@ async def accept_terms(session: AsyncSession, user_id: int, terms_version: str) 
     )
 
 
-async def get_status(session: AsyncSession, telegram_user_id: int) -> str | None:
-    """The account status for a Telegram user, or None if they have no account."""
-    return await session.scalar(
-        select(User.status).where(User.telegram_user_id == telegram_user_id)
-    )
-
-
 def is_restricted(status: str | None) -> bool:
     return status in RESTRICTED_STATUSES
 

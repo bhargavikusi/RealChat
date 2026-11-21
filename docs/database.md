@@ -14,7 +14,7 @@ There is one row per Telegram account.
 |---|---|---|
 | `id` | bigint identity | Internal primary key. Other tables reference this, never the Telegram ID. |
 | `telegram_user_id` | bigint, unique | Telegram's stable numeric user ID. Usernames change and are never used as keys. |
-| `status` | varchar(16) | One of `active`, `suspended`, `banned`, `deleted`. Defaults to `active`. A constraint requires `deleted_at` whenever the status is `deleted`. `suspended` and `banned` are set manually until moderation tools exist (D-026). |
+| `status` | varchar(16) | One of `active`, `suspended`, `banned`, `deleted`. Defaults to `active`. A constraint requires `deleted_at` whenever the status is `deleted`. `suspended` and `banned` are set by moderation actions (D-071). |
 | `created_at` | timestamptz | |
 | `last_active_at` | timestamptz | When the user last used RealChat (D-051): updated by the bot for each private-chat update from an active account, at most once a minute. RealChat activity only, never Telegram online status. |
 | `deleted_at` | timestamptz, nullable | When the user last deleted their account (D-016). Kept if they return. |
@@ -22,6 +22,7 @@ There is one row per Telegram account.
 | `ghost_mode` | boolean | Ghost mode (D-064), default true: while the user is VIP and it is on, opening a profile card records no visit. Set to true by a payment that starts a new VIP period and on account deletion; changed by the user only while VIP. |
 | `coin_history_after_id` | bigint, nullable | Set at account deletion to the account's latest coin ledger entry, or 0 if it had none (not a real entry id): `/coins` lists only later entries, so a returning user sees a fresh history (D-055). NULL for accounts never deleted since this was added; those see their whole history. |
 | `role` | varchar(16) | One of `user` (default), `moderator`, `admin` (D-034). Changed only by the admin CLI, except that account deletion resets it to `user`. |
+| `suspended_until` | timestamptz, nullable | When a suspension ends by itself (D-071). Set only while the status is `suspended`, enforced by a constraint. NULL while suspended means the suspension lasts until lifted, as for suspensions set by hand before moderation tools. Kept on account deletion, like the status. |
 
 ### `profiles`
 
@@ -188,7 +189,7 @@ An append-only record of administrative changes. Rows are never updated or delet
 |---|---|---|
 | `id` | bigint identity | |
 | `actor_user_id` | bigint, nullable | References `users.id`. NULL means the server-side admin CLI. |
-| `action` | varchar(32) | `role_changed`, `setting_changed`, `coins_adjusted` (an admin grant or correction; `new_value` is the amount), `purchase_refunded` (an admin refund of a Stars purchase, D-065; `new_value` is the `stars_payments` id), or `payment_recorded` (a payment that was never recorded, recorded by an admin, D-068; `new_value` is the `stars_payments` id). |
+| `action` | varchar(32) | `role_changed`, `setting_changed`, `coins_adjusted` (an admin grant or correction; `new_value` is the amount), `purchase_refunded` (an admin refund of a Stars purchase, D-065; `new_value` is the `stars_payments` id), `payment_recorded` (a payment that was never recorded, recorded by an admin, D-068; `new_value` is the `stars_payments` id), or a moderation action (D-071): `report_closed` (`new_value` is `report <id>`), `account_warned` and `account_banned` (`new_value` is the rule), `account_suspended` (`new_value` is the rule and days, e.g. `spam 7d`), or `restriction_lifted` (`new_value` is the status after). For moderation actions, `old_value` is the account's status before. |
 | `target_user_id` | bigint, nullable | References `users.id`. The account whose role or coins changed, whose purchase was refunded, or whose payment was recorded. |
 | `setting_key` | varchar(64), nullable | The setting that changed. |
 | `old_value`, `new_value` | varchar(64), nullable | |
@@ -205,7 +206,7 @@ One row per chat between two matched users (D-027).
 | `id` | bigint identity | |
 | `started_at` | timestamptz | |
 | `ended_at` | timestamptz, nullable | NULL while the chat is open. |
-| `end_reason` | varchar(16), nullable | `user_ended`, `unreachable`, `idle`, `blocked`, or `reported` (D-045); set together with `ended_at`, enforced by a constraint. |
+| `end_reason` | varchar(16), nullable | `user_ended`, `unreachable`, `idle`, `blocked`, `reported` (D-045), or `restricted` (a moderator suspended or banned one of the users, D-071); set together with `ended_at`, enforced by a constraint. |
 | `ended_by_user_id` | bigint, nullable | References `users.id`. The user who ended it, blocked, or reported their partner; NULL for automatic endings. |
 | `last_activity_at` | timestamptz | When a message was last relayed, or the chat started. Updated with the row locked, in the same transaction that records the message; if that message then cannot be delivered, the previous value (and warning) is restored, unless another message was recorded since. |
 | `idle_warned_at` | timestamptz, nullable | When both users were warned that the quiet chat will end (D-039). Cleared by any relayed message. |
@@ -298,11 +299,46 @@ Reports about chat partners, and profile reports about people met only through a
 | `reason` | varchar(16) | `spam`, `harassment`, `sexual`, `under_18`, `threats`, or `other`. |
 | `details` | varchar(500), nullable | Optional context from the reporter, 1–500 characters, added once. For moderators only; never written to ordinary logs. |
 | `urgent` | boolean | True for `under_18`. |
-| `status` | varchar(16) | `open` (default) or `closed`. Nothing closes reports yet; review comes with the moderation work. |
+| `status` | varchar(16) | `open` (default) or `closed`. Closed by a moderation action (D-071). |
 | `created_at` | timestamptz | |
 | `closed_at` | timestamptz, nullable | Set exactly when the status is `closed`, enforced by a constraint. |
+| `outcome` | varchar(16), nullable | `no_action` or `action_taken` (a warning, suspension, or ban followed). Set exactly when the status is `closed`, enforced by a constraint. |
+| `closed_by_action_id` | bigint, nullable | References `moderation_actions.id`: the action that closed it. NULL for reports closed by hand before moderation tools. |
 
 `(reporter_user_id, conversation_id)` is unique: one report per user per conversation. A partial unique index on `(reporter_user_id, reported_user_id)` where `conversation_id IS NULL` allows one profile report per reporter per person. The index on `(reporter_user_id, created_at)` serves the per-user limit on reports in 24 hours (an admin setting); the reporter's `users` row is locked while counting (`FOR NO KEY UPDATE`), so simultaneous reports cannot pass the limit together. A block or report takes all its locks up front, in the same order as account deletion: the user's row, the partner's row (key share), then the conversation (a profile action has none). So two users blocking or reporting each other in the same chat at once, or one doing so while the other deletes their account, cannot deadlock. A partial index on `conversation_id` for open reports serves the retention cleanup, which keeps those conversations' messages. Rows are kept when either account is deleted.
+
+### `moderation_actions`
+
+The history of moderation actions (D-071). Rows are never updated; the account's current status lives on `users`. Kept when either account is deleted.
+
+| Column | Type | Notes |
+|---|---|---|
+| `id` | bigint identity | |
+| `actor_user_id`, `target_user_id` | bigint | Reference `users.id`: the moderator or admin, and the account acted on. A constraint stops anyone acting on themselves. |
+| `report_id` | bigint, nullable | References `reports.id`: the report the action was taken from and closed. NULL for an action from an account lookup. Required for `close`. |
+| `kind` | varchar(16) | `close` (close a report with no action), `warn`, `suspend`, `ban`, or `lift`. |
+| `rule` | varchar(16), nullable | The User Agreement rule (section 6.2): `spam`, `harassment`, `sexual`, `under_18`, `threats`, `impersonation`, `private_info`, `evasion`, or `other`. Set exactly for `warn`, `suspend`, and `ban`. |
+| `days`, `ends_at` | smallint, timestamptz, nullable | A suspension's length (1, 3, 7, or 30) and end. Set exactly for `suspend`. |
+| `created_at` | timestamptz | |
+
+An action locks the actor's and the target's `users` rows in id order, then the report, which must still be open, then the target's open conversation if the action ends it. That is the same users-before-conversations order as reports and account deletion, so a report is closed by exactly one action and none of them deadlock. The index on `(target_user_id, created_at)` serves an account's history.
+
+### `moderation_notices`
+
+Messages a moderation action owes people, sent by the worker after the action commits (D-071).
+
+| Column | Type | Notes |
+|---|---|---|
+| `id` | bigint identity | |
+| `action_id` | bigint | References `moderation_actions.id`. |
+| `kind` | varchar(16) | `action` (to the account acted on), `reporter`, or `chat_ended` (to the partner in a chat the action ended). |
+| `recipient_user_id` | bigint | References `users.id`. |
+| `conversation_id` | bigint, nullable | References `conversations.id`. Set exactly for `chat_ended`. |
+| `next_attempt_at` | timestamptz | When the notice may next be tried. A claim moves it a few minutes ahead. |
+| `attempts` | smallint | Claims so far; the notice is given up after a few. |
+| `sent_at` | timestamptz, nullable | When Telegram accepted it, or when it turned out it never could (the person blocked the bot). |
+
+`(action_id, kind, recipient_user_id)` is unique. A partial index on `next_attempt_at` where `sent_at IS NULL` serves the worker, which claims due notices `FOR UPDATE SKIP LOCKED`, so two workers never send the same one at once.
 
 ### `coin_transactions`
 

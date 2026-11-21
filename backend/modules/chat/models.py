@@ -29,8 +29,8 @@ from backend.database.engine import Base
 # Why a conversation ended. "unreachable": a message could not be delivered because the
 # partner blocked the bot or their account is gone. "idle": nobody wrote for the
 # configured time (D-039). "blocked" and "reported": a user blocked or reported their
-# partner (D-045).
-END_REASONS = ("user_ended", "unreachable", "idle", "blocked", "reported")
+# partner (D-045). "restricted": a moderator suspended or banned one of them (D-071).
+END_REASONS = ("user_ended", "unreachable", "idle", "blocked", "reported", "restricted")
 # Endings caused by one of the users, who is recorded in `ended_by_user_id`.
 USER_END_REASONS = ("user_ended", "blocked", "reported")
 # Kinds sent as view-once (tap to view) in Private mode (D-048).

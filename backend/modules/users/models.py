@@ -54,6 +54,9 @@ class User(Base):
         CheckConstraint(_in("status", USER_STATUSES), name="status"),
         CheckConstraint("status <> 'deleted' OR deleted_at IS NOT NULL", name="deleted_at_set"),
         CheckConstraint(_in("role", ROLES), name="role"),
+        CheckConstraint(
+            "suspended_until IS NULL OR status = 'suspended'", name="suspended_until_status"
+        ),
     )
 
     id: Mapped[int] = mapped_column(BigInteger, Identity(), primary_key=True)
@@ -66,6 +69,9 @@ class User(Base):
         DateTime(timezone=True), server_default=func.now()
     )
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # When a suspension ends by itself (D-071). NULL while suspended means it lasts until
+    # lifted, as suspensions set before moderation tools did (D-026).
+    suspended_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     # /coins lists only ledger entries with a larger id: set at account deletion, so a
     # returning user sees a fresh history (D-055). A ledger position, not a time, so an
     # entry is never hidden by when its transaction started.
