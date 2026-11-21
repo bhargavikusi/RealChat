@@ -255,7 +255,9 @@ async def lift_if_expired(session: AsyncSession, user_id: int, now: datetime) ->
 
 
 async def lift_expired(session: AsyncSession, now: datetime, limit: int) -> int:
-    """Lift up to `limit` suspensions whose end has passed; returns how many."""
+    """Lift up to `limit` suspensions whose end has passed, the earliest first; returns
+    how many. The accounts are locked in id order, as `act` locks them, so a batch and
+    a moderator's action never deadlock."""
     due = await session.scalars(
         select(User.id)
         .where(User.status == "suspended", User.suspended_until <= now)
@@ -263,7 +265,7 @@ async def lift_expired(session: AsyncSession, now: datetime, limit: int) -> int:
         .limit(limit)
     )
     lifted = 0
-    for user_id in due.all():
+    for user_id in sorted(due.all()):
         lifted += await lift_if_expired(session, user_id, now)
     return lifted
 
