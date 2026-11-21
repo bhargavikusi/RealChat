@@ -52,6 +52,7 @@ from backend.core.logging import exception_summary
 from backend.modules.admin import service as admin_service
 from backend.modules.chat import service as chat_service
 from backend.modules.coins import service as coins
+from backend.modules.moderation import actions as moderation_actions
 from backend.modules.moderation import service as moderation
 from backend.modules.payments import service as payments
 from backend.modules.users import service
@@ -123,6 +124,7 @@ NOTICES = {
     "suspended": "Your account is suspended, so RealChat is unavailable to you for now.",
     "banned": "Your account has been banned for breaking the rules.",
 }
+SUSPENDED_UNTIL = "Your account is suspended until {until}, so RealChat is unavailable to you."
 NOTICE_OPTIONS = (
     "You can still read /help and the /terms, get help with a purchase with /paysupport, "
     "or delete your account."
@@ -188,8 +190,10 @@ def _delete_keyboard(*, admin: bool = False) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
-def restriction_notice(status: str) -> str:
-    return f"{NOTICES[status]}\n\n{NOTICE_OPTIONS}"
+def restriction_notice(status: str, until: datetime | None = None) -> str:
+    """The notice for a restricted user; a timed suspension says when it ends (D-071)."""
+    notice = NOTICES[status] if until is None else SUSPENDED_UNTIL.format(until=vip_date(until))
+    return f"{notice}\n\n{NOTICE_OPTIONS}"
 
 
 async def _may_delete(
@@ -474,7 +478,8 @@ class AccessGateMiddleware(BaseMiddleware):
 
     Registered as an inner update middleware after the database session, so it runs
     for every update that passed deduplication and flood control. The status lookup
-    is committed before any reply, so no transaction is held across a Telegram call.
+    is committed before any reply, so no transaction is held across a Telegram call. A
+    suspension that has ended is lifted here, so the user is let through at once (D-071).
     """
 
     async def __call__(self, handler: Handler, event: TelegramObject, data: dict[str, Any]) -> Any:
@@ -482,12 +487,12 @@ class AccessGateMiddleware(BaseMiddleware):
         session: AsyncSession | None = data.get("session")
         if user is None or session is None or not isinstance(event, Update):
             return await handler(event, data)
-        status = await service.get_status(session, user.id)
+        standing = await moderation_actions.standing(session, user.id, datetime.now(UTC))
         await session.commit()
         bot: Bot = data["bot"]
         if (
-            status is None
-            or not service.is_restricted(status)
+            standing is None
+            or not service.is_restricted(standing.status)
             or await _allowed_when_restricted(event, bot, data.get("raw_state"))
         ):
             return await handler(event, data)
@@ -496,6 +501,8 @@ class AccessGateMiddleware(BaseMiddleware):
         chat = data.get("event_chat")
         if chat is not None and chat.type == ChatType.PRIVATE:
             await bot.send_message(
-                chat.id, restriction_notice(status), reply_markup=_delete_keyboard()
+                chat.id,
+                restriction_notice(standing.status, standing.suspended_until),
+                reply_markup=_delete_keyboard(),
             )
         return None

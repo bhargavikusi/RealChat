@@ -15,7 +15,8 @@ interrupted Send, releasing their held coins (D-057); and settling chat requests
 were not answered in time or were interrupted, telling the users (D-058); and firing or
 refunding activity alerts, telling the buyers (D-059); and sending daily reward
 reminders that are due (D-060); and retrying refunds of Stars payments still owed
-(D-061).
+(D-061); and sending what moderation actions owe people and lifting suspensions that
+have ended (D-071).
 """
 
 import asyncio
@@ -30,6 +31,7 @@ from apps.bot.avatars import Avatars
 from apps.bot.chat import ChatNotifier
 from apps.bot.chat_requests import RequestNotices
 from apps.bot.main import create_bot
+from apps.bot.moderation import ModerationNotices
 from apps.bot.payments import RefundRetries
 from apps.bot.private import PrivateModeNotifier, TelegramDeletions
 from apps.bot.reminders import ReminderMessages
@@ -66,6 +68,8 @@ ACTIVITY_ALERTS_SECONDS = 5.0
 REMINDERS_SECONDS = 60.0
 # Refunds of Stars payments still owed (D-061); each has its own retry time.
 REFUNDS_SECONDS = 60.0
+# Moderation notices and ended suspensions (D-071).
+MODERATION_SECONDS = 5.0
 
 Job = Callable[[datetime], Awaitable[object]]
 
@@ -127,6 +131,7 @@ async def run() -> None:
     private_mode = PrivateModeJob(sessions, runtime_settings, PrivateModeNotifier(bot, sessions))
     deletions = TelegramDeletions(bot, sessions)
     refunds = RefundRetries(bot, sessions)
+    moderation = ModerationNotices(bot, sessions, settings)
     stop = asyncio.Event()
     loop = asyncio.get_running_loop()
     for signum in (signal.SIGINT, signal.SIGTERM):
@@ -148,6 +153,7 @@ async def run() -> None:
                 ("activity alerts", activity_alerts.tick, ACTIVITY_ALERTS_SECONDS),
                 ("daily reward reminders", reminders.tick, REMINDERS_SECONDS),
                 ("payment refunds", refunds.tick, REFUNDS_SECONDS),
+                ("moderation", moderation.tick, MODERATION_SECONDS),
             ),
             stop,
         )

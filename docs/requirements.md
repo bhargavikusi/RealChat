@@ -535,6 +535,8 @@ Do not automatically give every administrator unrestricted access to all data. A
 
 Provide a way to appeal moderation actions where appropriate.
 
+Approved (D-071): moderators and admins review reports and act on accounts from a moderation Mini App. They can close a report with no action, warn, suspend for 1, 3, 7, or 30 days (lifted automatically), ban, or lift; only admins lift bans or act on moderators and admins, and nobody acts on their own account. Every view and action is audited, and only admins open stored chats without a report, giving a reason. The account acted on is told the rule and how to appeal through support; the reporter is told only whether action followed. Urgent reports alert moderators at once, others are counted in a daily summary.
+
 ## 20. Conversation History and Data Retention
 
 Conversation history may be retained temporarily for moderation, verification of reports, and abuse investigation.

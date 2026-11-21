@@ -13,6 +13,12 @@ AUDIT_ACTIONS = (
     "coins_adjusted",
     "purchase_refunded",
     "payment_recorded",
+    # Moderation actions (D-071), one per action kind.
+    "report_closed",
+    "account_warned",
+    "account_suspended",
+    "account_banned",
+    "restriction_lifted",
 )
 
 

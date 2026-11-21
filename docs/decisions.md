@@ -257,7 +257,7 @@ Work happens on short-lived issue branches, such as `feature/12-onboarding`, cre
 
 * Suspended and banned users are stopped before every handler except help and account deletion. Anything else gets a notice that offers a **🗑 Delete account** button, and in group chats nothing is sent.
 * They can still read `/help` and delete their account. Deleting erases their profile, but the account stays suspended or banned, so they cannot sign up again.
-* Suspensions have no end date yet: restrictions are set and lifted manually until moderation tools exist.
+* Suspensions have no end date yet: restrictions are set and lifted manually until moderation tools exist. Superseded by D-071: suspensions end automatically.
 
 **Why:** Owner decision. It respects users' ability to erase their data without weakening a ban.
 
@@ -813,6 +813,34 @@ Work happens on short-lived issue branches, such as `feature/12-onboarding`, cre
 * Formatting uses Telegram message entities, never a parse mode, so user content still can't be read as markup. Continue is handled ahead of every other message handler, so it is never relayed to a chat partner.
 
 **Why:** Owner decisions on the operator's name, Indian law and courts, no legal review, the support contact as the only contact, 18+, and the welcome screen modelled on the owner's example.
+
+### D-071 — Moderation tools
+
+**Date:** 2026-11-20
+**Decision:**
+
+* Moderators and admins work in a web panel opened as a Telegram Mini App, built with React, TypeScript, and Vite (`apps/webapp`) and served by the API. A 🛡 Moderation button opens it, shown only to moderators and admins. The server verifies Telegram's signed launch data and re-checks the role on every request. During development it is tested on a phone through a temporary Cloudflare quick tunnel (`cloudflared`) to the local API, with test data only.
+* Actions:
+  * Close with no action, warn, suspend for 1, 3, 7, or 30 days, ban, or lift a suspension or ban.
+  * Suspensions end automatically at their end time. This replaces D-026's manual lifting.
+  * Moderators can do everything except lift a ban, which only admins can do.
+  * Only admins can act on moderators and admins, and nobody can act on their own account.
+  * Rules named in actions follow User Agreement section 6.2: spam, scams, or advertising; harassment, hate, or bullying; sexual content without consent; under 18; threats or violence; impersonation or a false age or identity; sharing someone's private information; getting around a restriction or abusing rewards or payments; and other breach of the User Agreement.
+  * Every action is recorded and written to the audit log.
+* Content access:
+  * Chat reports show the whole reported conversation, both sides, including Private mode and edits.
+  * Profile reports show the reported profile card plus the direct messages and chat requests between the two people.
+  * Media is viewed by having the bot send the file to the moderator's own chat by its Telegram reference, protected and deleted after a short time. Nothing is downloaded.
+  * Each viewing is audited.
+* Lookup:
+  * Moderators and admins can look up an account by RealChat ID or Telegram user ID: the profile, status, warnings and restrictions, and reports. Every lookup is audited.
+  * Only admins can open an account's stored chats from a lookup, after typing a reason that is saved in the audit log.
+* Notifications:
+  * The user acted on gets a notice naming the rule, the end time for suspensions, and how to appeal through the support contact. A lifted user is told the restriction was lifted.
+  * The reporter is told the report was reviewed, plus "and taken action" when there was one, never which action.
+  * Urgent reports are sent to every moderator and admin at once. Other reports are counted in a daily summary. Neither contains chat content.
+
+**Why:** Owner decisions (requirements §19), choosing a web panel over in-bot screens, Mini App sign-in over a login link, and least privilege for opening chats without a report.
 
 ## Open
 
