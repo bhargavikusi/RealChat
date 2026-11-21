@@ -12,18 +12,20 @@ from pydantic import SecretStr
 
 from apps.api import pages
 from apps.api.main import create_app
-from backend.config.settings import Settings
+from backend.config.settings import BotSettings
 from backend.modules.users.terms import Block, Document, document_blocks, effective_label
+from tests.support.telegram import FAKE_TOKEN
 
 
 @pytest.fixture
 def client() -> TestClient:
-    settings = Settings(
+    settings = BotSettings(
         _env_file=None,
         app_env="test",
         database_url=SecretStr("postgresql+asyncpg://user:unused@127.0.0.1:1/unused"),
         redis_url=SecretStr("redis://127.0.0.1:1/0"),
         min_age=21,
+        telegram_bot_token=SecretStr(FAKE_TOKEN),
     )
     return TestClient(create_app(settings))
 

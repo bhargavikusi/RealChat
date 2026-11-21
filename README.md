@@ -11,6 +11,7 @@ Early development. The infrastructure runs locally: an API with health checks, P
 * [Python 3.13](https://www.python.org/downloads/)
 * [uv](https://docs.astral.sh/uv/), the Python package manager
 * [Docker Desktop](https://www.docker.com/products/docker-desktop/), or another Docker engine with Compose
+* [Node.js 24](https://nodejs.org/), only to build the moderation Mini App (`apps/webapp`)
 
 ## Local setup
 
@@ -49,6 +50,26 @@ To check that it's running:
 * `GET /ready` returns 200 when PostgreSQL and Redis are both reachable. Otherwise it returns 503 and names the failing service.
 
 The API also serves the User Agreement at `/terms` and the Privacy Policy at `/privacy`, as web pages with the same text and version the bot shows (the text lives in `backend/modules/users/legal/`). Once the API is reachable on the internet, set `PUBLIC_BASE_URL` to its https address so the bot's /terms links to them, and set the privacy policy link in @BotFather to `<PUBLIC_BASE_URL>/privacy`.
+
+### Moderation Mini App
+
+Moderators and admins review reports in a Telegram Mini App (D-071), a React app in `apps/webapp` that the API serves at `/moderation/` once it is built. The API also needs `TELEGRAM_BOT_TOKEN` now, because it checks Telegram's signature on the Mini App's launch data with every request; data older than an hour is refused, and the account's role is checked each time.
+
+Build it after installing exactly the locked packages (their install scripts are off, see `apps/webapp/.npmrc`):
+
+```bash
+cd apps/webapp
+npm ci
+npm run build
+```
+
+Telegram opens Mini Apps only from an https address, so to try it on a phone during development, run a temporary Cloudflare quick tunnel to the local API (no account needed; the address changes each time, and development traffic passes through Cloudflare while it runs, so use test data only):
+
+```bash
+cloudflared tunnel --url http://localhost:8000
+```
+
+Put the printed `https://….trycloudflare.com` address in your local `.env` as `PUBLIC_BASE_URL`, then restart the bot and the API. Moderators and admins then see 🛡 Moderation in Advanced settings. Remove it from `.env` when you stop the tunnel.
 
 To stop the services, run `docker compose down`. Data is kept in Docker volumes. Add `-v` to delete it as well.
 
@@ -129,6 +150,14 @@ uv run ruff check .          # lint
 uv run ruff format --check . # formatting
 uv run mypy                  # type checks
 uv run pytest                # tests
+```
+
+For the moderation Mini App, CI also runs these in `apps/webapp`, and audits its packages:
+
+```bash
+npm run typecheck
+npm run lint
+npm run build
 ```
 
 Integration tests use the `realchat_test` database and Redis database 15, configured by `TEST_DATABASE_URL` and `TEST_REDIS_URL` in `.env`. They need `docker compose up` to be running. Without those settings the tests are skipped. Set `REQUIRE_INTEGRATION=1` to make missing settings a failure instead, as CI does.

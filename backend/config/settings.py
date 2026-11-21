@@ -37,7 +37,9 @@ class Settings(BaseSettings):
 
 
 class BotSettings(Settings):
-    """Settings for the Telegram bot process. Other processes do not need the token."""
+    """Settings for the processes that need the bot token: the bot, the worker (which
+    sends messages), and the API (which checks the moderation Mini App's sign-in, D-071).
+    Other tools, such as migrations, do not need it."""
 
     telegram_bot_token: SecretStr
     # Connect to Telegram's test environment instead (a separate network with its own

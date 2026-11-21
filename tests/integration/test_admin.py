@@ -6,6 +6,9 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
+from aiogram.methods import EditMessageReplyMarkup, SendMessage
+from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
+from redis.asyncio import Redis
 from sqlalchemy import select, text, update
 from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -15,6 +18,7 @@ from apps.bot import account as ac
 from apps.bot import admin as ad
 from apps.bot import onboarding as ob
 from apps.bot.menu import HELP_TEXT
+from backend.config.settings import BotSettings
 from backend.modules.admin import service
 from backend.modules.admin import settings as settings_module
 from backend.modules.admin.models import AdminAuditEntry, AppSetting
@@ -431,6 +435,63 @@ async def test_only_admins_see_admin_settings(chat: Chat, session_factory: Sessi
     assert ad.ADMIN_BUTTON not in await _open_advanced_settings(chat)
     await _set_role(session_factory, "admin")
     assert ad.ADMIN_BUTTON in await _open_advanced_settings(chat)
+
+
+def _moderation_button(chat: Chat) -> InlineKeyboardButton | None:
+    """The 🛡 Moderation button on the latest Advanced settings message, if any."""
+    method = chat.session.requests[-1]
+    assert isinstance(method, SendMessage)
+    assert isinstance(method.reply_markup, InlineKeyboardMarkup)
+    found = [
+        button
+        for row in method.reply_markup.inline_keyboard
+        for button in row
+        if button.text == ac.MODERATION_BUTTON
+    ]
+    return found[0] if found else None
+
+
+async def test_moderators_and_admins_see_the_moderation_button(
+    bot_settings: BotSettings, redis: Redis, session_factory: Sessions
+) -> None:
+    # D-071: a Mini App button to the panel, once the public HTTPS address is set.
+    settings = bot_settings.model_copy(update={"public_base_url": "https://realchat.example/"})
+    chat = Chat(settings, redis, session_factory)
+    await complete_onboarding(chat)
+    await _open_advanced_settings(chat)
+    assert _moderation_button(chat) is None
+    for role in ("moderator", "admin"):
+        await _set_role(session_factory, role)
+        await _open_advanced_settings(chat)
+        button = _moderation_button(chat)
+        assert button is not None and button.web_app is not None
+        assert button.web_app.url == "https://realchat.example/moderation/"
+        assert button.callback_data is None
+
+
+async def test_no_moderation_button_without_a_public_address(
+    chat: Chat, session_factory: Sessions
+) -> None:
+    await complete_onboarding(chat)
+    await _set_role(session_factory, "admin")
+    await _open_advanced_settings(chat)
+    assert _moderation_button(chat) is None
+
+
+async def test_the_moderation_button_stays_after_a_setting_changes(
+    bot_settings: BotSettings, redis: Redis, session_factory: Sessions
+) -> None:
+    settings = bot_settings.model_copy(update={"public_base_url": "https://realchat.example"})
+    chat = Chat(settings, redis, session_factory)
+    await complete_onboarding(chat)
+    await _set_role(session_factory, "moderator")
+    await _open_advanced_settings(chat)
+    await chat.press(next(t for t in chat.session.last_buttons() if t.startswith("👀")))
+    edited = chat.session.requests[-1]
+    assert isinstance(edited, EditMessageReplyMarkup)
+    assert isinstance(edited.reply_markup, InlineKeyboardMarkup)
+    labels = [b.text for row in edited.reply_markup.inline_keyboard for b in row]
+    assert ac.MODERATION_BUTTON in labels
 
 
 async def test_admin_changes_a_setting(chat: Chat, session_factory: Sessions) -> None:
