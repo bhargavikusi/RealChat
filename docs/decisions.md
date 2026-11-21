@@ -819,7 +819,7 @@ Work happens on short-lived issue branches, such as `feature/12-onboarding`, cre
 **Date:** 2026-11-20
 **Decision:**
 
-* Moderators and admins work in a web panel opened as a Telegram Mini App, built with React, TypeScript, and Vite (`apps/webapp`) and served by the API. A 🛡 Moderation button opens it, shown only to moderators and admins. The server verifies Telegram's signed launch data and re-checks the role on every request. During development it is tested on a phone through a temporary Cloudflare quick tunnel (`cloudflared`) to the local API, with test data only.
+* Moderators and admins work in a web panel opened as a Telegram Mini App, built with React, TypeScript, and Vite (`apps/webapp`) and served by the API. A 🛡 Moderation button in Advanced settings opens it, shown only to moderators and admins. Every request carries Telegram's signed launch data, which the server verifies, and the role is re-checked each time. There are no sessions, chosen as the safer option. Launch data is accepted for 1 hour after the panel is opened; after that the moderator reopens it from the bot. During development it is tested on a phone through a temporary Cloudflare quick tunnel (`cloudflared`) to the local API, with test data only.
 * Actions:
   * Close with no action, warn, suspend for 1, 3, 7, or 30 days, ban, or lift a suspension or ban.
   * Suspensions end automatically at their end time. This replaces D-026's manual lifting.
