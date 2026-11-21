@@ -35,6 +35,7 @@ from aiogram.types import (
     Message,
     TelegramObject,
     Update,
+    WebAppInfo,
 )
 from aiogram.types import User as TelegramUser
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -54,6 +55,7 @@ from backend.modules.chat import service as chat_service
 from backend.modules.coins import service as coins
 from backend.modules.moderation import actions as moderation_actions
 from backend.modules.moderation import service as moderation
+from backend.modules.moderation.actions import MODERATION_ROLES
 from backend.modules.payments import service as payments
 from backend.modules.users import service
 from backend.modules.users.models import User
@@ -143,6 +145,7 @@ GHOST_LABEL = "👻 Ghost mode"
 GHOST_ON = "👻 Ghost mode is on: profiles you open won't see your visit."
 GHOST_OFF = "👻 Ghost mode is off: profiles you open will see your visit again."
 GHOST_VIP_ONLY = "👻 Ghost mode is a VIP perk. See /vip."
+MODERATION_BUTTON = "🛡 Moderation"
 
 
 def notification_button(setting: Notification, on: bool) -> InlineKeyboardButton:
@@ -154,19 +157,37 @@ def notification_button(setting: Notification, on: bool) -> InlineKeyboardButton
 
 
 def settings_keyboard(
-    choices: NotificationChoices, *, admin: bool, ghost: bool | None = None
+    choices: NotificationChoices,
+    *,
+    admin: bool,
+    ghost: bool | None = None,
+    moderation_url: str | None = None,
 ) -> InlineKeyboardMarkup:
-    """`ghost` is the Ghost mode setting for a VIP, or None to leave its row out."""
+    """`ghost` is the Ghost mode setting for a VIP, or None to leave its row out;
+    `moderation_url` opens the moderation Mini App, for moderators and admins only."""
     rows = [[notification_button(setting, choices[setting])] for setting in Notification]
     if ghost is not None:
         rows.append(
             [_button(f"{GHOST_LABEL}: {'On' if ghost else 'Off'}", GhostAction(on=not ghost))]
         )
     rows.append([_button(DELETE_BUTTON, AccountAction(action="delete"))])
+    if moderation_url is not None:
+        rows.append(
+            [InlineKeyboardButton(text=MODERATION_BUTTON, web_app=WebAppInfo(url=moderation_url))]
+        )
     if admin:
         rows.append([admin_button()])
     rows.append([_button(BACK_BUTTON, BackToProfile())])
     return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def moderation_url(role: str, settings: BotSettings) -> str | None:
+    """The moderation Mini App's address for a moderator or admin, once the public
+    HTTPS address is set (D-071); None for everyone else. The panel checks the role
+    again on every request."""
+    if role not in MODERATION_ROLES or settings.public_base_url is None:
+        return None
+    return f"{str(settings.public_base_url).rstrip('/')}/moderation/"
 
 
 def changed(setting: Notification, on: bool) -> str:
@@ -229,7 +250,7 @@ async def show_settings(
     # The access gate keeps suspended and banned users out of settings (D-026).
     user = await service.get_or_create_user(session, query.from_user.id)
     # Admin settings are offered to admins only; the admin handlers check again (D-035).
-    is_admin = await admin_service.get_role(session, query.from_user.id) == "admin"
+    role = await admin_service.get_role(session, query.from_user.id)
     choices = await service.notification_settings(session, user.id)
     ghost = _ghost(user)
     await session.commit()
@@ -237,7 +258,12 @@ async def show_settings(
     await bot.send_message(
         query.from_user.id,
         ADVANCED_SETTINGS_TEXT,
-        reply_markup=settings_keyboard(choices, admin=is_admin, ghost=ghost),
+        reply_markup=settings_keyboard(
+            choices,
+            admin=role == "admin",
+            ghost=ghost,
+            moderation_url=moderation_url(role or "user", settings),
+        ),
     )
 
 
@@ -284,7 +310,13 @@ async def on_notify(
     ghost = _ghost(ctx.user)
     await session.commit()
     await query.answer(changed(setting, callback_data.on))
-    await _refresh_settings(bot, query, settings_keyboard(choices, admin=is_admin, ghost=ghost))
+    keyboard = settings_keyboard(
+        choices,
+        admin=is_admin,
+        ghost=ghost,
+        moderation_url=moderation_url(ctx.user.role, settings),
+    )
+    await _refresh_settings(bot, query, keyboard)
 
 
 async def on_ghost(
@@ -311,7 +343,13 @@ async def on_ghost(
         await query.answer(GHOST_VIP_ONLY, show_alert=True)
     else:
         await query.answer(GHOST_ON if callback_data.on else GHOST_OFF)
-    await _refresh_settings(bot, query, settings_keyboard(choices, admin=is_admin, ghost=ghost))
+    keyboard = settings_keyboard(
+        choices,
+        admin=is_admin,
+        ghost=ghost,
+        moderation_url=moderation_url(ctx.user.role, settings),
+    )
+    await _refresh_settings(bot, query, keyboard)
 
 
 async def ask_to_confirm(
