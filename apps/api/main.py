@@ -13,6 +13,7 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
 from apps.api import moderation, pages
+from apps.bot.main import create_bot
 from backend.config.settings import BotSettings, load_bot_settings
 from backend.core.logging import configure_logging
 from backend.core.redis import create_redis, ping_redis
@@ -44,10 +45,13 @@ def create_app(settings: BotSettings | None = None) -> FastAPI:
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         app.state.engine = create_engine(settings.database_url.get_secret_value())
         app.state.sessions = create_session_factory(app.state.engine)
+        # Sends media to moderators from the review panel (D-071).
+        app.state.bot = create_bot(settings)
         app.state.redis = create_redis(settings.redis_url.get_secret_value())
         try:
             yield
         finally:
+            await app.state.bot.session.close()
             await app.state.redis.aclose()
             await app.state.engine.dispose()
 

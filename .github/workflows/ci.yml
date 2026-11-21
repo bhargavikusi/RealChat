@@ -87,7 +87,7 @@ jobs:
         run: uv run pytest
 
   webapp:
-    name: "Web app: typecheck, lint, build"
+    name: "Web app: typecheck, lint, tests, build"
     runs-on: ubuntu-latest
     timeout-minutes: 10
     defaults:
@@ -114,6 +114,9 @@ jobs:
 
       - name: Lint
         run: npm run lint
+
+      - name: Component tests
+        run: npm test
 
       - name: Build
         run: npm run build

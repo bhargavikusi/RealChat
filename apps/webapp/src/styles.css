@@ -31,3 +31,181 @@ h1 {
   border-radius: 0.75rem;
   background: var(--tg-theme-secondary-bg-color, #f1f1f4);
 }
+
+.header {
+  margin-bottom: 1rem;
+}
+
+.header h1 {
+  margin-bottom: 0.25rem;
+}
+
+h2 {
+  font-size: 1.15rem;
+}
+
+h3 {
+  font-size: 1rem;
+  margin: 1.25rem 0 0.5rem;
+}
+
+.list,
+.messages {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+
+.list li {
+  margin-bottom: 0.4rem;
+}
+
+.row {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  width: 100%;
+  text-align: left;
+  padding: 0.75rem;
+  border: none;
+  border-radius: 0.75rem;
+  background: var(--tg-theme-secondary-bg-color, #f1f1f4);
+  color: inherit;
+  font: inherit;
+}
+
+.row-title {
+  font-weight: 600;
+}
+
+.row-meta {
+  font-size: 0.85rem;
+  color: var(--tg-theme-hint-color, #707579);
+}
+
+.badge {
+  display: inline-block;
+  margin-right: 0.4rem;
+  padding: 0 0.4rem;
+  border-radius: 0.4rem;
+  font-size: 0.8rem;
+}
+
+.urgent {
+  background: var(--tg-theme-destructive-text-color, #d14e4e);
+  color: #ffffff;
+}
+
+.cards {
+  display: grid;
+  gap: 0.75rem;
+}
+
+.card {
+  padding: 0.75rem;
+  border-radius: 0.75rem;
+  background: var(--tg-theme-secondary-bg-color, #f1f1f4);
+}
+
+.card h3 {
+  margin-top: 0;
+}
+
+.card p {
+  margin: 0.25rem 0;
+}
+
+.quote {
+  font-style: italic;
+}
+
+.message {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  margin-bottom: 0.6rem;
+  padding: 0.6rem 0.75rem;
+  border-radius: 0.75rem;
+  background: var(--tg-theme-secondary-bg-color, #f1f1f4);
+}
+
+.message.reported {
+  border-left: 0.25rem solid var(--tg-theme-destructive-text-color, #d14e4e);
+}
+
+.kind {
+  font-weight: 600;
+}
+
+.text {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.edited {
+  color: var(--tg-theme-hint-color, #707579);
+}
+
+button {
+  font: inherit;
+}
+
+.link {
+  align-self: flex-start;
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--tg-theme-link-color, #2481cc);
+}
+
+.actions {
+  margin-top: 1.5rem;
+}
+
+.buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.buttons button,
+.form button {
+  padding: 0.55rem 0.9rem;
+  border: none;
+  border-radius: 0.6rem;
+  background: var(--tg-theme-secondary-bg-color, #f1f1f4);
+  color: inherit;
+}
+
+.buttons button[aria-pressed="true"] {
+  outline: 2px solid var(--tg-theme-button-color, #2481cc);
+}
+
+.form {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  margin-top: 0.75rem;
+}
+
+.form label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+}
+
+.form select {
+  padding: 0.5rem;
+  font: inherit;
+}
+
+.form .primary {
+  background: var(--tg-theme-button-color, #2481cc);
+  color: var(--tg-theme-button-text-color, #ffffff);
+}
+
+.buttons button.danger,
+.form button.danger {
+  background: var(--tg-theme-destructive-text-color, #d14e4e);
+  color: #ffffff;
+}

@@ -830,7 +830,8 @@ Work happens on short-lived issue branches, such as `feature/12-onboarding`, cre
 * Content access:
   * Chat reports show the whole reported conversation, both sides, including Private mode and edits.
   * Profile reports show the reported profile card plus the direct messages and chat requests between the two people.
-  * Media is viewed by having the bot send the file to the moderator's own chat by its Telegram reference, protected and deleted after a short time. Nothing is downloaded.
+  * Media is viewed by having the bot send the file to the moderator's own chat by its Telegram reference, protected, and deleted 10 minutes later. Nothing is downloaded.
+  * Alongside a report, the moderator sees the reported person's record: their profile card, account status, past warnings, suspensions, and bans (with rules and dates), and how many reports they have received in total and still open. Never their Telegram name, username, phone number, or Telegram ID.
   * Each viewing is audited.
 * Lookup:
   * Moderators and admins can look up an account by RealChat ID or Telegram user ID: the profile, status, warnings and restrictions, and reports. Every lookup is audited.

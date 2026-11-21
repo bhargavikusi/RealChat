@@ -19,6 +19,9 @@ AUDIT_ACTIONS = (
     "account_suspended",
     "account_banned",
     "restriction_lifted",
+    # Moderators opening a report, and media sent to them from one (D-071).
+    "report_viewed",
+    "media_viewed",
 )
 
 
