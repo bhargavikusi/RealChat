@@ -22,7 +22,7 @@ There is one row per Telegram account.
 | `ghost_mode` | boolean | Ghost mode (D-064), default true: while the user is VIP and it is on, opening a profile card records no visit. Set to true by a payment that starts a new VIP period and on account deletion; changed by the user only while VIP. |
 | `coin_history_after_id` | bigint, nullable | Set at account deletion to the account's latest coin ledger entry, or 0 if it had none (not a real entry id): `/coins` lists only later entries, so a returning user sees a fresh history (D-055). NULL for accounts never deleted since this was added; those see their whole history. |
 | `role` | varchar(16) | One of `user` (default), `moderator`, `admin` (D-034). Changed only by the admin CLI, except that account deletion resets it to `user`. |
-| `suspended_until` | timestamptz, nullable | When a suspension ends by itself (D-071). Set only while the status is `suspended`, enforced by a constraint. NULL while suspended means the suspension lasts until lifted, as for suspensions set by hand before moderation tools. Kept on account deletion, like the status. |
+| `suspended_until` | timestamptz, nullable | When a suspension ends by itself (D-071). Set only while the status is `suspended`, enforced by a constraint. A partial index on it where the status is `suspended` serves the worker's search for ended suspensions. NULL while suspended means the suspension lasts until lifted, as for suspensions set by hand before moderation tools. Kept on account deletion, like the status. |
 
 ### `profiles`
 
@@ -318,7 +318,7 @@ The history of moderation actions (D-071). Rows are never updated; the account's
 | `report_id` | bigint, nullable | References `reports.id`: the report the action was taken from and closed. NULL for an action from an account lookup. Required for `close`. |
 | `kind` | varchar(16) | `close` (close a report with no action), `warn`, `suspend`, `ban`, or `lift`. |
 | `rule` | varchar(16), nullable | The User Agreement rule (section 6.2): `spam`, `harassment`, `sexual`, `under_18`, `threats`, `impersonation`, `private_info`, `evasion`, or `other`. Set exactly for `warn`, `suspend`, and `ban`. |
-| `days`, `ends_at` | smallint, timestamptz, nullable | A suspension's length (1, 3, 7, or 30) and end. Set exactly for `suspend`. |
+| `days`, `ends_at` | smallint, timestamptz, nullable | A suspension's length (1, 3, 7, or 30) and end. Set exactly for `suspend`. A suspension that ends by itself adds no row of its own: its end is this `ends_at`. Only lifts by a moderator or admin are recorded as `lift`. |
 | `created_at` | timestamptz | |
 
 An action locks the actor's and the target's `users` rows in id order, then the report, which must still be open, then the target's open conversation if the action ends it. That is the same users-before-conversations order as reports and account deletion, so a report is closed by exactly one action and none of them deadlock. The index on `(target_user_id, created_at)` serves an account's history.
@@ -336,7 +336,7 @@ Messages a moderation action owes people, sent by the worker after the action co
 | `conversation_id` | bigint, nullable | References `conversations.id`. Set exactly for `chat_ended`. |
 | `next_attempt_at` | timestamptz | When the notice may next be tried. A claim moves it a few minutes ahead. |
 | `attempts` | smallint | Claims so far; the notice is given up after a few. |
-| `sent_at` | timestamptz, nullable | When Telegram accepted it, or when it turned out it never could (the person blocked the bot). |
+| `sent_at` | timestamptz, nullable | When Telegram accepted it, or when it turned out it never could (the person blocked the bot). A notice that failed on every attempt is given up with `sent_at` still NULL; it stays in the partial index below but is never claimed again. |
 
 `(action_id, kind, recipient_user_id)` is unique. A partial index on `next_attempt_at` where `sent_at IS NULL` serves the worker, which claims due notices `FOR UPDATE SKIP LOCKED`, so two workers never send the same one at once.
 

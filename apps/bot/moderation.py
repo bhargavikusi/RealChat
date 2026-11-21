@@ -14,7 +14,9 @@ from aiogram.exceptions import TelegramAPIError
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from apps.bot.endings import menu_price, send_chat_ended
+from apps.bot.account import DELETE_BUTTON, AccountAction
+from apps.bot.endings import SAFETY_PROMPT, menu_price, safety_keyboard, send_menu
+from apps.bot.keyboards import main_keyboard
 from apps.bot.payments import vip_date
 from apps.bot.relay import unreachable
 from backend.config.settings import BotSettings
@@ -95,12 +97,21 @@ class ModerationNotices:
         self._sessions = sessions
         self._support = settings.support_contact
 
-    def _support_keyboard(self) -> InlineKeyboardMarkup | None:
-        if self._support is None:
-            return None
-        return InlineKeyboardMarkup(
-            inline_keyboard=[[InlineKeyboardButton(text=SUPPORT_BUTTON, url=str(self._support))]]
-        )
+    def _action_keyboard(self, action_kind: str) -> InlineKeyboardMarkup | None:
+        """🗑 Delete account for a suspension or ban, as the restriction notice offers, and
+        💬 Support to appeal when the contact is configured. A lift needs neither."""
+        rows = []
+        if action_kind in actions.RESTRICTING:
+            rows.append(
+                [
+                    InlineKeyboardButton(
+                        text=DELETE_BUTTON, callback_data=AccountAction(action="delete").pack()
+                    )
+                ]
+            )
+        if self._support is not None and action_kind != "lift":
+            rows.append([InlineKeyboardButton(text=SUPPORT_BUTTON, url=str(self._support))])
+        return InlineKeyboardMarkup(inline_keyboard=rows) if rows else None
 
     async def tick(self, now: datetime) -> int:
         """Lift ended suspensions, then send one batch of notices; returns how many
@@ -127,7 +138,7 @@ class ModerationNotices:
                 await self._bot.send_message(
                     notice.telegram_user_id,
                     action_notice(notice, self._support is not None),
-                    reply_markup=None if notice.action_kind == "lift" else self._support_keyboard(),
+                    reply_markup=self._action_keyboard(notice.action_kind),
                 )
             elif notice.kind == "reporter":
                 taken = notice.action_kind in actions.ON_ACCOUNT
@@ -140,15 +151,31 @@ class ModerationNotices:
                 )
                 price = await menu_price(session)
                 await session.commit()
-                await send_chat_ended(
-                    self._bot,
-                    notice.telegram_user_id,
-                    PARTNER_REMOVED,
-                    notice.conversation_id,
-                    blocked=blocked,
-                    price=price,
+                # Only this message is retried; the follow-ups are sent once, after it.
+                await self._bot.send_message(
+                    notice.telegram_user_id, PARTNER_REMOVED, reply_markup=main_keyboard()
+                )
+                await self._follow_up(
+                    notice.telegram_user_id, notice.conversation_id, blocked, price
                 )
         except TelegramAPIError as exc:
             logger.info("could not send a moderation notice", extra=exception_summary(exc))
             return unreachable(exc)
         return True
+
+    async def _follow_up(
+        self, chat_id: int, conversation_id: int, blocked: bool, price: int
+    ) -> None:
+        """Block and Report for the partner, then the new-chat menu, as after any ended
+        chat (`send_chat_ended`), best effort: a failure here is logged, not retried, so
+        the notice is never sent twice."""
+        try:
+            await self._bot.send_message(
+                chat_id, SAFETY_PROMPT, reply_markup=safety_keyboard(conversation_id, blocked)
+            )
+        except TelegramAPIError as exc:
+            logger.warning("could not offer block and report", extra=exception_summary(exc))
+        try:
+            await send_menu(self._bot, chat_id, price)
+        except TelegramAPIError as exc:
+            logger.warning("could not send the new-chat menu", extra=exception_summary(exc))

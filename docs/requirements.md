@@ -465,8 +465,6 @@ Approved (D-068): an admin can record a payment Telegram has that was never reco
 
 Approved (D-069): the terms of use and the privacy notice are separate parts of the same draft, shown together in the bot and served by the API as two web pages; the bot links to them once a public address is configured. The wording remains the draft pending legal review (O-007).
 
-Approved (D-071): moderators and admins review reports and act on accounts from a moderation Mini App. They can close a report with no action, warn, suspend for 1, 3, 7, or 30 days (lifted automatically), ban, or lift; only admins lift bans. Every view and action is audited, and only admins open stored chats without a report, giving a reason. The account acted on is told the rule and how to appeal through support; the reporter is told only whether action followed. Urgent reports alert moderators at once, others are counted in a daily summary.
-
 Approved (D-070): the terms are a professional User Agreement and Privacy Policy (version 1.0), naming the operator only as RealChat, under Indian law and the courts of India, for users 18 and older, with the support contact for help, privacy requests, and grievances. They are official once the owner approves them, without legal review. The first start, and any new version, shows a short welcome with a button for each document and a blue ✅ Continue button that accepts both.
 
 Approved (D-067): deleting an account needs replying exactly `DELETE` to the warning; any other reply keeps the account. The warning shows the current coins (including bought coins) and, while VIP runs, the VIP days left and end date, and says they aren't refunded. Restricted users can still delete from their notice.
@@ -536,6 +534,8 @@ Administrative features should include:
 Do not automatically give every administrator unrestricted access to all data. Apply least privilege, audit access to sensitive records, and avoid storing unnecessary content.
 
 Provide a way to appeal moderation actions where appropriate.
+
+Approved (D-071): moderators and admins review reports and act on accounts from a moderation Mini App. They can close a report with no action, warn, suspend for 1, 3, 7, or 30 days (lifted automatically), ban, or lift; only admins lift bans. Every view and action is audited, and only admins open stored chats without a report, giving a reason. The account acted on is told the rule and how to appeal through support; the reporter is told only whether action followed. Urgent reports alert moderators at once, others are counted in a daily summary.
 
 ## 20. Conversation History and Data Retention
 

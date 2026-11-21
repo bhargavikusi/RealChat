@@ -17,6 +17,7 @@ from sqlalchemy import (
     Text,
     UniqueConstraint,
     func,
+    text,
 )
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -56,6 +57,12 @@ class User(Base):
         CheckConstraint(_in("role", ROLES), name="role"),
         CheckConstraint(
             "suspended_until IS NULL OR status = 'suspended'", name="suspended_until_status"
+        ),
+        # Serves the worker's search for suspensions that have ended (D-071).
+        Index(
+            "ix_users_suspended_until",
+            "suspended_until",
+            postgresql_where=text("status = 'suspended'"),
         ),
     )
 

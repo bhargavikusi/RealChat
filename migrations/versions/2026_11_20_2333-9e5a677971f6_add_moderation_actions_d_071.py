@@ -170,6 +170,13 @@ def upgrade() -> None:
         "users",
         "suspended_until IS NULL OR status = 'suspended'",
     )
+    op.create_index(
+        "ix_users_suspended_until",
+        "users",
+        ["suspended_until"],
+        unique=False,
+        postgresql_where=sa.text("status = 'suspended'"),
+    )
     _replace_check(
         "conversations", "ck_conversations_end_reason", f"end_reason IN ({NEW_END_REASONS})"
     )
@@ -182,6 +189,11 @@ def downgrade() -> None:
     _replace_check("admin_audit_log", "ck_admin_audit_log_action", f"action IN ({OLD_ACTIONS})")
     _replace_check(
         "conversations", "ck_conversations_end_reason", f"end_reason IN ({OLD_END_REASONS})"
+    )
+    op.drop_index(
+        "ix_users_suspended_until",
+        table_name="users",
+        postgresql_where=sa.text("status = 'suspended'"),
     )
     op.drop_constraint(op.f("ck_users_suspended_until_status"), "users", type_="check")
     op.drop_column("users", "suspended_until")

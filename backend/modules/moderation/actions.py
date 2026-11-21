@@ -241,22 +241,17 @@ def _audit_value(
 
 
 async def lift_if_expired(session: AsyncSession, user_id: int, now: datetime) -> bool:
-    """Lift the user's suspension if its end has passed; returns whether it did. A
-    conditional update, so it lifts once however many updates arrive together."""
-    found = await session.scalar(
-        select(User).where(
-            User.id == user_id, User.status == "suspended", User.suspended_until <= now
-        )
-    )
-    if found is None:
+    """Lift the user's suspension if its end has passed; returns whether it did.
+
+    The account row is locked first, so a lift and an account deletion (which locks the
+    same row) happen one after the other, and the status after the lift is decided from
+    the row as it stands. However many updates arrive together, it lifts once.
+    """
+    user = await users.lock_user(session, user_id)
+    if user.status != "suspended" or user.suspended_until is None or user.suspended_until > now:
         return False
-    lifted = await session.execute(
-        update(User)
-        .where(User.id == user_id, User.status == "suspended", User.suspended_until <= now)
-        .values(status=await _status_after_lift(session, found), suspended_until=None)
-        .returning(User.id)
-    )
-    return lifted.scalar_one_or_none() is not None
+    user.status, user.suspended_until = await _status_after_lift(session, user), None
+    return True
 
 
 async def lift_expired(session: AsyncSession, now: datetime, limit: int) -> int:
@@ -368,6 +363,10 @@ async def standing(session: AsyncSession, telegram_user_id: int, now: datetime) 
     user_id, status, until = row
     if status == "suspended" and until is not None and until <= now:
         await lift_if_expired(session, user_id, now)
-        status = str(await session.scalar(select(User.status).where(User.id == user_id)))
-        until = None
-    return Standing(status, until)
+        # Read back: another action may have changed the account meanwhile.
+        status, until = (
+            await session.execute(
+                select(User.status, User.suspended_until).where(User.id == user_id)
+            )
+        ).one()
+    return Standing(str(status), until)

@@ -7,6 +7,7 @@ from datetime import UTC, datetime, timedelta
 import pytest
 from aiogram.exceptions import TelegramBadRequest, TelegramForbiddenError
 from aiogram.methods import SendMessage
+from aiogram.types import InlineKeyboardMarkup
 from redis.asyncio import Redis
 from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -25,7 +26,15 @@ from backend.modules.users import service as users
 from backend.modules.users.models import User
 from tests.support.chat import USER_ID
 from tests.support.db import wait_until_blocked
-from tests.support.world import BOB_ID, World, assert_chat_ended, match, onboarded_world
+from tests.support.world import (
+    BOB_ID,
+    World,
+    assert_chat_ended,
+    buttons,
+    match,
+    onboarded_world,
+    text_of,
+)
 
 Sessions = async_sessionmaker[AsyncSession]
 MODERATOR_ID = 7101
@@ -440,3 +449,88 @@ async def test_actions_are_kept_after_the_account_is_deleted(world: World) -> No
         await users.delete_account(session, bob, NOW)
         await session.commit()
         assert await session.scalar(select(func.count()).select_from(ModerationAction)) == 1
+
+
+async def test_restriction_notices_offer_deletion_and_support(
+    world: World, bot_settings: BotSettings
+) -> None:
+    _, bob, moderator, _ = await _ids(world)
+    await _act(world.sessions, moderator, bob, Kind.BAN, rule="spam")
+    settings = bot_settings.model_copy(update={"support_contact": "https://t.me/realchat_support"})
+
+    await ModerationNotices(world.worker_bot, world.sessions, settings).tick(NOW)
+
+    notice = world.worker.sent_to(BOB_ID)[-1]
+    assert buttons(notice) == [ac.DELETE_BUTTON, bot_moderation.SUPPORT_BUTTON]
+    # The Delete button is the one the restriction notice offers.
+    assert isinstance(notice.reply_markup, InlineKeyboardMarkup)
+    delete = notice.reply_markup.inline_keyboard[0][0]
+    assert delete.callback_data == ac.AccountAction(action="delete").pack()
+
+
+async def test_a_lift_notice_has_no_buttons(world: World, bot_settings: BotSettings) -> None:
+    _, bob, moderator, _ = await _ids(world)
+    await _act(world.sessions, moderator, bob, Kind.SUSPEND, rule="spam", days=1)
+    await _act(world.sessions, moderator, bob, Kind.LIFT)
+    settings = bot_settings.model_copy(update={"support_contact": "https://t.me/realchat_support"})
+
+    await ModerationNotices(world.worker_bot, world.sessions, settings).tick(NOW)
+
+    lifted = world.worker.sent_to(BOB_ID)[-1]
+    assert (text_of(lifted), lifted.reply_markup) == (bot_moderation.LIFTED, None)
+
+
+async def test_the_partner_notice_is_not_repeated_when_a_follow_up_fails(
+    world: World, bot_settings: BotSettings, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _, bob, moderator, _ = await _ids(world)
+    await match(world)
+    await _act(world.sessions, moderator, bob, Kind.SUSPEND, rule="spam", days=1)
+
+    async def failing_menu(*args: object, **kwargs: object) -> None:
+        raise TelegramBadRequest(method=SendMessage(chat_id=USER_ID, text="x"), message="nope")
+
+    monkeypatch.setattr(bot_moderation, "send_menu", failing_menu)
+    job = _notices_job(world, bot_settings)
+    assert await job.tick(NOW) == 2  # both notices done with
+    assert await job.tick(NOW + NOTICE_RETRY) == 0
+    sent = [text_of(m) for m in world.worker.sent_to(USER_ID)]
+    assert sent.count(bot_moderation.PARTNER_REMOVED) == 1
+
+
+async def test_a_failed_partner_notice_is_retried_whole(
+    world: World, bot_settings: BotSettings
+) -> None:
+    _, bob, moderator, _ = await _ids(world)
+    await match(world)
+    await _act(world.sessions, moderator, bob, Kind.SUSPEND, rule="spam", days=1)
+    world.worker.send_error = TelegramBadRequest(
+        method=SendMessage(chat_id=USER_ID, text="x"), message="Bad Request: try again"
+    )
+    job = _notices_job(world, bot_settings)
+    assert await job.tick(NOW) == 0
+    world.worker.send_error = None
+
+    assert await job.tick(NOW + NOTICE_RETRY) == 2
+    assert_chat_ended(world.worker, USER_ID, bot_moderation.PARTNER_REMOVED)
+
+
+async def test_an_ended_suspension_lifted_during_deletion_stays_deleted(world: World) -> None:
+    _, bob, moderator, _ = await _ids(world)
+    await _act(world.sessions, moderator, bob, Kind.SUSPEND, rule="spam", days=1)
+    later = NOW + timedelta(days=2)
+    async with world.sessions() as deleting:
+        await users.delete_account(deleting, bob, later)  # holds Bob's row
+
+        async def lift() -> bool:
+            async with world.sessions() as session:
+                lifted = await actions.lift_if_expired(session, bob, later)
+                await session.commit()
+                return lifted
+
+        task = asyncio.create_task(lift())
+        await wait_until_blocked(world.sessions)
+        assert not task.done()  # waits for the deletion's lock
+        await deleting.commit()
+    assert await task
+    assert (await _user(world.sessions, bob)).status == "deleted"
