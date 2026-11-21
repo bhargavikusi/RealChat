@@ -629,7 +629,11 @@ async def test_a_copy_whose_view_cannot_be_recorded_is_taken_back(
 ) -> None:
     report_id, ids = await _chat_report(session_factory, people)
 
-    async def broken(*args: object, **kwargs: object) -> None:
+    real = review.record_media_view
+
+    async def broken(*args: Any, **kwargs: Any) -> None:
+        # The audit entry and the queued deletion are written, then it fails.
+        await real(*args, **kwargs)
         raise RuntimeError("database unavailable")
 
     monkeypatch.setattr(review, "record_media_view", broken)
@@ -643,3 +647,7 @@ async def test_a_copy_whose_view_cannot_be_recorded_is_taken_back(
     assert len(sent) == 1
     # The copy was deleted at once: nothing is left untracked in the moderator's chat.
     assert panel.telegram.deleted == [(MODERATOR, len(panel.telegram.requests) - 1)]
+    # And nothing half-recorded is left: no queued deletion, no audit entry.
+    async with session_factory() as session:
+        assert await session.scalar(select(func.count()).select_from(TelegramDeletion)) == 0
+    assert await _audit(session_factory) == []
