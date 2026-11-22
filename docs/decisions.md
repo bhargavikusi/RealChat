@@ -834,8 +834,9 @@ Work happens on short-lived issue branches, such as `feature/12-onboarding`, cre
   * Alongside a report, the moderator sees the reported person's record: their profile card, account status, past warnings, suspensions, and bans (with rules and dates), and how many reports they have received in total and still open. Never their Telegram name, username, phone number, or Telegram ID.
   * Each viewing is audited.
 * Lookup:
-  * Moderators and admins can look up an account by RealChat ID or Telegram user ID: the profile, status, warnings and restrictions, and reports. Every lookup is audited.
-  * Only admins can open an account's stored chats from a lookup, after typing a reason that is saved in the audit log.
+  * Moderators and admins can look up an account by RealChat ID: the profile, status, warnings and restrictions, and reports. Every lookup is audited.
+  * Only admins can open an account's stored chats from a lookup, after typing a reason that is saved in the audit log. The reason (5 to 300 characters) is kept in full in a `reason` column of the audit log. Admins see the account's stored conversations and direct-message threads listed without content, and open one at a time, each opening audited with the reason; media in them is viewed as in reports.
+  * Lookup is by RealChat ID only (owner decision), as typed or as the bot shows it (`/userid_<id>`). Telegram ids and usernames aren't searched. A deleted account can't be looked up, because deletion erases its RealChat ID; an appeal from one needs another way. Lifting a suspension or ban is offered from a lookup, not from a report.
 * Notifications:
   * The user acted on gets a notice naming the rule, the end time for suspensions, and how to appeal through the support contact. A lifted user is told the restriction was lifted.
   * The reporter is told the report was reviewed, plus "and taken action" when there was one, never which action.

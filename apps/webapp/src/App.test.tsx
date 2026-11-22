@@ -389,3 +389,161 @@ describe("resilience", () => {
     expect(screen.queryByText("That report wasn't found.")).toBeNull();
   });
 });
+
+const ACCOUNT = {
+  id: 42,
+  person: { ...person("Moon Child"), status: "banned" },
+  suspended_until: null,
+  record: { actions: [], reports_received: 1, reports_open: 1 },
+  reports_received: [
+    { id: 7, reason: "under_18", kind: "chat", status: "open", outcome: null, created_at: "2026-11-21T12:00:00Z" },
+  ],
+  reports_made: [],
+};
+
+const THREADS = [
+  {
+    kind: "chat",
+    ref: 5,
+    partner_nickname: "Night Owl",
+    first_at: "2026-11-21T11:00:00Z",
+    last_at: "2026-11-21T11:05:00Z",
+    messages: 2,
+  },
+];
+
+function lookupHandler(role: "moderator" | "admin") {
+  return (path: string, init: RequestInit): { status: number; body: unknown } => {
+    if (path === "/api/moderation/me") return { status: 200, body: { role, nickname: "Staff Sam" } };
+    if (path.startsWith("/api/moderation/accounts?query=")) {
+      const query = decodeURIComponent(path.split("=")[1] ?? "");
+      return { status: 200, body: query === "abcdefg" ? [{ id: 42, public_id: "abcdefg", nickname: "Moon Child", status: "banned" }] : [] };
+    }
+    if (path === "/api/moderation/accounts/42") return { status: 200, body: ACCOUNT };
+    if (path === "/api/moderation/accounts/42/action") return { status: 200, body: { result: "applied" } };
+    if (path === "/api/moderation/accounts/42/threads") return { status: 200, body: THREADS };
+    if (path === "/api/moderation/accounts/42/threads/open") {
+      const [first, second] = REVIEW.messages;
+      return { status: 200, body: [{ ...first, sender: "account" }, { ...second, sender: "partner" }] };
+    }
+    if (path === "/api/moderation/accounts/42/media") return { status: 200, body: { deleted_after_seconds: 600 } };
+    return defaultHandler(path, init);
+  };
+}
+
+async function openAccount(role: "moderator" | "admin") {
+  serve(lookupHandler(role));
+  const user = userEvent.setup();
+  render(<App />);
+  await user.click(await screen.findByRole("button", { name: "Lookup" }));
+  await user.type(screen.getByLabelText(/RealChat ID/), "abcdefg");
+  await user.click(screen.getByRole("button", { name: "Search" }));
+  await screen.findByRole("article", { name: "Account 42" });
+  return user;
+}
+
+describe("account lookup", () => {
+  it("says when nothing is found", async () => {
+    serve(lookupHandler("moderator"));
+    const user = userEvent.setup();
+    render(<App />);
+    await user.click(await screen.findByRole("button", { name: "Lookup" }));
+    await user.type(screen.getByLabelText(/RealChat ID/), "zzzzzzz");
+    await user.click(screen.getByRole("button", { name: "Search" }));
+    expect(await screen.findByText("No account found.")).toBeTruthy();
+  });
+
+  it("opens the account; a moderator can't lift a ban", async () => {
+    await openAccount("moderator");
+    expect(screen.getByText(/Status: banned/)).toBeTruthy();
+    const received = screen.getByRole("region", { name: "Reports received" });
+    expect(within(received).getByRole("button", { name: /Appears under 18/ })).toBeTruthy();
+    // Only admins lift bans, and moderators get no stored chats.
+    expect(screen.queryByRole("button", { name: "Lift restriction" })).toBeNull();
+    expect(screen.queryByRole("region", { name: "Stored chats" })).toBeNull();
+  });
+
+  it("lets an admin lift a ban", async () => {
+    const user = await openAccount("admin");
+    await user.click(screen.getByRole("button", { name: "Lift restriction" }));
+    expect(window.Telegram?.WebApp?.showConfirm).toHaveBeenCalledWith(
+      "Lift the restriction on Moon Child?",
+      expect.any(Function),
+    );
+    await waitFor(() => expect(bodyOf(actionCall())).toEqual({ kind: "lift" }));
+    expect(actionCall()?.path).toBe("/api/moderation/accounts/42/action");
+    expect(await screen.findByText("Restriction lifted; they'll be notified.")).toBeTruthy();
+  });
+
+  it("shows the result of acting on a report opened from the account", async () => {
+    const user = await openAccount("moderator");
+    await user.click(within(screen.getByRole("region", { name: "Reports received" })).getByRole("button"));
+    await screen.findByRole("article", { name: "Report 7" });
+    await user.click(screen.getByRole("button", { name: "Close, no action" }));
+    await screen.findByRole("article", { name: "Account 42" });
+    expect(await screen.findByText("Report closed with no action.")).toBeTruthy();
+  });
+
+  it("opens a report from the account and goes back to it", async () => {
+    const user = await openAccount("moderator");
+    await user.click(within(screen.getByRole("region", { name: "Reports received" })).getByRole("button"));
+    await screen.findByRole("article", { name: "Report 7" });
+    const back = vi.mocked(window.Telegram?.WebApp?.BackButton?.onClick ?? vi.fn()).mock.calls.at(-1)?.[0];
+    act(() => back?.());
+    expect(await screen.findByRole("article", { name: "Account 42" })).toBeTruthy();
+  });
+
+  it("lets an admin open stored chats only with a reason", async () => {
+    const user = await openAccount("admin");
+    const stored = screen.getByRole("region", { name: "Stored chats" });
+    await user.click(within(stored).getByRole("button", { name: "Open stored chats" }));
+    expect((await within(stored).findByRole("alert")).textContent).toMatch(/at least 5 characters/);
+    expect(calls.some((call) => call.path.endsWith("/threads"))).toBe(false);
+
+    await user.type(within(stored).getByLabelText(/Reason/), "Appeal from support");
+    await user.click(within(stored).getByRole("button", { name: "Open stored chats" }));
+    const thread = await within(stored).findByRole("button", { name: /Chat with Night Owl/ });
+    expect(bodyOf(calls.find((call) => call.path.endsWith("/threads")))).toEqual({ reason: "Appeal from support" });
+
+    await user.click(thread);
+    const messages = await within(stored).findByRole("list", { name: "Messages" });
+    // Labelled from the account's side, not as a report.
+    expect(within(messages).queryByText(/Reporter|Reported/)).toBeNull();
+    expect(within(messages).getAllByText(/^(Account|Partner) ·/).length).toBe(2);
+    expect(bodyOf(calls.find((call) => call.path.endsWith("/threads/open")))).toEqual({
+      reason: "Appeal from support",
+      kind: "chat",
+      ref: 5,
+    });
+    await user.click(within(messages).getByRole("button", { name: /View in Telegram/ }));
+    expect(await within(stored).findByText(/queued for deletion after 10 minutes/)).toBeTruthy();
+    expect(bodyOf(calls.find((call) => call.path.endsWith("/accounts/42/media")))).toEqual({
+      reason: "Appeal from support",
+      source: "chat",
+      item_id: 1,
+    });
+  });
+
+  it("ignores a search that answers after switching to Reports", async () => {
+    let release: () => void = () => undefined;
+    serve(lookupHandler("moderator"));
+    const respond = vi.mocked(fetch).getMockImplementation();
+    vi.mocked(fetch).mockImplementation(async (input, init) => {
+      if (String(input).startsWith("/api/moderation/accounts?query=")) {
+        await new Promise<void>((resolve) => (release = resolve));
+      }
+      return respond ? respond(input, init) : new Response("{}");
+    });
+    const user = userEvent.setup();
+    render(<App />);
+    await user.click(await screen.findByRole("button", { name: "Lookup" }));
+    await user.type(screen.getByLabelText(/RealChat ID/), "abcdefg");
+    await user.click(screen.getByRole("button", { name: "Search" }));
+    await user.click(screen.getByRole("button", { name: "Reports" }));
+    await screen.findByRole("region", { name: "Open reports" });
+    release();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(screen.queryByRole("article", { name: "Account 42" })).toBeNull();
+    expect(screen.getByRole("region", { name: "Open reports" })).toBeTruthy();
+  });
+});

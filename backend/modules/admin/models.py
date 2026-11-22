@@ -22,7 +22,15 @@ AUDIT_ACTIONS = (
     # Moderators opening a report, and media sent to them from one (D-071).
     "report_viewed",
     "media_viewed",
+    # Account lookup (D-071): finding an account, and an admin listing or opening its
+    # stored chats, with the reason they gave.
+    "account_looked_up",
+    "account_viewed",
+    "chats_listed",
+    "chat_opened",
 )
+# The most an admin's typed reason can hold.
+REASON_MAX_LENGTH = 300
 
 
 class AppSetting(Base):
@@ -57,4 +65,6 @@ class AdminAuditEntry(Base):
     setting_key: Mapped[str | None] = mapped_column(String(64))
     old_value: Mapped[str | None] = mapped_column(String(64))
     new_value: Mapped[str | None] = mapped_column(String(64))
+    # Why an admin opened stored chats from an account lookup (D-071).
+    reason: Mapped[str | None] = mapped_column(String(REASON_MAX_LENGTH))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

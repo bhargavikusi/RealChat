@@ -22,15 +22,16 @@ from aiogram import Bot
 from aiogram.exceptions import TelegramAPIError
 from aiogram.types import Message
 from aiogram.utils.web_app import safe_parse_webapp_init_data
-from fastapi import APIRouter, Depends, FastAPI, Request, Response
+from fastapi import APIRouter, Depends, FastAPI, Query, Request, Response
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, ConfigDict, ValidationError
+from pydantic import BaseModel, ConfigDict, StringConstraints, ValidationError
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from backend.core.logging import exception_summary
-from backend.modules.moderation import actions, review
+from backend.modules.admin.models import REASON_MAX_LENGTH
+from backend.modules.moderation import actions, lookup, review
 from backend.modules.moderation.actions import MODERATION_ROLES
 from backend.modules.moderation.models import Report
 from backend.modules.users.models import Profile, User
@@ -146,6 +147,39 @@ class ActionRequest(BaseModel):
     days: int | None = None
 
 
+Reason = Annotated[
+    str, StringConstraints(strip_whitespace=True, min_length=5, max_length=REASON_MAX_LENGTH)
+]
+
+
+class AccountActionRequest(BaseModel):
+    """An action on a looked-up account, with no report: lifting is offered here."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    kind: Literal["warn", "suspend", "ban", "lift"]
+    rule: str | None = None
+    days: int | None = None
+
+
+class ReasonRequest(BaseModel):
+    """Why an admin is opening an account's stored chats (saved in the audit log)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    reason: Reason
+
+
+class ThreadRequest(ReasonRequest):
+    kind: Literal["chat", "direct"]
+    ref: int
+
+
+class ThreadMediaRequest(ReasonRequest):
+    source: Literal[review.Source.CHAT, review.Source.DIRECT]
+    item_id: int
+
+
 class MediaRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -176,6 +210,48 @@ async def _take_back(bot: Bot, chat_id: int, message_id: int) -> None:
         await bot.delete_message(chat_id, message_id)
     except TelegramAPIError as exc:
         logger.error("could not take back media sent to a moderator", extra=exception_summary(exc))
+
+
+async def _show_media(
+    session: AsyncSession,
+    request: Request,
+    member: StaffMember,
+    found: review.Media,
+    context: str,
+    source: review.Source,
+    item_id: int | None,
+    reason: str | None = None,
+) -> dict[str, int]:
+    """Send a media item to the moderator's own chat, then audit the view and queue the
+    copy's deletion; if that can't be recorded, take the copy back."""
+    await session.commit()  # no transaction is held across the Telegram call
+    bot: Bot = request.app.state.bot
+    try:
+        message_id = await send_media(bot, member.telegram_user_id, found.kind, found.file_id)
+    except TelegramAPIError as exc:
+        logger.warning("could not send media to a moderator", extra=exception_summary(exc))
+        raise TelegramUnavailable from None
+    try:
+        await review.record_media_view(
+            session,
+            member.user_id,
+            context,
+            source,
+            item_id,
+            found,
+            member.telegram_user_id,
+            message_id,
+            datetime.now(UTC),
+            reason,
+        )
+        await session.commit()
+    except Exception:
+        # Without its audit entry and queued deletion the copy must not stay: take it
+        # back now, best effort, and fail the request.
+        await session.rollback()
+        await _take_back(bot, member.telegram_user_id, message_id)
+        raise
+    return {"deleted_after_seconds": int(review.MEDIA_VIEW.total_seconds())}
 
 
 def create_router(token: str) -> APIRouter:
@@ -226,34 +302,9 @@ def create_router(token: str) -> APIRouter:
         found = await review.media_for(session, report_id, body.source, body.item_id)
         if found is None:
             raise NotFound
-        await session.commit()  # no transaction is held across the Telegram call
-        try:
-            message_id = await send_media(
-                request.app.state.bot, member.telegram_user_id, found.kind, found.file_id
-            )
-        except TelegramAPIError as exc:
-            logger.warning("could not send media to a moderator", extra=exception_summary(exc))
-            raise TelegramUnavailable from None
-        try:
-            await review.record_media_view(
-                session,
-                member.user_id,
-                report_id,
-                body.source,
-                body.item_id,
-                found,
-                member.telegram_user_id,
-                message_id,
-                datetime.now(UTC),
-            )
-            await session.commit()
-        except Exception:
-            # Without its audit entry and queued deletion the copy must not stay: take
-            # it back now, best effort, and fail the request.
-            await session.rollback()
-            await _take_back(request.app.state.bot, member.telegram_user_id, message_id)
-            raise
-        return {"deleted_after_seconds": int(review.MEDIA_VIEW.total_seconds())}
+        return await _show_media(
+            session, request, member, found, f"report {report_id}", body.source, body.item_id
+        )
 
     @router.post("/reports/{report_id}/action")
     async def action(
@@ -264,16 +315,29 @@ def create_router(token: str) -> APIRouter:
         target = await session.scalar(select(Report.reported_user_id).where(Report.id == report_id))
         if target is None:
             raise NotFound
+        return await _act(
+            session, member, target, body.kind, body.rule, body.days, report_id=report_id
+        )
+
+    async def _act(
+        session: AsyncSession,
+        member: StaffMember,
+        target: int,
+        kind: str,
+        rule: str | None,
+        days: int | None,
+        report_id: int | None = None,
+    ) -> dict[str, str]:
         try:
             outcome = await actions.act(
                 session,
                 member.user_id,
                 target,
-                actions.Kind(body.kind),
+                actions.Kind(kind),
                 datetime.now(UTC),
                 report_id=report_id,
-                rule=body.rule,
-                days=body.days,
+                rule=rule,
+                days=days,
             )
         except ValueError:
             raise Invalid from None
@@ -282,6 +346,94 @@ def create_router(token: str) -> APIRouter:
             raise Conflict(outcome.refusal.value)
         await session.commit()
         return {"result": "applied"}
+
+    def admin(member: StaffMember) -> None:
+        """Stored chats outside reports are for admins only (D-071)."""
+        if member.role != "admin":
+            raise Forbidden
+
+    @router.get("/accounts")
+    async def find_accounts(
+        query: Annotated[str, Query(min_length=1, max_length=64)], member: Staff, session: Database
+    ) -> list[lookup.Match]:
+        """The account with this RealChat ID, as a list of zero or one. Audited."""
+        found = await lookup.find(session, member.user_id, query)
+        await session.commit()
+        return found
+
+    @router.get("/accounts/{account_id}")
+    async def get_account(account_id: int, member: Staff, session: Database) -> lookup.Account:
+        """An account's card, status, record, and reports."""
+        found = await lookup.account(session, member.user_id, account_id, datetime.now(UTC).date())
+        if found is None:
+            raise NotFound
+        await session.commit()
+        return found
+
+    @router.post("/accounts/{account_id}/action")
+    async def account_action(
+        account_id: int, body: AccountActionRequest, member: Staff, session: Database
+    ) -> dict[str, str]:
+        """Warn, suspend, ban, or lift, with no report, through `actions.act`."""
+        if not await lookup.findable(session, account_id):
+            raise NotFound
+        return await _act(session, member, account_id, body.kind, body.rule, body.days)
+
+    @router.post("/accounts/{account_id}/threads")
+    async def account_threads(
+        account_id: int, body: ReasonRequest, member: Staff, session: Database
+    ) -> list[lookup.Thread]:
+        """The account's stored conversations and direct-message threads, without
+        content. Admins only; audited with the reason."""
+        admin(member)
+        if not await lookup.findable(session, account_id):
+            raise NotFound
+        found = await lookup.threads(session, member.user_id, account_id, body.reason)
+        await session.commit()
+        return found
+
+    @router.post("/accounts/{account_id}/threads/open")
+    async def open_account_thread(
+        account_id: int, body: ThreadRequest, member: Staff, session: Database
+    ) -> list[review.Item]:
+        """One of the account's threads. Admins only; audited with the reason."""
+        admin(member)
+        if not await lookup.findable(session, account_id):
+            raise NotFound
+        items = await lookup.open_thread(
+            session, member.user_id, account_id, body.kind, body.ref, body.reason
+        )
+        if items is None:
+            raise NotFound
+        await session.commit()
+        return items
+
+    @router.post("/accounts/{account_id}/media")
+    async def account_media(
+        account_id: int,
+        body: ThreadMediaRequest,
+        member: Staff,
+        session: Database,
+        request: Request,
+    ) -> dict[str, int]:
+        """Send a media item from one of the account's threads to the admin's own chat.
+        Admins only; audited with the reason."""
+        admin(member)
+        if not await lookup.findable(session, account_id):
+            raise NotFound
+        found = await lookup.media_for(session, account_id, body.source, body.item_id)
+        if found is None:
+            raise NotFound
+        return await _show_media(
+            session,
+            request,
+            member,
+            found,
+            f"account {account_id}",
+            body.source,
+            body.item_id,
+            body.reason,
+        )
 
     return router
 

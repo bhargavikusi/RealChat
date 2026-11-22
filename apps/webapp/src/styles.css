@@ -211,3 +211,29 @@ button {
   border: 1px solid var(--tg-theme-destructive-text-color, #d14e4e);
   color: var(--tg-theme-destructive-text-color, #d14e4e);
 }
+
+.tabs {
+  display: flex;
+  gap: 0.5rem;
+  margin-bottom: 1rem;
+}
+
+.tabs button {
+  flex: 1;
+  padding: 0.55rem;
+  border: none;
+  border-radius: 0.6rem;
+  background: var(--tg-theme-secondary-bg-color, #f1f1f4);
+  color: inherit;
+}
+
+.tabs button[aria-current="page"] {
+  background: var(--tg-theme-button-color, #2481cc);
+  color: var(--tg-theme-button-text-color, #ffffff);
+}
+
+.form input,
+.form textarea {
+  padding: 0.5rem;
+  font: inherit;
+}

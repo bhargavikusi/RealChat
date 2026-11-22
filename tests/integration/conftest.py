@@ -21,6 +21,9 @@ from backend.config.settings import BotSettings, Settings
 from backend.core.redis import create_redis
 from backend.database.engine import create_engine, create_session_factory
 from tests.support.chat import Chat
+
+# The moderation API with a recording bot, and people to review (D-071).
+from tests.support.moderation import panel, people  # noqa: F401
 from tests.support.telegram import FAKE_TOKEN
 
 

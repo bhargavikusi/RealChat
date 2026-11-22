@@ -4,39 +4,57 @@ import { ApiError, postJson, type ActionBody, type ActionKind, type Failure } fr
 import { REFUSALS, RULES, SUSPENSION_DAYS } from "./labels";
 import { confirmAction } from "./telegram";
 
-interface Props {
+interface Props<K extends ActionKind> {
   launchData: string;
-  reportId: number;
+  /** Where the action is sent: a report's or an account's action endpoint. */
+  path: string;
+  kinds: K[];
   nickname: string;
+  /** Whether the action closes a report, for the notice shown after it. */
+  closesReport: boolean;
   onDone: (notice: string) => void;
   onFailure: (failure: Failure) => void;
 }
 
-const BUTTONS: { kind: ActionKind; label: string }[] = [
-  { kind: "close", label: "Close, no action" },
-  { kind: "warn", label: "Warn" },
-  { kind: "suspend", label: "Suspend" },
-  { kind: "ban", label: "Ban" },
-];
+const LABELS: Record<ActionKind, string> = {
+  close: "Close, no action",
+  warn: "Warn",
+  suspend: "Suspend",
+  ban: "Ban",
+  lift: "Lift restriction",
+};
 
 const DONE: Record<ActionKind, string> = {
   close: "Report closed with no action.",
-  warn: "Warning recorded; they'll be notified. The report is closed.",
-  suspend: "Account suspended. The report is closed.",
-  ban: "Account banned. The report is closed.",
+  warn: "Warning recorded; they'll be notified.",
+  suspend: "Account suspended.",
+  ban: "Account banned.",
+  lift: "Restriction lifted; they'll be notified.",
 };
+
+/** Actions that need no rule. */
+const WITHOUT_RULE: ActionKind[] = ["close", "lift"];
 
 function question(kind: ActionKind, nickname: string, rule: string, days: number): string {
   const name = RULES[rule] ?? rule;
   if (kind === "close") return "Close this report with no action?";
+  if (kind === "lift") return `Lift the restriction on ${nickname}?`;
   if (kind === "warn") return `Warn ${nickname} for: ${name}?`;
   if (kind === "suspend") return `Suspend ${nickname} for ${days} day${days === 1 ? "" : "s"} for: ${name}?`;
   return `Ban ${nickname} for: ${name}? Only an admin can lift a ban.`;
 }
 
-/** The actions on a report, each confirmed in Telegram before it is sent. */
-export function ActionPanel({ launchData, reportId, nickname, onDone, onFailure }: Props) {
-  const [kind, setKind] = useState<ActionKind | null>(null);
+/** Moderation actions, each confirmed in Telegram before it is sent. */
+export function ActionPanel<K extends ActionKind>({
+  launchData,
+  path,
+  kinds,
+  nickname,
+  closesReport,
+  onDone,
+  onFailure,
+}: Props<K>) {
+  const [kind, setKind] = useState<K | null>(null);
   const [rule, setRule] = useState("");
   const [days, setDays] = useState<number>(SUSPENSION_DAYS[0]);
   const [busy, setBusy] = useState(false);
@@ -50,19 +68,23 @@ export function ActionPanel({ launchData, reportId, nickname, onDone, onFailure 
     };
   }, []);
 
-  async function submit(chosen: ActionKind) {
-    if (chosen !== "close" && !rule) {
+  async function submit(chosen: K) {
+    if (!WITHOUT_RULE.includes(chosen) && !rule) {
       setMessage("Choose the rule that was broken.");
       return;
     }
     if (!(await confirmAction(question(chosen, nickname, rule, days)))) return;
-    const body: ActionBody =
-      chosen === "close" ? { kind: chosen } : chosen === "suspend" ? { kind: chosen, rule, days } : { kind: chosen, rule };
+    const body: ActionBody<K> = WITHOUT_RULE.includes(chosen)
+      ? { kind: chosen }
+      : chosen === "suspend"
+        ? { kind: chosen, rule, days }
+        : { kind: chosen, rule };
     setBusy(true);
     setMessage(null);
     try {
-      await postJson(`/api/moderation/reports/${reportId}/action`, launchData, body);
-      if (mounted.current) onDone(DONE[chosen]);
+      await postJson(path, launchData, body);
+      const closed = closesReport && chosen !== "close" ? " The report is closed." : "";
+      if (mounted.current) onDone(DONE[chosen] + closed);
     } catch (error) {
       if (!mounted.current) return;
       if (error instanceof ApiError && error.failure === "conflict") {
@@ -81,7 +103,7 @@ export function ActionPanel({ launchData, reportId, nickname, onDone, onFailure 
     <section className="actions" aria-label="Actions">
       <h3>Decision</h3>
       <div className="buttons">
-        {BUTTONS.map((button) => (
+        {kinds.map((kind) => ({ kind, label: LABELS[kind] })).map((button) => (
           <button
             key={button.kind}
             type="button"
@@ -90,9 +112,9 @@ export function ActionPanel({ launchData, reportId, nickname, onDone, onFailure 
             disabled={busy}
             onClick={() => {
               setMessage(null);
-              if (button.kind === "close") {
+              if (WITHOUT_RULE.includes(button.kind)) {
                 setKind(null);
-                void submit("close");
+                void submit(button.kind);
               } else {
                 setKind(button.kind);
               }

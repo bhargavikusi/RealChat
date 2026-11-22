@@ -40,7 +40,9 @@ export interface PastAction {
 export interface Item {
   source: "chat" | "direct";
   id: number;
-  sender: "reporter" | "reported";
+  /** "reporter" or "reported" in a report; "account" or "partner" in an account's
+   * thread. */
+  sender: "reporter" | "reported" | "account" | "partner";
   kind: string;
   text: string | null;
   edited_text: string | null;
@@ -73,24 +75,80 @@ export interface Review {
   requests: RequestItem[];
 }
 
-export type ActionKind = "close" | "warn" | "suspend" | "ban";
+/** Actions on a report: lifting isn't offered there. */
+export type ReportActionKind = "close" | "warn" | "suspend" | "ban";
+/** Actions on a looked-up account: closing needs a report, so it isn't offered. */
+export type AccountActionKind = "warn" | "suspend" | "ban" | "lift";
+export type ActionKind = ReportActionKind | AccountActionKind;
 
-export interface ActionBody {
-  kind: ActionKind;
+export interface ActionBody<K extends ActionKind = ActionKind> {
+  kind: K;
   rule?: string;
   days?: number;
 }
 
+/** Media from a report. */
 export interface MediaBody {
   source: "chat" | "direct" | "photo";
   item_id?: number;
 }
 
+/** Media from an account's threads, which an admin opens with a reason. */
+export interface AccountMediaBody {
+  source: "chat" | "direct";
+  item_id: number;
+  reason: string;
+}
+
+export interface Match {
+  id: number;
+  public_id: string | null;
+  nickname: string | null;
+  status: string;
+}
+
+export interface ReportSummary {
+  id: number;
+  reason: string;
+  kind: "chat" | "profile";
+  status: string;
+  outcome: string | null;
+  created_at: string;
+}
+
+export interface Account {
+  id: number;
+  person: Person;
+  suspended_until: string | null;
+  record: Review["record"];
+  reports_received: ReportSummary[];
+  reports_made: ReportSummary[];
+}
+
+export interface Thread {
+  kind: "chat" | "direct";
+  ref: number;
+  partner_nickname: string | null;
+  first_at: string;
+  last_at: string;
+  messages: number;
+}
+
+export interface ReasonBody {
+  reason: string;
+}
+
+export interface ThreadBody extends ReasonBody {
+  kind: "chat" | "direct";
+  ref: number;
+}
+
 /** Why a request failed: "reopen" when the launch data is missing or too old, "denied"
  * when the account may not use the panel, "conflict" when the action no longer applies
- * (with the server's reason in `code`), "notFound", "telegram" when Telegram refused,
- * and "error" for anything else. */
-export type Failure = "reopen" | "denied" | "conflict" | "notFound" | "telegram" | "error";
+ * (with the server's reason in `code`), "notFound", "invalid" when the server refused
+ * the request's content (422, e.g. a missing rule or a too-short reason), "telegram"
+ * when Telegram refused, and "error" for anything else. */
+export type Failure = "reopen" | "denied" | "conflict" | "notFound" | "invalid" | "telegram" | "error";
 
 export class ApiError extends Error {
   readonly failure: Failure;
@@ -103,11 +161,9 @@ export class ApiError extends Error {
   }
 }
 
-async function request<T>(
-  path: string,
-  launchData: string,
-  body?: ActionBody | MediaBody,
-): Promise<T> {
+type Body = ActionBody | MediaBody | AccountMediaBody | ReasonBody | ThreadBody;
+
+async function request<T>(path: string, launchData: string, body?: Body): Promise<T> {
   let response: Response;
   try {
     response = await fetch(path, {
@@ -131,6 +187,7 @@ async function request<T>(
     const data = (await response.json().catch(() => ({}))) as { error?: string };
     throw new ApiError("conflict", data.error);
   }
+  if (response.status === 422) throw new ApiError("invalid");
   if (response.status === 502) throw new ApiError("telegram");
   throw new ApiError("error");
 }
@@ -139,6 +196,6 @@ export function getJson<T>(path: string, launchData: string): Promise<T> {
   return request<T>(path, launchData);
 }
 
-export function postJson<T>(path: string, launchData: string, body: ActionBody | MediaBody): Promise<T> {
+export function postJson<T>(path: string, launchData: string, body: Body): Promise<T> {
   return request<T>(path, launchData, body);
 }
