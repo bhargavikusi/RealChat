@@ -6,32 +6,139 @@ export interface Me {
   nickname: string | null;
 }
 
+export interface QueueItem {
+  id: number;
+  reason: string;
+  urgent: boolean;
+  kind: "chat" | "profile";
+  created_at: string;
+  has_details: boolean;
+  reported_nickname: string | null;
+}
+
+export interface Person {
+  public_id: string | null;
+  nickname: string | null;
+  age: number | null;
+  gender: string | null;
+  country_code: string | null;
+  city: string | null;
+  bio: string | null;
+  has_photo: boolean;
+  status: string;
+  deleted: boolean;
+}
+
+export interface PastAction {
+  kind: string;
+  rule: string | null;
+  days: number | null;
+  ends_at: string | null;
+  created_at: string;
+}
+
+export interface Item {
+  source: "chat" | "direct";
+  id: number;
+  sender: "reporter" | "reported";
+  kind: string;
+  text: string | null;
+  edited_text: string | null;
+  edited_at: string | null;
+  private: boolean;
+  view_once: boolean;
+  viewable: boolean;
+  sent_at: string;
+}
+
+export interface RequestItem {
+  sender: "reporter" | "reported";
+  status: string;
+  created_at: string;
+}
+
+export interface Review {
+  id: number;
+  kind: "chat" | "profile";
+  reason: string;
+  urgent: boolean;
+  details: string | null;
+  status: string;
+  outcome: string | null;
+  created_at: string;
+  reporter: Person;
+  reported: Person;
+  record: { actions: PastAction[]; reports_received: number; reports_open: number };
+  messages: Item[];
+  requests: RequestItem[];
+}
+
+export type ActionKind = "close" | "warn" | "suspend" | "ban";
+
+export interface ActionBody {
+  kind: ActionKind;
+  rule?: string;
+  days?: number;
+}
+
+export interface MediaBody {
+  source: "chat" | "direct" | "photo";
+  item_id?: number;
+}
+
 /** Why a request failed: "reopen" when the launch data is missing or too old, "denied"
- * when the account may not use the panel, "error" for anything else. */
-export type Failure = "reopen" | "denied" | "error";
+ * when the account may not use the panel, "conflict" when the action no longer applies
+ * (with the server's reason in `code`), "notFound", "telegram" when Telegram refused,
+ * and "error" for anything else. */
+export type Failure = "reopen" | "denied" | "conflict" | "notFound" | "telegram" | "error";
 
 export class ApiError extends Error {
   readonly failure: Failure;
+  readonly code: string | undefined;
 
-  constructor(failure: Failure) {
+  constructor(failure: Failure, code?: string) {
     super(failure);
     this.failure = failure;
+    this.code = code;
   }
 }
 
-export async function getJson<T>(path: string, launchData: string): Promise<T> {
+async function request<T>(
+  path: string,
+  launchData: string,
+  body?: ActionBody | MediaBody,
+): Promise<T> {
   let response: Response;
   try {
     response = await fetch(path, {
-      headers: { Authorization: `tma ${launchData}` },
+      method: body === undefined ? "GET" : "POST",
+      headers: {
+        Authorization: `tma ${launchData}`,
+        ...(body === undefined ? {} : { "Content-Type": "application/json" }),
+      },
+      body: body === undefined ? undefined : JSON.stringify(body),
       credentials: "omit",
       cache: "no-store",
     });
   } catch {
     throw new ApiError("error");
   }
+  if (response.ok) return (await response.json()) as T;
   if (response.status === 401) throw new ApiError("reopen");
   if (response.status === 403) throw new ApiError("denied");
-  if (!response.ok) throw new ApiError("error");
-  return (await response.json()) as T;
+  if (response.status === 404) throw new ApiError("notFound");
+  if (response.status === 409) {
+    const data = (await response.json().catch(() => ({}))) as { error?: string };
+    throw new ApiError("conflict", data.error);
+  }
+  if (response.status === 502) throw new ApiError("telegram");
+  throw new ApiError("error");
+}
+
+export function getJson<T>(path: string, launchData: string): Promise<T> {
+  return request<T>(path, launchData);
+}
+
+export function postJson<T>(path: string, launchData: string, body: ActionBody | MediaBody): Promise<T> {
+  return request<T>(path, launchData, body);
 }

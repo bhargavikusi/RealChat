@@ -142,6 +142,13 @@ class RecordingSession(BaseSession):
                 ],
             )
             return sent  # type: ignore[return-value]
+        if isinstance(method, MediaMethod):
+            # Other media sent by file identifier: the sent message, as Telegram returns.
+            return Message(  # type: ignore[return-value]
+                message_id=len(self.requests),
+                date=datetime.now(UTC),
+                chat=Chat(id=int(method.chat_id), type="private"),
+            )
         if isinstance(method, DeleteMessages):
             if self.bulk_delete_error is not None:
                 raise self.bulk_delete_error
