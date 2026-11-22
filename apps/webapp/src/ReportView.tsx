@@ -1,7 +1,17 @@
 import { useEffect, useRef, useState } from "react";
 
 import { ActionPanel } from "./ActionPanel";
-import { ApiError, getJson, postJson, type Failure, type Item, type MediaBody, type Person, type Review } from "./api";
+import {
+  ApiError,
+  getJson,
+  postJson,
+  type Failure,
+  type Item,
+  type MediaBody,
+  type Person,
+  type ReportActionKind,
+  type Review,
+} from "./api";
 import { ACTIONS, KINDS, REASONS, RULES, when } from "./labels";
 
 interface Props {
@@ -34,12 +44,19 @@ export function Card({ title, person }: { title: string; person: Person }) {
   );
 }
 
+const SENDERS: Record<Item["sender"], string> = {
+  reporter: "Reporter",
+  reported: "Reported",
+  account: "Account",
+  partner: "Partner",
+};
+
 export function Message({ item, disabled, onView }: { item: Item; disabled: boolean; onView: (item: Item) => void }) {
   const markers = [item.private && "Private mode", item.view_once && "view once", item.edited_at && "edited"].filter(Boolean);
   return (
     <li className={`message ${item.sender}`}>
       <span className="row-meta">
-        {item.sender === "reporter" ? "Reporter" : "Reported"} · {when(item.sent_at)}
+        {SENDERS[item.sender]} · {when(item.sent_at)}
         {markers.length > 0 && ` · ${markers.join(" · ")}`}
       </span>
       {item.kind !== "text" && <span className="kind">{KINDS[item.kind] ?? item.kind}</span>}
@@ -207,7 +224,7 @@ export function ReportView({ launchData, reportId, onDone, onFailure }: Props) {
         <ActionPanel
           launchData={launchData}
           path={`/api/moderation/reports/${data.id}/action`}
-          kinds={["close", "warn", "suspend", "ban"]}
+          kinds={["close", "warn", "suspend", "ban"] satisfies ReportActionKind[]}
           closesReport
           nickname={data.reported.nickname ?? "this account"}
           onDone={onDone}

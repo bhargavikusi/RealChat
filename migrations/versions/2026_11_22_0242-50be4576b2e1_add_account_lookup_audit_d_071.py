@@ -23,7 +23,9 @@ OLD_ACTIONS = (
     "'payment_recorded', 'report_closed', 'account_warned', 'account_suspended', "
     "'account_banned', 'restriction_lifted', 'report_viewed', 'media_viewed'"
 )
-NEW_ACTIONS = OLD_ACTIONS + ", 'account_looked_up', 'chats_listed', 'chat_opened'"
+NEW_ACTIONS = OLD_ACTIONS + (
+    ", 'account_looked_up', 'account_viewed', 'chats_listed', 'chat_opened'"
+)
 
 
 def _actions(actions: str) -> None:
@@ -40,6 +42,12 @@ def upgrade() -> None:
 
 def downgrade() -> None:
     # The audit log is append-only: restoring the old actions fails while any lookup
-    # entry exists, so admins' reasons are never dropped with the column.
+    # entry exists, and the column isn't dropped while any reason is stored (a media
+    # view from a lookup keeps an older action), so admins' reasons are never lost.
     _actions(OLD_ACTIONS)
+    stored = op.get_bind().scalar(
+        sa.text("SELECT EXISTS (SELECT 1 FROM admin_audit_log WHERE reason IS NOT NULL)")
+    )
+    if stored:
+        raise RuntimeError("admin_audit_log holds reasons; refusing to drop the column")
     op.drop_column("admin_audit_log", "reason")

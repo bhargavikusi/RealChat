@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { ApiError, getJson, type Failure, type Match } from "./api";
 
@@ -14,25 +14,36 @@ export function Lookup({ launchData, onOpen, onFailure }: Props) {
   const [matches, setMatches] = useState<Match[] | null>(null);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
+  // A search that answers after leaving this screen must not open an account.
+  const mounted = useRef(true);
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+    };
+  }, []);
 
   async function search() {
     const value = query.trim();
     if (!value) return;
     setBusy(true);
     setMessage(null);
+    setMatches(null);
     try {
       const found = await getJson<Match[]>(
         `/api/moderation/accounts?query=${encodeURIComponent(value)}`,
         launchData,
       );
+      if (!mounted.current) return;
       setMatches(found);
       if (found.length === 1 && found[0]) onOpen(found[0].id);
     } catch (error) {
+      if (!mounted.current) return;
       const failure = error instanceof ApiError ? error.failure : "error";
       if (failure === "reopen" || failure === "denied") onFailure(failure);
       else setMessage("The search couldn't be done. Please try again.");
     } finally {
-      setBusy(false);
+      if (mounted.current) setBusy(false);
     }
   }
 

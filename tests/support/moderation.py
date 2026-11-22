@@ -74,6 +74,7 @@ async def make_person(
                 gender="female",
                 country_code="IN",
                 photo_file_id=photo,
+                onboarding_completed_at=NOW,
             )
         )
         await session.commit()

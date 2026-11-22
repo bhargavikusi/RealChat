@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 
 import { ActionPanel } from "./ActionPanel";
 import { AdminThreads } from "./AdminThreads";
-import { ApiError, getJson, type Account, type ActionKind, type Failure, type ReportSummary } from "./api";
+import { ApiError, getJson, type Account, type AccountActionKind, type Failure, type ReportSummary } from "./api";
 import { ACTIONS, REASONS, RULES, when } from "./labels";
 import { Card } from "./ReportView";
 
@@ -10,6 +10,8 @@ interface Props {
   launchData: string;
   accountId: number;
   isAdmin: boolean;
+  /** A notice from an action taken on one of the account's reports. */
+  notice: string | null;
   onOpenReport: (reportId: number) => void;
   onFailure: (failure: Failure) => void;
 }
@@ -42,7 +44,7 @@ function Reports({ title, reports, onOpen }: { title: string; reports: ReportSum
 
 /** One account: its card, status, record, reports, actions, and, for admins, its
  * stored chats. */
-export function AccountView({ launchData, accountId, isAdmin, onOpenReport, onFailure }: Props) {
+export function AccountView({ launchData, accountId, isAdmin, notice: reportNotice, onOpenReport, onFailure }: Props) {
   const [data, setData] = useState<Account | null>(null);
   const [failed, setFailed] = useState(false);
   const [attempt, setAttempt] = useState(0);
@@ -84,15 +86,17 @@ export function AccountView({ launchData, accountId, isAdmin, onOpenReport, onFa
   }
   if (data === null) return <p className="hint">Loading…</p>;
 
-  const restricted = data.person.status === "suspended" || data.person.status === "banned";
-  const kinds: ActionKind[] = restricted ? ["warn", "suspend", "ban", "lift"] : ["warn", "suspend", "ban"];
+  // Moderators can lift a suspension; only admins can lift a ban.
+  const liftable = data.person.status === "suspended" || (data.person.status === "banned" && isAdmin);
+  const kinds: AccountActionKind[] = liftable ? ["warn", "suspend", "ban", "lift"] : ["warn", "suspend", "ban"];
+  const shown = notice ?? reportNotice;
   return (
     <article aria-label={`Account ${data.id}`}>
       <Card title="Account" person={data.person} />
       {data.suspended_until && <p className="hint">Suspended until {when(data.suspended_until)}</p>}
-      {notice && (
+      {shown && (
         <p className="notice" role="status">
-          {notice}
+          {shown}
         </p>
       )}
 

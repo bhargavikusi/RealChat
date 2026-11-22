@@ -143,14 +143,27 @@ export function App() {
               onFailure={fail}
             />
           )}
-          {screen.name === "lookup" && <Lookup launchData={launchData} onOpen={(id) => setScreen({ name: "account", id })} onFailure={fail} />}
+          {screen.name === "lookup" && (
+            <Lookup
+              launchData={launchData}
+              onOpen={(id) => {
+                setNotice(null);
+                setScreen({ name: "account", id });
+              }}
+              onFailure={fail}
+            />
+          )}
           {screen.name === "account" && (
             <AccountView
               key={screen.id}
               launchData={launchData}
               accountId={screen.id}
               isAdmin={state.me.role === "admin"}
-              onOpenReport={(id) => setScreen({ name: "report", id, back: screen })}
+              notice={notice}
+              onOpenReport={(id) => {
+                setNotice(null);
+                setScreen({ name: "report", id, back: screen });
+              }}
               onFailure={fail}
             />
           )}

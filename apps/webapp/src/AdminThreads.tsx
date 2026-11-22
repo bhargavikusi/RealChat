@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 
-import { ApiError, postJson, type Failure, type Item, type MediaBody, type ReasonBody, type Thread } from "./api";
+import { ApiError, postJson, type Failure, type Item, type AccountMediaBody, type ReasonBody, type Thread } from "./api";
 import { when } from "./labels";
 import { Message } from "./ReportView";
 
@@ -91,7 +91,7 @@ export function AdminThreads({ launchData, accountId, onFailure }: Props) {
   }
 
   function view(item: Item) {
-    const body: MediaBody = { source: item.source, item_id: item.id };
+    const body: Omit<AccountMediaBody, "reason"> = { source: item.source, item_id: item.id };
     void call<unknown>(
       `${base}/media`,
       body,

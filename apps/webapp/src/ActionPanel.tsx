@@ -4,11 +4,11 @@ import { ApiError, postJson, type ActionBody, type ActionKind, type Failure } fr
 import { REFUSALS, RULES, SUSPENSION_DAYS } from "./labels";
 import { confirmAction } from "./telegram";
 
-interface Props {
+interface Props<K extends ActionKind> {
   launchData: string;
   /** Where the action is sent: a report's or an account's action endpoint. */
   path: string;
-  kinds: ActionKind[];
+  kinds: K[];
   nickname: string;
   /** Whether the action closes a report, for the notice shown after it. */
   closesReport: boolean;
@@ -45,8 +45,16 @@ function question(kind: ActionKind, nickname: string, rule: string, days: number
 }
 
 /** Moderation actions, each confirmed in Telegram before it is sent. */
-export function ActionPanel({ launchData, path, kinds, nickname, closesReport, onDone, onFailure }: Props) {
-  const [kind, setKind] = useState<ActionKind | null>(null);
+export function ActionPanel<K extends ActionKind>({
+  launchData,
+  path,
+  kinds,
+  nickname,
+  closesReport,
+  onDone,
+  onFailure,
+}: Props<K>) {
+  const [kind, setKind] = useState<K | null>(null);
   const [rule, setRule] = useState("");
   const [days, setDays] = useState<number>(SUSPENSION_DAYS[0]);
   const [busy, setBusy] = useState(false);
@@ -60,13 +68,13 @@ export function ActionPanel({ launchData, path, kinds, nickname, closesReport, o
     };
   }, []);
 
-  async function submit(chosen: ActionKind) {
+  async function submit(chosen: K) {
     if (!WITHOUT_RULE.includes(chosen) && !rule) {
       setMessage("Choose the rule that was broken.");
       return;
     }
     if (!(await confirmAction(question(chosen, nickname, rule, days)))) return;
-    const body: ActionBody = WITHOUT_RULE.includes(chosen)
+    const body: ActionBody<K> = WITHOUT_RULE.includes(chosen)
       ? { kind: chosen }
       : chosen === "suspend"
         ? { kind: chosen, rule, days }

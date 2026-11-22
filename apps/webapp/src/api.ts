@@ -40,7 +40,9 @@ export interface PastAction {
 export interface Item {
   source: "chat" | "direct";
   id: number;
-  sender: "reporter" | "reported";
+  /** "reporter" or "reported" in a report; "account" or "partner" in an account's
+   * thread. */
+  sender: "reporter" | "reported" | "account" | "partner";
   kind: string;
   text: string | null;
   edited_text: string | null;
@@ -73,19 +75,29 @@ export interface Review {
   requests: RequestItem[];
 }
 
-export type ActionKind = "close" | "warn" | "suspend" | "ban" | "lift";
+/** Actions on a report: lifting isn't offered there. */
+export type ReportActionKind = "close" | "warn" | "suspend" | "ban";
+/** Actions on a looked-up account: closing needs a report, so it isn't offered. */
+export type AccountActionKind = "warn" | "suspend" | "ban" | "lift";
+export type ActionKind = ReportActionKind | AccountActionKind;
 
-export interface ActionBody {
-  kind: ActionKind;
+export interface ActionBody<K extends ActionKind = ActionKind> {
+  kind: K;
   rule?: string;
   days?: number;
 }
 
+/** Media from a report. */
 export interface MediaBody {
   source: "chat" | "direct" | "photo";
   item_id?: number;
-  /** Required when an admin views media from an account's threads. */
-  reason?: string;
+}
+
+/** Media from an account's threads, which an admin opens with a reason. */
+export interface AccountMediaBody {
+  source: "chat" | "direct";
+  item_id: number;
+  reason: string;
 }
 
 export interface Match {
@@ -133,8 +145,9 @@ export interface ThreadBody extends ReasonBody {
 
 /** Why a request failed: "reopen" when the launch data is missing or too old, "denied"
  * when the account may not use the panel, "conflict" when the action no longer applies
- * (with the server's reason in `code`), "notFound", "telegram" when Telegram refused,
- * and "error" for anything else. */
+ * (with the server's reason in `code`), "notFound", "invalid" when the server refused
+ * the request's content (422, e.g. a missing rule or a too-short reason), "telegram"
+ * when Telegram refused, and "error" for anything else. */
 export type Failure = "reopen" | "denied" | "conflict" | "notFound" | "invalid" | "telegram" | "error";
 
 export class ApiError extends Error {
@@ -148,7 +161,7 @@ export class ApiError extends Error {
   }
 }
 
-type Body = ActionBody | MediaBody | ReasonBody | ThreadBody;
+type Body = ActionBody | MediaBody | AccountMediaBody | ReasonBody | ThreadBody;
 
 async function request<T>(path: string, launchData: string, body?: Body): Promise<T> {
   let response: Response;

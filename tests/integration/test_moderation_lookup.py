@@ -382,3 +382,57 @@ async def test_an_inactive_admin_is_refused(
         f"/api/moderation/accounts/{people['bob']}/threads", {"reason": REASON}, ADMIN
     )
     assert response.status_code == 403
+
+
+async def test_a_deleted_account_cant_be_reached_by_its_internal_id(
+    panel: Panel, people: dict[str, int], session_factory: Sessions
+) -> None:
+    # Lookup finds only what a RealChat ID search would: the account endpoints refuse
+    # an account deleted since, even when its internal id is known.
+    bob = people["bob"]
+    await _bobs_threads(session_factory, people)
+    async with session_factory() as session:
+        await actions.act(session, people["admin"], bob, actions.Kind.BAN, NOW, rule="spam")
+        await users.delete_account(session, bob, NOW)
+        await session.commit()
+    base = f"/api/moderation/accounts/{bob}"
+    assert panel.get(base).status_code == 404
+    assert panel.post(f"{base}/action", {"kind": "lift"}, ADMIN).status_code == 404
+    assert panel.post(f"{base}/threads", {"reason": REASON}, ADMIN).status_code == 404
+    opened = panel.post(
+        f"{base}/threads/open", {"reason": REASON, "kind": "direct", "ref": people["carol"]}, ADMIN
+    )
+    assert opened.status_code == 404
+    media = panel.post(f"{base}/media", {"reason": REASON, "source": "direct", "item_id": 1}, ADMIN)
+    assert media.status_code == 404
+    async with session_factory() as session:
+        user = await session.get(User, bob)
+        assert user is not None and user.status == "banned"  # the lift was refused
+
+
+async def test_viewing_an_account_is_audited(
+    panel: Panel, people: dict[str, int], session_factory: Sessions
+) -> None:
+    assert panel.get(f"/api/moderation/accounts/{people['bob']}").status_code == 200
+    async with session_factory() as session:
+        rows = (
+            await session.execute(
+                select(AdminAuditEntry.action, AdminAuditEntry.target_user_id).where(
+                    AdminAuditEntry.action == "account_viewed"
+                )
+            )
+        ).all()
+    assert [tuple(row) for row in rows] == [("account_viewed", people["bob"])]
+
+
+async def test_an_unfinished_profile_isnt_found(
+    panel: Panel, people: dict[str, int], session_factory: Sessions
+) -> None:
+    async with session_factory() as session:
+        user = await users.get_or_create_user(session, 7300)  # started, never onboarded
+        await session.commit()
+        public_id = await session.scalar(
+            select(Profile.public_id).where(Profile.user_id == user.id)
+        )
+    assert panel.get(f"/api/moderation/accounts?query={public_id}").json() == []
+    assert panel.get(f"/api/moderation/accounts/{user.id}").status_code == 404

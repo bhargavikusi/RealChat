@@ -39,6 +39,22 @@ class Match:
     status: str
 
 
+# An account lookup can reach: not deleted, with a finished profile. A deleted account's
+# replacement profile is empty, so it never matches.
+FINDABLE = (User.status != "deleted", Profile.onboarding_completed_at.is_not(None))
+
+
+async def findable(session: AsyncSession, user_id: int) -> bool:
+    """Whether lookup can reach this account. Every account endpoint checks it, so an
+    internal id can't be used to reach an account a RealChat ID search wouldn't find."""
+    found = await session.scalar(
+        select(User.id)
+        .join(Profile, Profile.user_id == User.id)
+        .where(User.id == user_id, *FINDABLE)
+    )
+    return found is not None
+
+
 async def find(session: AsyncSession, actor_user_id: int, query: str) -> list[Match]:
     """The account with this RealChat ID (as typed, or as the bot shows it), as a list
     of zero or one. Restricted accounts are found; a deleted account isn't, since its
@@ -50,7 +66,7 @@ async def find(session: AsyncSession, actor_user_id: int, query: str) -> list[Ma
             await session.execute(
                 select(User.id, Profile.public_id, Profile.nickname, User.status)
                 .join(Profile, Profile.user_id == User.id)
-                .where(Profile.public_id == public_id)
+                .where(Profile.public_id == public_id, *FINDABLE)
             )
         ).one_or_none()
     match = None if row is None else Match(row[0], row[1], row[2], row[3])
@@ -108,13 +124,17 @@ async def _reports(
     ]
 
 
-async def account(session: AsyncSession, user_id: int, today: date) -> Account | None:
-    """An account's card, status, record, and the reports it received and made."""
+async def account(
+    session: AsyncSession, actor_user_id: int, user_id: int, today: date
+) -> Account | None:
+    """An account's card, status, record, and the reports it received and made, or None
+    if lookup can't reach it. The view is audited."""
+    if not await findable(session, user_id):
+        return None
     suspended_until = (
         await session.execute(select(User.suspended_until).where(User.id == user_id))
-    ).one_or_none()
-    if suspended_until is None:
-        return None
+    ).one()
+    session.add(audit(actor_user_id, "account_viewed", user_id, f"account {user_id}"))
     return Account(
         id=user_id,
         person=await review.person(session, user_id, today),

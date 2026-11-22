@@ -364,9 +364,10 @@ def create_router(token: str) -> APIRouter:
     @router.get("/accounts/{account_id}")
     async def get_account(account_id: int, member: Staff, session: Database) -> lookup.Account:
         """An account's card, status, record, and reports."""
-        found = await lookup.account(session, account_id, datetime.now(UTC).date())
+        found = await lookup.account(session, member.user_id, account_id, datetime.now(UTC).date())
         if found is None:
             raise NotFound
+        await session.commit()
         return found
 
     @router.post("/accounts/{account_id}/action")
@@ -374,7 +375,7 @@ def create_router(token: str) -> APIRouter:
         account_id: int, body: AccountActionRequest, member: Staff, session: Database
     ) -> dict[str, str]:
         """Warn, suspend, ban, or lift, with no report, through `actions.act`."""
-        if await session.scalar(select(User.id).where(User.id == account_id)) is None:
+        if not await lookup.findable(session, account_id):
             raise NotFound
         return await _act(session, member, account_id, body.kind, body.rule, body.days)
 
@@ -385,7 +386,7 @@ def create_router(token: str) -> APIRouter:
         """The account's stored conversations and direct-message threads, without
         content. Admins only; audited with the reason."""
         admin(member)
-        if await session.scalar(select(User.id).where(User.id == account_id)) is None:
+        if not await lookup.findable(session, account_id):
             raise NotFound
         found = await lookup.threads(session, member.user_id, account_id, body.reason)
         await session.commit()
@@ -397,6 +398,8 @@ def create_router(token: str) -> APIRouter:
     ) -> list[review.Item]:
         """One of the account's threads. Admins only; audited with the reason."""
         admin(member)
+        if not await lookup.findable(session, account_id):
+            raise NotFound
         items = await lookup.open_thread(
             session, member.user_id, account_id, body.kind, body.ref, body.reason
         )
@@ -416,6 +419,8 @@ def create_router(token: str) -> APIRouter:
         """Send a media item from one of the account's threads to the admin's own chat.
         Admins only; audited with the reason."""
         admin(member)
+        if not await lookup.findable(session, account_id):
+            raise NotFound
         found = await lookup.media_for(session, account_id, body.source, body.item_id)
         if found is None:
             raise NotFound

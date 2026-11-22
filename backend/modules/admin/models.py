@@ -25,6 +25,7 @@ AUDIT_ACTIONS = (
     # Account lookup (D-071): finding an account, and an admin listing or opening its
     # stored chats, with the reason they gave.
     "account_looked_up",
+    "account_viewed",
     "chats_listed",
     "chat_opened",
 )
