@@ -126,7 +126,8 @@ class Record:
 
 @dataclass(frozen=True)
 class Item:
-    """One message in a review. `sender` is "reporter" or "reported"."""
+    """One message in a review. `sender` is "reporter" or "reported" in a report, and
+    "account" or "partner" in an account's thread."""
 
     source: str  # "chat" or "direct"
     id: int
@@ -165,7 +166,7 @@ class Review:
     requests: list[RequestItem]
 
 
-async def _person(session: AsyncSession, user_id: int, today: date) -> Person:
+async def person(session: AsyncSession, user_id: int, today: date) -> Person:
     user, profile = (
         await session.execute(
             select(User, Profile)
@@ -194,7 +195,7 @@ async def _person(session: AsyncSession, user_id: int, today: date) -> Person:
     )
 
 
-async def _record(session: AsyncSession, user_id: int) -> Record:
+async def record(session: AsyncSession, user_id: int) -> Record:
     actions = await session.execute(
         select(
             ModerationAction.kind,
@@ -221,16 +222,22 @@ async def _record(session: AsyncSession, user_id: int) -> Record:
     )
 
 
-def _between(
+def between(
     sender: InstrumentedAttribute[int], recipient: InstrumentedAttribute[int], a: int, b: int
 ) -> ColumnElement[bool]:
     """Sent by either person to the other."""
     return or_(and_(sender == a, recipient == b), and_(sender == b, recipient == a))
 
 
-async def _chat_messages(
-    session: AsyncSession, conversation_id: int, reporter_id: int
+Labels = tuple[str, str]
+REPORT_LABELS: Labels = ("reporter", "reported")
+
+
+async def chat_messages(
+    session: AsyncSession, conversation_id: int, first_id: int, labels: Labels = REPORT_LABELS
 ) -> list[Item]:
+    """A conversation's stored messages, oldest first (up to MESSAGE_LIMIT, the newest);
+    `first_id`'s are labelled `labels[0]`, the other person's `labels[1]`."""
     rows = await session.execute(
         select(ChatMessage)
         .where(ChatMessage.conversation_id == conversation_id)
@@ -241,7 +248,7 @@ async def _chat_messages(
         Item(
             source="chat",
             id=message.id,
-            sender="reporter" if message.sender_user_id == reporter_id else "reported",
+            sender=labels[0] if message.sender_user_id == first_id else labels[1],
             kind=message.kind,
             text=message.text,
             edited_text=message.edited_text,
@@ -255,15 +262,18 @@ async def _chat_messages(
     ]
 
 
-async def _direct_messages(session: AsyncSession, reporter_id: int, reported_id: int) -> list[Item]:
+async def direct_messages(
+    session: AsyncSession, first_id: int, other_id: int, labels: Labels = REPORT_LABELS
+) -> list[Item]:
+    """The direct messages between two people, oldest first (up to MESSAGE_LIMIT)."""
     rows = await session.execute(
         select(DirectMessage)
         .where(
-            _between(
+            between(
                 DirectMessage.sender_user_id,
                 DirectMessage.recipient_user_id,
-                reporter_id,
-                reported_id,
+                first_id,
+                other_id,
             )
         )
         .order_by(DirectMessage.created_at.desc(), DirectMessage.id.desc())
@@ -273,7 +283,7 @@ async def _direct_messages(session: AsyncSession, reporter_id: int, reported_id:
         Item(
             source="direct",
             id=message.id,
-            sender="reporter" if message.sender_user_id == reporter_id else "reported",
+            sender=labels[0] if message.sender_user_id == first_id else labels[1],
             kind=message.kind,
             text=message.text,
             edited_text=None,
@@ -291,7 +301,7 @@ async def _requests(session: AsyncSession, reporter_id: int, reported_id: int) -
     rows = await session.execute(
         select(ChatRequest.sender_user_id, ChatRequest.status, ChatRequest.created_at)
         .where(
-            _between(
+            between(
                 ChatRequest.sender_user_id, ChatRequest.recipient_user_id, reporter_id, reported_id
             )
         )
@@ -303,9 +313,19 @@ async def _requests(session: AsyncSession, reporter_id: int, reported_id: int) -
     ]
 
 
-def _audit(actor_user_id: int, action: str, target_user_id: int, value: str) -> AdminAuditEntry:
+def audit(
+    actor_user_id: int,
+    action: str,
+    target_user_id: int | None,
+    value: str,
+    reason: str | None = None,
+) -> AdminAuditEntry:
     return AdminAuditEntry(
-        actor_user_id=actor_user_id, action=action, target_user_id=target_user_id, new_value=value
+        actor_user_id=actor_user_id,
+        action=action,
+        target_user_id=target_user_id,
+        new_value=value,
+        reason=reason,
     )
 
 
@@ -319,12 +339,12 @@ async def review(
         return None
     reporter, reported = report.reporter_user_id, report.reported_user_id
     if report.conversation_id is None:
-        messages = await _direct_messages(session, reporter, reported)
+        messages = await direct_messages(session, reporter, reported)
         requests = await _requests(session, reporter, reported)
     else:
-        messages = await _chat_messages(session, report.conversation_id, reporter)
+        messages = await chat_messages(session, report.conversation_id, reporter)
         requests = []
-    session.add(_audit(actor_user_id, "report_viewed", reported, f"report {report.id}"))
+    session.add(audit(actor_user_id, "report_viewed", reported, f"report {report.id}"))
     return Review(
         id=report.id,
         kind="profile" if report.conversation_id is None else "chat",
@@ -334,9 +354,9 @@ async def review(
         status=report.status,
         outcome=report.outcome,
         created_at=report.created_at,
-        reporter=await _person(session, reporter, today),
-        reported=await _person(session, reported, today),
-        record=await _record(session, reported),
+        reporter=await person(session, reporter, today),
+        reported=await person(session, reported, today),
+        record=await record(session, reported),
         messages=messages,
         requests=requests,
     )
@@ -391,7 +411,7 @@ async def media_for(
             await session.execute(
                 select(DirectMessage.kind, DirectMessage.file_id).where(
                     DirectMessage.id == item_id,
-                    _between(
+                    between(
                         DirectMessage.sender_user_id,
                         DirectMessage.recipient_user_id,
                         reporter,
@@ -410,24 +430,27 @@ async def media_for(
 async def record_media_view(
     session: AsyncSession,
     actor_user_id: int,
-    report_id: int,
+    context: str,
     source: Source,
     item_id: int | None,
     media: Media,
     chat_id: int,
     message_id: int,
     now: datetime,
+    reason: str | None = None,
 ) -> None:
     """Audit a media view, and queue the copy sent to the moderator for deletion
     MEDIA_VIEW after sending (the worker's Telegram deletion job removes it then, or as
     soon as it can)."""
     item = "" if item_id is None else f" {item_id}"
+    # `context` says where the item was opened: "report <id>" or "account <id>".
     session.add(
-        _audit(
+        audit(
             actor_user_id,
             "media_viewed",
             media.target_user_id,
-            f"report {report_id} {source}{item}",
+            f"{context} {source}{item}",
+            reason,
         )
     )
     await session.execute(

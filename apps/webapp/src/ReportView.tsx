@@ -11,7 +11,7 @@ interface Props {
   onFailure: (failure: Failure) => void;
 }
 
-function Card({ title, person }: { title: string; person: Person }) {
+export function Card({ title, person }: { title: string; person: Person }) {
   if (person.deleted) {
     return (
       <div className="card">
@@ -34,7 +34,7 @@ function Card({ title, person }: { title: string; person: Person }) {
   );
 }
 
-function Message({ item, disabled, onView }: { item: Item; disabled: boolean; onView: (item: Item) => void }) {
+export function Message({ item, disabled, onView }: { item: Item; disabled: boolean; onView: (item: Item) => void }) {
   const markers = [item.private && "Private mode", item.view_once && "view once", item.edited_at && "edited"].filter(Boolean);
   return (
     <li className={`message ${item.sender}`}>
@@ -206,7 +206,9 @@ export function ReportView({ launchData, reportId, onDone, onFailure }: Props) {
       {open && (
         <ActionPanel
           launchData={launchData}
-          reportId={data.id}
+          path={`/api/moderation/reports/${data.id}/action`}
+          kinds={["close", "warn", "suspend", "ban"]}
+          closesReport
           nickname={data.reported.nickname ?? "this account"}
           onDone={onDone}
           onFailure={onFailure}

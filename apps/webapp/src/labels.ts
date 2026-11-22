@@ -48,7 +48,7 @@ export const KINDS: Record<string, string> = {
 /** Why an action was refused, by the server's reason. */
 export const REFUSALS: Record<string, string> = {
   report_closed: "Someone already handled this report.",
-  protected: "Only admins can act on moderators and admins.",
+  protected: "You can't act on your own account, and only admins can act on moderators and admins.",
   banned: "This account is already banned.",
   not_allowed: "You can't take moderation actions right now.",
   admin_only: "Only admins can lift a ban.",

@@ -73,7 +73,7 @@ export interface Review {
   requests: RequestItem[];
 }
 
-export type ActionKind = "close" | "warn" | "suspend" | "ban";
+export type ActionKind = "close" | "warn" | "suspend" | "ban" | "lift";
 
 export interface ActionBody {
   kind: ActionKind;
@@ -84,13 +84,58 @@ export interface ActionBody {
 export interface MediaBody {
   source: "chat" | "direct" | "photo";
   item_id?: number;
+  /** Required when an admin views media from an account's threads. */
+  reason?: string;
+}
+
+export interface Match {
+  id: number;
+  public_id: string | null;
+  nickname: string | null;
+  status: string;
+}
+
+export interface ReportSummary {
+  id: number;
+  reason: string;
+  kind: "chat" | "profile";
+  status: string;
+  outcome: string | null;
+  created_at: string;
+}
+
+export interface Account {
+  id: number;
+  person: Person;
+  suspended_until: string | null;
+  record: Review["record"];
+  reports_received: ReportSummary[];
+  reports_made: ReportSummary[];
+}
+
+export interface Thread {
+  kind: "chat" | "direct";
+  ref: number;
+  partner_nickname: string | null;
+  first_at: string;
+  last_at: string;
+  messages: number;
+}
+
+export interface ReasonBody {
+  reason: string;
+}
+
+export interface ThreadBody extends ReasonBody {
+  kind: "chat" | "direct";
+  ref: number;
 }
 
 /** Why a request failed: "reopen" when the launch data is missing or too old, "denied"
  * when the account may not use the panel, "conflict" when the action no longer applies
  * (with the server's reason in `code`), "notFound", "telegram" when Telegram refused,
  * and "error" for anything else. */
-export type Failure = "reopen" | "denied" | "conflict" | "notFound" | "telegram" | "error";
+export type Failure = "reopen" | "denied" | "conflict" | "notFound" | "invalid" | "telegram" | "error";
 
 export class ApiError extends Error {
   readonly failure: Failure;
@@ -103,11 +148,9 @@ export class ApiError extends Error {
   }
 }
 
-async function request<T>(
-  path: string,
-  launchData: string,
-  body?: ActionBody | MediaBody,
-): Promise<T> {
+type Body = ActionBody | MediaBody | ReasonBody | ThreadBody;
+
+async function request<T>(path: string, launchData: string, body?: Body): Promise<T> {
   let response: Response;
   try {
     response = await fetch(path, {
@@ -131,6 +174,7 @@ async function request<T>(
     const data = (await response.json().catch(() => ({}))) as { error?: string };
     throw new ApiError("conflict", data.error);
   }
+  if (response.status === 422) throw new ApiError("invalid");
   if (response.status === 502) throw new ApiError("telegram");
   throw new ApiError("error");
 }
@@ -139,6 +183,6 @@ export function getJson<T>(path: string, launchData: string): Promise<T> {
   return request<T>(path, launchData);
 }
 
-export function postJson<T>(path: string, launchData: string, body: ActionBody | MediaBody): Promise<T> {
+export function postJson<T>(path: string, launchData: string, body: Body): Promise<T> {
   return request<T>(path, launchData, body);
 }

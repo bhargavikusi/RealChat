@@ -1,12 +1,18 @@
 import { useCallback, useEffect, useState } from "react";
 
+import { AccountView } from "./AccountView";
 import { ApiError, getJson, type Failure, type Me } from "./api";
+import { Lookup } from "./Lookup";
 import { Queue } from "./Queue";
 import { ReportView } from "./ReportView";
 import { webApp } from "./telegram";
 
 type State = { kind: "loading" } | { kind: "signedIn"; me: Me } | { kind: Failure };
-type Screen = { name: "queue" } | { name: "report"; id: number };
+type Screen =
+  | { name: "queue" }
+  | { name: "report"; id: number; back: Screen }
+  | { name: "lookup" }
+  | { name: "account"; id: number };
 
 const ROLE_LABELS: Record<Me["role"], string> = { moderator: "Moderator", admin: "Admin" };
 
@@ -14,10 +20,18 @@ const MESSAGES: Record<Failure, string> = {
   reopen: "Please open this again from 🛡 Moderation in RealChat's Advanced settings.",
   denied: "This panel is for RealChat moderators and admins.",
   conflict: "Something changed meanwhile. Please try again.",
-  notFound: "That report wasn't found.",
+  notFound: "That wasn't found.",
+  invalid: "That request wasn't valid.",
   telegram: "Telegram couldn't be reached. Please try again.",
   error: "Something went wrong. Please try again.",
 };
+
+/** Where Telegram's back button goes from a screen, if anywhere. */
+function backFrom(screen: Screen): Screen | null {
+  if (screen.name === "report") return screen.back;
+  if (screen.name === "account") return { name: "lookup" };
+  return null;
+}
 
 export function App() {
   const launchData = webApp()?.initData ?? "";
@@ -25,8 +39,8 @@ export function App() {
   const [screen, setScreen] = useState<Screen>({ name: "queue" });
   const [notice, setNotice] = useState<string | null>(null);
 
-  // Sign-in problems end the session; a missing report returns to the queue. Other
-  // failures are shown where they happen, with a way to try again.
+  // Sign-in problems end the session; anything else returns to the reports with a
+  // notice. Failures within a screen are shown there, with a way to try again.
   const fail = useCallback((failure: Failure) => {
     if (failure === "reopen" || failure === "denied") {
       setState({ kind: failure });
@@ -46,19 +60,23 @@ export function App() {
       .catch((error: unknown) => setState({ kind: error instanceof ApiError ? error.failure : "error" }));
   }, [launchData]);
 
-  // Telegram's back button returns from a report to the queue.
   useEffect(() => {
     const back = webApp()?.BackButton;
     if (!back) return;
-    const toQueue = () => setScreen({ name: "queue" });
-    if (screen.name === "report") {
+    const target = backFrom(screen);
+    const go = () => {
+      if (target) setScreen(target);
+    };
+    if (target) {
       back.show();
-      back.onClick(toQueue);
+      back.onClick(go);
     } else {
       back.hide();
     }
-    return () => back.offClick(toQueue);
+    return () => back.offClick(go);
   }, [screen]);
+
+  const tab = screen.name === "lookup" || screen.name === "account" || (screen.name === "report" && screen.back.name === "account") ? "lookup" : "reports";
 
   return (
     <main className="panel">
@@ -79,27 +97,64 @@ export function App() {
           {MESSAGES[state.kind]}
         </p>
       )}
-      {state.kind === "signedIn" && screen.name === "queue" && (
-        <Queue
-          launchData={launchData}
-          notice={notice}
-          onOpen={(id) => {
-            setNotice(null);
-            setScreen({ name: "report", id });
-          }}
-          onFailure={fail}
-        />
-      )}
-      {state.kind === "signedIn" && screen.name === "report" && (
-        <ReportView
-          launchData={launchData}
-          reportId={screen.id}
-          onDone={(done) => {
-            setNotice(done);
-            setScreen({ name: "queue" });
-          }}
-          onFailure={fail}
-        />
+      {state.kind === "signedIn" && (
+        <>
+          <nav className="tabs" aria-label="Sections">
+            <button
+              type="button"
+              aria-current={tab === "reports" ? "page" : undefined}
+              onClick={() => {
+                setNotice(null);
+                setScreen({ name: "queue" });
+              }}
+            >
+              Reports
+            </button>
+            <button
+              type="button"
+              aria-current={tab === "lookup" ? "page" : undefined}
+              onClick={() => {
+                setNotice(null);
+                setScreen({ name: "lookup" });
+              }}
+            >
+              Lookup
+            </button>
+          </nav>
+          {screen.name === "queue" && (
+            <Queue
+              launchData={launchData}
+              notice={notice}
+              onOpen={(id) => {
+                setNotice(null);
+                setScreen({ name: "report", id, back: { name: "queue" } });
+              }}
+              onFailure={fail}
+            />
+          )}
+          {screen.name === "report" && (
+            <ReportView
+              launchData={launchData}
+              reportId={screen.id}
+              onDone={(done) => {
+                setNotice(done);
+                setScreen(screen.back.name === "account" ? screen.back : { name: "queue" });
+              }}
+              onFailure={fail}
+            />
+          )}
+          {screen.name === "lookup" && <Lookup launchData={launchData} onOpen={(id) => setScreen({ name: "account", id })} onFailure={fail} />}
+          {screen.name === "account" && (
+            <AccountView
+              key={screen.id}
+              launchData={launchData}
+              accountId={screen.id}
+              isAdmin={state.me.role === "admin"}
+              onOpenReport={(id) => setScreen({ name: "report", id, back: screen })}
+              onFailure={fail}
+            />
+          )}
+        </>
       )}
     </main>
   );
