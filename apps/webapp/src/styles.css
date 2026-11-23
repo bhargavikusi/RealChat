@@ -237,3 +237,49 @@ button {
   padding: 0.5rem;
   font: inherit;
 }
+
+.tabs {
+  flex-wrap: wrap;
+}
+
+.figures {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(8rem, 1fr));
+  gap: 0.5rem;
+  list-style: none;
+  padding: 0;
+  margin: 1rem 0;
+}
+
+.figures li {
+  padding: 0.6rem;
+  border-radius: 0.6rem;
+  background: var(--tg-theme-secondary-bg-color, #f1f1f4);
+}
+
+.figures strong {
+  display: block;
+  font-size: 1.3rem;
+}
+
+.chart {
+  margin-top: 1.25rem;
+}
+
+.data {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.85rem;
+}
+
+.data th,
+.data td {
+  padding: 0.25rem 0.4rem;
+  text-align: right;
+  border-bottom: 1px solid var(--tg-theme-secondary-bg-color, #f1f1f4);
+}
+
+.data th[scope="row"],
+.data thead th:first-child {
+  text-align: left;
+}

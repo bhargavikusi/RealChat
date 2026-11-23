@@ -204,3 +204,21 @@ class NotificationSettings(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )
+
+
+class UserActivityDay(Base):
+    """A day (India date) on which the account used RealChat (D-072), for active-user
+    analytics. No content: only the account and the date. Written at most once per
+    account per day, deleted after ACTIVITY_DAYS_KEPT days by the worker, and erased
+    with the account."""
+
+    __tablename__ = "user_activity_days"
+    __table_args__ = (
+        # Serves the daily counts and the retention cleanup.
+        Index("ix_user_activity_days_day", "day"),
+    )
+
+    user_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("users.id", ondelete="CASCADE"), primary_key=True
+    )
+    day: Mapped[date] = mapped_column(Date, primary_key=True)

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useState } from "react";
 
 import { AccountView } from "./AccountView";
 import { ApiError, getJson, type Failure, type Me } from "./api";
@@ -8,21 +8,26 @@ import { ReportView } from "./ReportView";
 import { DEFAULT_FILTERS, UsersView, type UserFilters } from "./UsersView";
 import { webApp } from "./telegram";
 
+// Loaded only when an admin opens Analytics: the charts are most of the app's size.
+const AnalyticsView = lazy(() => import("./AnalyticsView").then((module) => ({ default: module.AnalyticsView })));
+
 type State = { kind: "loading" } | { kind: "signedIn"; me: Me } | { kind: Failure };
 type Screen =
   | { name: "queue" }
   | { name: "report"; id: number; back: Screen }
   | { name: "lookup" }
   | { name: "account"; id: number; back: Screen }
-  | { name: "users" };
+  | { name: "users" }
+  | { name: "analytics" };
 
-type Tab = "reports" | "lookup" | "users";
+type Tab = "reports" | "lookup" | "users" | "analytics";
 
 /** The tab a screen belongs to: a report or account belongs to where it was opened. */
 function tabOf(screen: Screen): Tab {
   if (screen.name === "report" || screen.name === "account") return tabOf(screen.back);
   if (screen.name === "lookup") return "lookup";
   if (screen.name === "users") return "users";
+  if (screen.name === "analytics") return "analytics";
   return "reports";
 }
 
@@ -153,6 +158,18 @@ export function App() {
                 Users
               </button>
             )}
+            {state.me.role === "admin" && (
+              <button
+                type="button"
+                aria-current={tab === "analytics" ? "page" : undefined}
+                onClick={() => {
+                  setNotice(null);
+                  setScreen({ name: "analytics" });
+                }}
+              >
+                Analytics
+              </button>
+            )}
           </nav>
           {screen.name === "queue" && (
             <Queue
@@ -185,6 +202,11 @@ export function App() {
               }}
               onFailure={fail}
             />
+          )}
+          {screen.name === "analytics" && state.me.role === "admin" && (
+            <Suspense fallback={<p className="hint">Loading…</p>}>
+              <AnalyticsView launchData={launchData} onFailure={fail} />
+            </Suspense>
           )}
           {screen.name === "users" && state.me.role === "admin" && (
             <UsersView

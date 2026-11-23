@@ -8,6 +8,7 @@ helpers work on an already loaded Profile and do no I/O.
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from enum import StrEnum
+from zoneinfo import ZoneInfo
 
 from sqlalchemy import delete, func, or_, select, update
 from sqlalchemy.dialects.postgresql import insert
@@ -29,6 +30,7 @@ from backend.modules.users.models import (
     ProfileChange,
     TermsAcceptance,
     User,
+    UserActivityDay,
 )
 from backend.modules.users.validation import Visibility
 
@@ -91,15 +93,21 @@ async def user_id_for(session: AsyncSession, public_id: str) -> int | None:
     return await session.scalar(select(Profile.user_id).where(Profile.public_id == public_id))
 
 
+# Active days are India dates, like the analytics that count them (D-072).
+ACTIVITY_ZONE = ZoneInfo("Asia/Kolkata")
+
+
 async def record_activity(
     session: AsyncSession, telegram_user_id: int, now: datetime, every: timedelta
 ) -> None:
-    """Note that an active account used RealChat at `now` (D-051).
+    """Note that an active account used RealChat at `now` (D-051), and on which day
+    (D-072).
 
     Written only when the stored time is at least `every` old, so a busy user causes at
-    most one write per interval. This is RealChat activity, never Telegram presence.
+    most one write per interval; the day is added once (it is the primary key). This is
+    RealChat activity, never Telegram presence.
     """
-    await session.execute(
+    updated = await session.execute(
         update(User)
         .where(
             User.telegram_user_id == telegram_user_id,
@@ -107,7 +115,15 @@ async def record_activity(
             User.last_active_at <= now - every,
         )
         .values(last_active_at=now)
+        .returning(User.id)
     )
+    user_id = updated.scalar_one_or_none()
+    if user_id is not None:
+        await session.execute(
+            insert(UserActivityDay)
+            .values(user_id=user_id, day=now.astimezone(ACTIVITY_ZONE).date())
+            .on_conflict_do_nothing()
+        )
 
 
 async def get_user(session: AsyncSession, user_id: int) -> User:
@@ -182,8 +198,8 @@ async def delete_account(session: AsyncSession, user_id: int, now: datetime) -> 
     notification settings, profile visits and likes made or received (D-053, D-056),
     direct messages and chat requests sent or received (D-057, D-058; held coins of
     those still pending are released), activity alerts it bought (D-059), daily reward
-    reminders sent (D-060), and terms acceptances, so a returning user
-    starts a fresh onboarding with the default settings. Coins are
+    reminders sent (D-060), the days it was active (D-072), and terms acceptances, so a
+    returning user starts a fresh onboarding with the default settings. Coins are
     forfeited (held coins released, then the balance removed by one ledger entry), the
     invite code is retired, and pending invites are settled as not rewarded (D-055).
     VIP ends (D-062); the payments that bought it are kept.
@@ -239,6 +255,7 @@ async def delete_account(session: AsyncSession, user_id: int, now: datetime) -> 
     # until the worker refunds their buyers (D-059).
     await session.execute(delete(ActivityAlert).where(ActivityAlert.buyer_user_id == user_id))
     await session.execute(delete(DailyReminder).where(DailyReminder.user_id == user_id))
+    await session.execute(delete(UserActivityDay).where(UserActivityDay.user_id == user_id))
     await _ensure_profile(session, user_id)
     user.coin_history_after_id = (await coins.forfeit_all(session, user_id, now)).history_after_id
     await rewards.retire_invites(session, user_id, now)
