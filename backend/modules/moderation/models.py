@@ -121,6 +121,8 @@ class Report(Base):
         ),
         # Serves the per-user limit on reports in a period.
         Index("ix_reports_reporter_created_at", "reporter_user_id", "created_at"),
+        # Serves counting the reports an account received (the user directory, D-072).
+        Index("ix_reports_reported_user_id", "reported_user_id"),
         # Serves "is this conversation under an open report" for retention cleanup.
         Index(
             "ix_reports_open_conversation_id",

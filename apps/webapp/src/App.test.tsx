@@ -658,4 +658,44 @@ describe("the user directory", () => {
     await waitFor(() => expect(calls.length).toBe(before + 1));
     expect(await screen.findByRole("button", { name: /User 0/ })).toBeTruthy();
   });
+
+  it("retries a page that failed instead of skipping it", async () => {
+    let failPage1 = true;
+    serve((path, init) => {
+      if (path.startsWith("/api/moderation/users?") && path.endsWith("page=1") && failPage1) {
+        return { status: 500, body: {} };
+      }
+      return usersHandler(3)(path, init);
+    });
+    const user = userEvent.setup();
+    render(<App />);
+    await user.click(await screen.findByRole("button", { name: "Users" }));
+    await user.click(await screen.findByRole("button", { name: "Load more" }));
+    const alert = await screen.findByRole("alert");
+    // No Load more while a page has failed, so page 1 can't be skipped.
+    expect(screen.queryByRole("button", { name: "Load more" })).toBeNull();
+    failPage1 = false;
+    await user.click(within(alert).getByRole("button", { name: "Try again" }));
+    expect(await screen.findByRole("button", { name: /User 1/ })).toBeTruthy();
+    const pages = calls.filter((call) => call.path.startsWith("/api/moderation/users?")).map((call) => call.path.split("page=")[1]);
+    expect(pages).toEqual(["0", "1", "1"]);
+  });
+
+  it("clears the old count when new filters are applied", async () => {
+    let release: () => void = () => undefined;
+    serve(usersHandler(1));
+    const respond = vi.mocked(fetch).getMockImplementation();
+    const user = userEvent.setup();
+    render(<App />);
+    await user.click(await screen.findByRole("button", { name: "Users" }));
+    await screen.findByText(/1 user/);
+    vi.mocked(fetch).mockImplementation(async (input, init) => {
+      await new Promise<void>((resolve) => (release = resolve));
+      return respond ? respond(input, init) : new Response("{}");
+    });
+    await user.click(screen.getByRole("button", { name: "Apply" }));
+    expect(screen.queryByText(/1 user/)).toBeNull();
+    release();
+    expect(await screen.findByText(/1 user/)).toBeTruthy();
+  });
 });

@@ -107,6 +107,8 @@ export function UsersView({ launchData, filters, onFilters, onOpen, onFailure }:
   // Set where a load is started (here, Apply, Load more), and cleared when it ends.
   const [loading, setLoading] = useState(true);
   const [failed, setFailed] = useState<string | null>(null);
+  // Bumped by Try again, to load the same page again after a failure.
+  const [attempt, setAttempt] = useState(0);
 
   // Load a page whenever the applied filters or the page change.
   useEffect(() => {
@@ -129,7 +131,7 @@ export function UsersView({ launchData, filters, onFilters, onOpen, onFailure }:
     return () => {
       active = false;
     };
-  }, [launchData, filters, page, onFailure]);
+  }, [launchData, filters, page, onFailure, attempt]);
 
   function set<K extends keyof UserFilters>(name: K, value: UserFilters[K]) {
     setDraft((current) => ({ ...current, [name]: value }));
@@ -140,6 +142,7 @@ export function UsersView({ launchData, filters, onFilters, onOpen, onFailure }:
     setFailed(null);
     setPage(0);
     setRows([]);
+    setTotal(null); // no count for the old filters while the new ones load
     onFilters({ ...next }); // a new object, so the same filters load again too
   }
 
@@ -248,9 +251,21 @@ export function UsersView({ launchData, filters, onFilters, onOpen, onFailure }:
         </div>
       </form>
       {failed && (
-        <p className="notice" role="alert">
-          {failed}
-        </p>
+        <div className="notice" role="alert">
+          <p>{failed}</p>
+          {/* The same page again: Load more never skips a page that failed. */}
+          <button
+            type="button"
+            className="link"
+            onClick={() => {
+              setLoading(true);
+              setFailed(null);
+              setAttempt((count) => count + 1);
+            }}
+          >
+            Try again
+          </button>
+        </div>
       )}
       {total !== null && (
         <p className="hint" role="status">
@@ -263,7 +278,7 @@ export function UsersView({ launchData, filters, onFilters, onOpen, onFailure }:
         ))}
       </ul>
       {loading && <p className="hint">Loading…</p>}
-      {!loading && total !== null && rows.length < total && (
+      {!loading && !failed && total !== null && rows.length < total && (
         <button
           type="button"
           className="link"
