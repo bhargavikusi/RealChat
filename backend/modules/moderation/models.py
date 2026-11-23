@@ -6,12 +6,13 @@ them stops a deletion from being used to undo a block, erase a report, or hide a
 restriction.
 """
 
-from datetime import datetime
+from datetime import date, datetime
 
 from sqlalchemy import (
     BigInteger,
     Boolean,
     CheckConstraint,
+    Date,
     DateTime,
     ForeignKey,
     Identity,
@@ -52,6 +53,9 @@ SUSPENSION_DAYS = (1, 3, 7, 30)
 # Who a moderation notice goes to: the account acted on, the reporter, or the partner
 # in a chat that the action ended.
 NOTICE_KINDS = ("action", "reporter", "chat_ended")
+# Alerts to moderators and admins (D-071): an urgent report as soon as it is filed, and
+# the daily summary of open reports.
+ALERT_KINDS = ("urgent", "summary")
 
 
 def _in(column: str, values: tuple[str | int, ...]) -> str:
@@ -204,3 +208,52 @@ class ModerationNotice(Base):
     next_attempt_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     attempts: Mapped[int] = mapped_column(SmallInteger, server_default="0")
     sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class StaffAlert(Base):
+    """An alert owed to one moderator or admin, sent by the worker (D-071).
+
+    An urgent report's alerts are written in the transaction that files it, so none is
+    lost; a day's summary is written when it is due. Each person gets an urgent report's
+    alert, or a day's summary, at most once (unique indexes). A claim moves
+    `next_attempt_at` ahead, as for moderation notices. An alert that failed on every
+    attempt is given up with `sent_at` still NULL: it stays in the partial index on
+    `next_attempt_at` but is never claimed again (`attempts` is at its limit).
+    """
+
+    __tablename__ = "staff_alerts"
+    __table_args__ = (
+        CheckConstraint(_in("kind", ALERT_KINDS), name="kind"),
+        CheckConstraint("(kind = 'urgent') = (report_id IS NOT NULL)", name="report_pair"),
+        CheckConstraint("(kind = 'summary') = (day IS NOT NULL)", name="day_pair"),
+        Index(
+            "uq_staff_alerts_urgent",
+            "report_id",
+            "recipient_user_id",
+            unique=True,
+            postgresql_where=text("kind = 'urgent'"),
+        ),
+        Index(
+            "uq_staff_alerts_summary",
+            "day",
+            "recipient_user_id",
+            unique=True,
+            postgresql_where=text("kind = 'summary'"),
+        ),
+        Index(
+            "ix_staff_alerts_due",
+            "next_attempt_at",
+            postgresql_where=text("sent_at IS NULL"),
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, Identity(), primary_key=True)
+    kind: Mapped[str] = mapped_column(String(16))
+    recipient_user_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("users.id"))
+    report_id: Mapped[int | None] = mapped_column(BigInteger, ForeignKey("reports.id"))
+    # The India date of a summary, so there is one per person per day.
+    day: Mapped[date | None] = mapped_column(Date)
+    next_attempt_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    attempts: Mapped[int] = mapped_column(SmallInteger, server_default="0")
+    sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

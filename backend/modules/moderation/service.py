@@ -20,6 +20,7 @@ from sqlalchemy.orm import aliased
 from backend.modules.chat import service as chat
 from backend.modules.chat.models import Conversation
 from backend.modules.chat.models import ConversationParticipant as Participant
+from backend.modules.moderation import alerts
 from backend.modules.moderation.models import (
     REPORT_DETAILS_MAX_LENGTH,
     REPORT_REASONS,
@@ -334,6 +335,9 @@ async def _file(
     )
     session.add(report)
     await session.flush()
+    if report.urgent:
+        # Every moderator and admin is alerted, in this same transaction (D-071).
+        await alerts.queue_urgent(session, report.id, now)
     await _add_block(session, user_id, partner_id, conversation_id)
     if conversation_id is None:
         return Filed(ReportOutcome.FILED, partner_id, report.id)

@@ -324,6 +324,22 @@ The history of moderation actions (D-071). Rows are never updated; the account's
 
 An action locks the actor's and the target's `users` rows in id order, then the report, which must still be open, then the target's open conversation if the action ends it. That is the same users-before-conversations order as reports and account deletion, so a report is closed by exactly one action and none of them deadlock. The index on `(target_user_id, created_at)` serves an account's history.
 
+### `staff_alerts`
+
+Alerts owed to moderators and admins (D-071), sent by the worker.
+
+| Column | Type | Notes |
+|---|---|---|
+| `id` | bigint identity | |
+| `kind` | varchar(16) | `urgent` (an urgent report was filed) or `summary` (the day's open reports). |
+| `recipient_user_id` | bigint | References `users.id`: a moderator or admin when the alert was owed. |
+| `report_id` | bigint, nullable | References `reports.id`. Set exactly for `urgent`. |
+| `day` | date, nullable | The India date of a summary. Set exactly for `summary`. |
+| `next_attempt_at`, `attempts`, `sent_at` | | As for `moderation_notices`: claimed with `FOR UPDATE SKIP LOCKED`, retried a few times, and `sent_at` set once sent, given up (blocked bot), or settled because the recipient is no longer an active moderator or admin (checked when claimed and again just before sending). An alert that failed on every attempt is given up with `sent_at` still NULL; it stays in the partial index below but is never claimed again. |
+| `created_at` | timestamptz | |
+
+An urgent report's alerts are written in the transaction that files it, one per active moderator and admin. A summary's are written once its hour (admin setting `report_summary_hour`, India time) has passed and any report is open. Partial unique indexes allow one urgent alert per report and recipient, and one summary per day and recipient. A partial index on `next_attempt_at` where `sent_at IS NULL` serves the worker.
+
 ### `moderation_notices`
 
 Messages a moderation action owes people, sent by the worker after the action commits (D-071).

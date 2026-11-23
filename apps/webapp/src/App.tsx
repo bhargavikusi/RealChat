@@ -26,6 +26,13 @@ const MESSAGES: Record<Failure, string> = {
   error: "Something went wrong. Please try again.",
 };
 
+/** The first screen: the report in `?report=<id>` (an urgent-report alert's button),
+ * else the reports queue. */
+function startScreen(): Screen {
+  const id = Number(new URLSearchParams(window.location.search).get("report"));
+  return Number.isInteger(id) && id > 0 ? { name: "report", id, back: { name: "queue" } } : { name: "queue" };
+}
+
 /** Where Telegram's back button goes from a screen, if anywhere. */
 function backFrom(screen: Screen): Screen | null {
   if (screen.name === "report") return screen.back;
@@ -36,7 +43,7 @@ function backFrom(screen: Screen): Screen | null {
 export function App() {
   const launchData = webApp()?.initData ?? "";
   const [state, setState] = useState<State>(launchData ? { kind: "loading" } : { kind: "reopen" });
-  const [screen, setScreen] = useState<Screen>({ name: "queue" });
+  const [screen, setScreen] = useState<Screen>(startScreen);
   const [notice, setNotice] = useState<string | null>(null);
 
   // Sign-in problems end the session; anything else returns to the reports with a
