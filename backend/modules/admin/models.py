@@ -28,6 +28,8 @@ AUDIT_ACTIONS = (
     "account_viewed",
     "chats_listed",
     "chat_opened",
+    # An admin listing users in the admin panel (D-072); the filters used go in `reason`.
+    "users_listed",
 )
 # The most an admin's typed reason can hold.
 REASON_MAX_LENGTH = 300

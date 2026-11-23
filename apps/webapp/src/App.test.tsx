@@ -568,3 +568,94 @@ describe("opening from an alert", () => {
     expect(await screen.findByRole("region", { name: "Open reports" })).toBeTruthy();
   });
 });
+
+const USER_ROW = {
+  id: 42,
+  public_id: "abcdefg",
+  nickname: "Moon Child",
+  age: 25,
+  gender: "female",
+  country_code: "IN",
+  status: "active",
+  role: "user",
+  vip_until: "2026-12-30T00:00:00Z",
+  coins: 20,
+  last_active_at: "2026-11-21T12:00:00Z",
+  chats_30d: 5,
+  joined_at: "2026-10-01T12:00:00Z",
+  reports_received: 2,
+};
+
+function usersHandler(total: number) {
+  return (path: string, init: RequestInit): { status: number; body: unknown } => {
+    if (path.startsWith("/api/moderation/users?")) {
+      const page = Number(new URLSearchParams(path.split("?")[1]).get("page"));
+      return {
+        status: 200,
+        body: { rows: [{ ...USER_ROW, id: 42 + page, nickname: `User ${page}` }], total, page, page_size: 1 },
+      };
+    }
+    return lookupHandler("admin")(path, init);
+  };
+}
+
+describe("the user directory", () => {
+  it("is offered to admins only", async () => {
+    serve(lookupHandler("moderator"));
+    render(<App />);
+    await screen.findByRole("button", { name: "Lookup" });
+    expect(screen.queryByRole("button", { name: "Users" })).toBeNull();
+  });
+
+  it("sends only the filters that are set, and loads more pages", async () => {
+    serve(usersHandler(2));
+    const user = userEvent.setup();
+    render(<App />);
+    await user.click(await screen.findByRole("button", { name: "Users" }));
+    expect(await screen.findByText(/2 users/)).toBeTruthy();
+    expect(calls.at(-1)?.path).toBe("/api/moderation/users?sort=newest&descending=true&page=0");
+
+    await user.click(screen.getByText("Filters"));
+    await user.selectOptions(screen.getByLabelText("VIP"), "true");
+    await user.type(screen.getByLabelText(/Country/), "in");
+    await user.selectOptions(screen.getByLabelText("Sort by"), "chats");
+    await user.click(screen.getByRole("button", { name: "Apply" }));
+    await waitFor(() =>
+      expect(calls.at(-1)?.path).toBe(
+        "/api/moderation/users?vip=true&country=IN&sort=chats&descending=true&page=0",
+      ),
+    );
+
+    await user.click(await screen.findByRole("button", { name: "Load more" }));
+    expect(await screen.findByRole("button", { name: /User 1/ })).toBeTruthy();
+    expect(screen.getByRole("button", { name: /User 0/ })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Load more" })).toBeNull();
+  });
+
+  it("opens an account and goes back with the filters kept", async () => {
+    serve(usersHandler(1));
+    const user = userEvent.setup();
+    render(<App />);
+    await user.click(await screen.findByRole("button", { name: "Users" }));
+    await user.type(screen.getByLabelText(/Search by RealChat ID or nickname/), "moon");
+    await user.click(screen.getByRole("button", { name: "Apply" }));
+    await user.click(await screen.findByRole("button", { name: /User 0/ }));
+    await screen.findByRole("article", { name: "Account 42" });
+    const back = vi.mocked(window.Telegram?.WebApp?.BackButton?.onClick ?? vi.fn()).mock.calls.at(-1)?.[0];
+    act(() => back?.());
+    expect((await screen.findByLabelText(/Search by RealChat ID or nickname/) as HTMLInputElement).value).toBe("moon");
+    await waitFor(() => expect(calls.at(-1)?.path).toContain("query=moon"));
+  });
+
+  it("clearing reloads even when nothing was set", async () => {
+    serve(usersHandler(1));
+    const user = userEvent.setup();
+    render(<App />);
+    await user.click(await screen.findByRole("button", { name: "Users" }));
+    await screen.findByText(/1 user/);
+    const before = calls.length;
+    await user.click(screen.getByRole("button", { name: "Clear" }));
+    await waitFor(() => expect(calls.length).toBe(before + 1));
+    expect(await screen.findByRole("button", { name: /User 0/ })).toBeTruthy();
+  });
+});

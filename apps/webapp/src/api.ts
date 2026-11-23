@@ -199,3 +199,27 @@ export function getJson<T>(path: string, launchData: string): Promise<T> {
 export function postJson<T>(path: string, launchData: string, body: Body): Promise<T> {
   return request<T>(path, launchData, body);
 }
+
+export interface UserRow {
+  id: number;
+  public_id: string;
+  nickname: string | null;
+  age: number | null;
+  gender: string | null;
+  country_code: string | null;
+  status: string;
+  role: string;
+  vip_until: string | null;
+  coins: number;
+  last_active_at: string;
+  chats_30d: number;
+  joined_at: string;
+  reports_received: number;
+}
+
+export interface UsersPage {
+  rows: UserRow[];
+  total: number;
+  page: number;
+  page_size: number;
+}
