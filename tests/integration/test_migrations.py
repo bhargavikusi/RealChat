@@ -1,5 +1,6 @@
 import asyncio
 
+import pytest
 from alembic import command
 from alembic.config import Config
 from alembic.script import ScriptDirectory
@@ -7,6 +8,23 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import create_async_engine
 
 from backend.modules.users import public_ids
+from tests.integration.conftest import empty_tables
+
+
+@pytest.fixture(autouse=True)
+def empty_database(migrated_database_url: str) -> None:
+    """Start from empty tables: the audit log and the ledger are append-only, so a
+    downgrade refuses to drop what they hold (rows left by earlier tests included)."""
+
+    async def empty() -> None:
+        engine = create_async_engine(migrated_database_url)
+        try:
+            async with engine.begin() as connection:
+                await empty_tables(connection)
+        finally:
+            await engine.dispose()
+
+    asyncio.run(empty())
 
 
 def _alembic_config(database_url: str) -> Config:

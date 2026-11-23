@@ -845,6 +845,25 @@ Work happens on short-lived issue branches, such as `feature/12-onboarding`, cre
 
 **Why:** Owner decisions (requirements §19), choosing a web panel over in-bot screens, Mini App sign-in over a login link, and least privilege for opening chats without a report.
 
+### D-072 — Admin panel: user directory
+
+**Date:** 2026-11-23
+**Decision:**
+
+* The admin panel grows inside the moderation Mini App (milestone "Admin panel"): a user directory, analytics, settings, and an audit log viewer, built plainly first and then redesigned in one design pass for the whole Mini App (features first, design last, owner decision). There is no CSV export.
+* The user directory is for admins only. It lists every account that isn't deleted and finished onboarding, with search by RealChat ID or nickname, and filters:
+  * VIP, status, and role;
+  * last active within N days, and chats started in the last 30 days;
+  * sign-up date range;
+  * country, gender, and age range;
+  * coin balance range;
+  * reports received.
+* Sorting is by sign-up date, last active, chats (30 days), coins, or reports received, 50 per page.
+* "Most active" means chats started in the last 30 days (owner decision), from stored conversations; "last active" is RealChat activity, never Telegram online status.
+* Rows never include Telegram ids, usernames, or chat content. Each listing is audited (`users_listed`), with the filters used in the audit log's `reason` column.
+
+**Why:** Owner request for an admin page to see all users and find groups such as VIPs or the most active, with least privilege (admins only) and auditing.
+
 ## Open
 
 Each of these needs the owner's decision. Until then, the behavior stays configurable and is not presented to users as final.

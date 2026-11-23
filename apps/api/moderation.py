@@ -14,7 +14,7 @@ The built app (`apps/webapp/dist`) is served at `/moderation/` when it exists.
 import logging
 from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from typing import Annotated, Literal
 
@@ -25,11 +25,12 @@ from aiogram.utils.web_app import safe_parse_webapp_init_data
 from fastapi import APIRouter, Depends, FastAPI, Query, Request, Response
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, ConfigDict, StringConstraints, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, StringConstraints, ValidationError
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from backend.core.logging import exception_summary
+from backend.modules.admin import directory
 from backend.modules.admin.models import REASON_MAX_LENGTH
 from backend.modules.moderation import actions, lookup, review
 from backend.modules.moderation.actions import MODERATION_ROLES
@@ -178,6 +179,37 @@ class ThreadRequest(ReasonRequest):
 class ThreadMediaRequest(ReasonRequest):
     source: Literal[review.Source.CHAT, review.Source.DIRECT]
     item_id: int
+
+
+class UsersQuery(BaseModel):
+    """The user directory's search, filters, sorting, and page, as query parameters.
+    Every value is checked here; anything else is refused."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    query: Annotated[str, StringConstraints(strip_whitespace=True, max_length=64)] | None = None
+    vip: bool | None = None
+    status: Literal["active", "suspended", "banned"] | None = None
+    role: Literal["user", "moderator", "admin"] | None = None
+    active_within_days: Annotated[int, Field(ge=1, le=3650)] | None = None
+    min_chats: Annotated[int, Field(ge=0, le=100_000)] | None = None
+    joined_from: date | None = None
+    joined_to: date | None = None
+    country: Annotated[str, StringConstraints(pattern=r"^[A-Z]{2}$")] | None = None
+    gender: Literal["male", "female", "other"] | None = None
+    min_age: Annotated[int, Field(ge=0, le=150)] | None = None
+    max_age: Annotated[int, Field(ge=0, le=150)] | None = None
+    min_coins: Annotated[int, Field(ge=-10_000_000, le=10_000_000)] | None = None
+    max_coins: Annotated[int, Field(ge=-10_000_000, le=10_000_000)] | None = None
+    min_reports: Annotated[int, Field(ge=0, le=100_000)] | None = None
+    sort: directory.Sort = directory.Sort.NEWEST
+    descending: bool = True
+    page: Annotated[int, Field(ge=0, le=10_000)] = 0
+
+    def filters(self) -> directory.Filters:
+        values = self.model_dump()
+        values["query"] = values["query"] or None
+        return directory.Filters(**values)
 
 
 class MediaRequest(BaseModel):
@@ -434,6 +466,18 @@ def create_router(token: str) -> APIRouter:
             body.item_id,
             body.reason,
         )
+
+    @router.get("/users")
+    async def users(
+        params: Annotated[UsersQuery, Query()], member: Staff, session: Database
+    ) -> directory.Page:
+        """The user directory: admins only; audited with the filters used (D-072)."""
+        admin(member)
+        page = await directory.list_users(
+            session, member.user_id, params.filters(), datetime.now(UTC)
+        )
+        await session.commit()
+        return page
 
     return router
 

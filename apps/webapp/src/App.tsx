@@ -5,6 +5,7 @@ import { ApiError, getJson, type Failure, type Me } from "./api";
 import { Lookup } from "./Lookup";
 import { Queue } from "./Queue";
 import { ReportView } from "./ReportView";
+import { DEFAULT_FILTERS, UsersView, type UserFilters } from "./UsersView";
 import { webApp } from "./telegram";
 
 type State = { kind: "loading" } | { kind: "signedIn"; me: Me } | { kind: Failure };
@@ -12,7 +13,18 @@ type Screen =
   | { name: "queue" }
   | { name: "report"; id: number; back: Screen }
   | { name: "lookup" }
-  | { name: "account"; id: number };
+  | { name: "account"; id: number; back: Screen }
+  | { name: "users" };
+
+type Tab = "reports" | "lookup" | "users";
+
+/** The tab a screen belongs to: a report or account belongs to where it was opened. */
+function tabOf(screen: Screen): Tab {
+  if (screen.name === "report" || screen.name === "account") return tabOf(screen.back);
+  if (screen.name === "lookup") return "lookup";
+  if (screen.name === "users") return "users";
+  return "reports";
+}
 
 const ROLE_LABELS: Record<Me["role"], string> = { moderator: "Moderator", admin: "Admin" };
 
@@ -36,7 +48,7 @@ function startScreen(): Screen {
 /** Where Telegram's back button goes from a screen, if anywhere. */
 function backFrom(screen: Screen): Screen | null {
   if (screen.name === "report") return screen.back;
-  if (screen.name === "account") return { name: "lookup" };
+  if (screen.name === "account") return screen.back;
   return null;
 }
 
@@ -45,6 +57,8 @@ export function App() {
   const [state, setState] = useState<State>(launchData ? { kind: "loading" } : { kind: "reopen" });
   const [screen, setScreen] = useState<Screen>(startScreen);
   const [notice, setNotice] = useState<string | null>(null);
+  // Kept here, so going back from an account to the directory keeps the search.
+  const [userFilters, setUserFilters] = useState<UserFilters>(DEFAULT_FILTERS);
 
   // Sign-in problems end the session; anything else returns to the reports with a
   // notice. Failures within a screen are shown there, with a way to try again.
@@ -83,7 +97,7 @@ export function App() {
     return () => back.offClick(go);
   }, [screen]);
 
-  const tab = screen.name === "lookup" || screen.name === "account" || (screen.name === "report" && screen.back.name === "account") ? "lookup" : "reports";
+  const tab = tabOf(screen);
 
   return (
     <main className="panel">
@@ -127,6 +141,18 @@ export function App() {
             >
               Lookup
             </button>
+            {state.me.role === "admin" && (
+              <button
+                type="button"
+                aria-current={tab === "users" ? "page" : undefined}
+                onClick={() => {
+                  setNotice(null);
+                  setScreen({ name: "users" });
+                }}
+              >
+                Users
+              </button>
+            )}
           </nav>
           {screen.name === "queue" && (
             <Queue
@@ -155,7 +181,19 @@ export function App() {
               launchData={launchData}
               onOpen={(id) => {
                 setNotice(null);
-                setScreen({ name: "account", id });
+                setScreen({ name: "account", id, back: { name: "lookup" } });
+              }}
+              onFailure={fail}
+            />
+          )}
+          {screen.name === "users" && state.me.role === "admin" && (
+            <UsersView
+              launchData={launchData}
+              filters={userFilters}
+              onFilters={setUserFilters}
+              onOpen={(id) => {
+                setNotice(null);
+                setScreen({ name: "account", id, back: { name: "users" } });
               }}
               onFailure={fail}
             />

@@ -15,7 +15,7 @@ from pydantic import SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from redis.asyncio import Redis
 from sqlalchemy import text
-from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
+from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine, AsyncSession, async_sessionmaker
 
 from backend.config.settings import BotSettings, Settings
 from backend.core.redis import create_redis
@@ -78,36 +78,28 @@ def migrated_database_url(integration_settings: IntegrationSettings) -> str:
     return url
 
 
+async def empty_tables(connection: AsyncConnection) -> None:
+    """Empty every table, for a test that starts from nothing. CASCADE covers tables that
+    reference users; app_settings and telegram_deletions reference nothing, so they are
+    listed themselves. The audit log, the coin ledger, and Stars payments refuse TRUNCATE,
+    so those guards are switched off for this transaction only. This runs only against
+    the isolated test database (TEST_DATABASE_URL)."""
+    guarded = ("admin_audit_log", "coin_transactions", "stars_payments")
+    for table in guarded:
+        await connection.execute(text(f"ALTER TABLE {table} DISABLE TRIGGER {table}_no_truncate"))
+    await connection.execute(
+        text("TRUNCATE users, app_settings, telegram_deletions RESTART IDENTITY CASCADE")
+    )
+    for table in guarded:
+        await connection.execute(text(f"ALTER TABLE {table} ENABLE TRIGGER {table}_no_truncate"))
+
+
 @pytest.fixture
 async def db_engine(migrated_database_url: str) -> AsyncIterator[AsyncEngine]:
     engine = create_engine(migrated_database_url)
     async with engine.begin() as connection:
-        # Each test starts from empty tables. CASCADE covers tables that reference
-        # users; app_settings and telegram_deletions reference nothing, so they are
-        # listed themselves. The audit log, the coin ledger, and Stars payments refuse
-        # TRUNCATE, so those guards are switched off for this transaction only. This
-        # runs only against the isolated test database (TEST_DATABASE_URL).
-        await connection.execute(
-            text("ALTER TABLE admin_audit_log DISABLE TRIGGER admin_audit_log_no_truncate")
-        )
-        await connection.execute(
-            text("ALTER TABLE coin_transactions DISABLE TRIGGER coin_transactions_no_truncate")
-        )
-        await connection.execute(
-            text("ALTER TABLE stars_payments DISABLE TRIGGER stars_payments_no_truncate")
-        )
-        await connection.execute(
-            text("TRUNCATE users, app_settings, telegram_deletions RESTART IDENTITY CASCADE")
-        )
-        await connection.execute(
-            text("ALTER TABLE admin_audit_log ENABLE TRIGGER admin_audit_log_no_truncate")
-        )
-        await connection.execute(
-            text("ALTER TABLE coin_transactions ENABLE TRIGGER coin_transactions_no_truncate")
-        )
-        await connection.execute(
-            text("ALTER TABLE stars_payments ENABLE TRIGGER stars_payments_no_truncate")
-        )
+        # Each test starts from empty tables.
+        await empty_tables(connection)
     yield engine
     await engine.dispose()
 
