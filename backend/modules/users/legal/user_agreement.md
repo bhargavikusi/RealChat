@@ -153,7 +153,7 @@ Each paid feature shows its price before you use it. The bot explains when coins
 You can buy coin packs and VIP passes with Telegram Stars from /coins and /vip. Each purchase shows its price and what you get before you pay. Payments are made through Telegram; we never receive your bank or card details. A purchase is delivered once Telegram confirms the payment.
 
 ### 11.2 VIP pass
-A VIP pass is paid once and does not renew. VIP lasts until the end date shown in /vip. Buying another pass while VIP is running adds its days to that end date, and is possible once the remaining time is no longer than one pass. Any coins included with a pass stay in your balance when VIP ends; deleting your account erases them, as section 12.4 explains. While you have VIP, a VIP mark is shown after your nickname; it shows only that VIP was bought in RealChat and does not verify your identity.
+A VIP pass is paid once and does not renew. VIP lasts until the end date shown in /vip. Buying another pass while VIP is running adds its days to that end date, and is possible once the remaining time is no longer than one pass. Any coins included with a pass stay in your balance when VIP ends; deleting your account erases them, as section 12.7 explains. While you have VIP, a VIP mark is shown after your nickname; it shows only that VIP was bought in RealChat and does not verify your identity.
 
 ### 11.3 Refunds
 Purchases of digital goods are final once delivered, except where this Agreement or applicable law says otherwise. If we cannot deliver a purchase, for example because your account was deleted before the payment arrived, we ask Telegram to refund your Stars. We may also refund a purchase at our discretion, and Telegram may refund a payment, for example after a dispute. When a purchase is refunded, the coins it added are removed from your balance (as many as remain), and your VIP is recalculated as if that pass had never been bought.
@@ -164,16 +164,25 @@ For any problem with a purchase, use /paysupport. Telegram's support cannot help
 ## 12. Moderation, suspension, and termination
 
 ### 12.1 Our rights
-We may review reports and content, remove content, and warn, restrict, suspend, or ban any account, at any time, at our sole discretion, with or without notice, including where we believe it has broken this Agreement, put other users at risk, or exposed us to legal risk. Where appropriate, we may also report illegal content or activity to the authorities and share information with them.
+We may review reports and content, remove content, and warn, suspend, or ban any account, at any time, at our sole discretion, with or without notice, including where we believe it has broken this Agreement, put other users at risk, or exposed us to legal risk. We may act on a report or on our own review. Where appropriate, we may also report illegal content or activity to the authorities and share information with them.
 
-### 12.2 No duty to monitor
+### 12.2 Warnings, suspensions, and bans
+A warning tells you that you broke a rule. A suspension restricts your account for a set period and ends by itself when that period is over. A ban restricts your account until we lift it. We may lift a suspension or a ban at any time.
+
+### 12.3 How we review reports
+Decisions are made by our moderators and admins, not automatically. When they review a report, they can see the profile cards of the people involved, the account's past warnings, suspensions, and bans, and the content concerned: for a report about a chat, the stored messages of that chat from both people, including messages sent in Private mode, edits, and photos and other media; for a report about a profile, the direct messages and chat requests between the two people. To investigate abuse, handle an appeal, or comply with the law, an admin may also open an account's stored chats and direct messages outside a report, and must record a reason each time. Every such access is recorded.
+
+### 12.4 Notices and appeals
+When we warn, suspend, or ban your account, or lift a restriction, we tell you in the bot, with the rule concerned and, for a suspension, when it ends. If you think a decision is wrong, you can appeal through the support contact shown in the bot's /help; an admin reviews appeals. The person who reported you is told only that their report was reviewed and whether action followed, never which action.
+
+### 12.5 No duty to monitor
 We may monitor the Service, but we are not obliged to, and we are not responsible for content or conduct we do not detect or act on.
 
-### 12.3 Effect of restriction
-A restricted or banned account loses access to the Service, except for reading this Agreement and our Privacy Policy, getting help with purchases, and deleting the account. Coins and VIP time are not refunded when an account is restricted or banned. A purchase whose payment arrives after a restriction is still delivered, and VIP time keeps running.
+### 12.6 Effect of restriction
+A suspended or banned account loses access to the Service, except for reading this Agreement and our Privacy Policy, getting help with purchases, and deleting the account. If you are in a chat when your account is restricted, the chat ends, and your chat partner is told only that it ended. Coins and VIP time are not refunded when an account is suspended or banned. A purchase whose payment arrives after a restriction is still delivered, and VIP time keeps running.
 
-### 12.4 Deleting your account
-You can delete your account at any time from your profile (Advanced settings), or from the notice shown if your account is restricted, by replying DELETE to the warning. Your profile is erased immediately, along with your coins (including coins you bought), any VIP time left, and your invite link. Coins and VIP time are not refunded. Some records are kept, as explained in our Privacy Policy. A new account does not receive one-time rewards, such as the welcome bonus, again.
+### 12.7 Deleting your account
+You can delete your account at any time from your profile (Advanced settings), or from the notice shown if your account is restricted, by replying DELETE to the warning. Your profile is erased immediately, along with your coins (including coins you bought), any VIP time left, and your invite link. Coins and VIP time are not refunded. Some records are kept, as explained in our Privacy Policy. Deleting your account does not end a suspension or ban. A new account does not receive one-time rewards, such as the welcome bonus, again.
 
 ## 13. Our role and our rights
 

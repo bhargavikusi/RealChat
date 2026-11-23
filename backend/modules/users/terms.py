@@ -16,8 +16,8 @@ from functools import cache
 from pathlib import Path
 from typing import Literal
 
-TERMS_VERSION = "1.0"
-EFFECTIVE_DATE = date(2026, 11, 20)
+TERMS_VERSION = "1.1"
+EFFECTIVE_DATE = date(2026, 11, 23)
 
 LEGAL_DIR = Path(__file__).parent / "legal"
 
