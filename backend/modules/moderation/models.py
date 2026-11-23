@@ -216,7 +216,9 @@ class StaffAlert(Base):
     An urgent report's alerts are written in the transaction that files it, so none is
     lost; a day's summary is written when it is due. Each person gets an urgent report's
     alert, or a day's summary, at most once (unique indexes). A claim moves
-    `next_attempt_at` ahead, as for moderation notices.
+    `next_attempt_at` ahead, as for moderation notices. An alert that failed on every
+    attempt is given up with `sent_at` still NULL: it stays in the partial index on
+    `next_attempt_at` but is never claimed again (`attempts` is at its limit).
     """
 
     __tablename__ = "staff_alerts"

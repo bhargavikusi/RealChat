@@ -164,6 +164,18 @@ async def claim(session: AsyncSession, now: datetime, limit: int) -> list[DueAle
     return alerts
 
 
+async def still_staff(session: AsyncSession, alert_id: int) -> bool:
+    """Whether the alert's recipient is still an active moderator or admin, read just
+    before sending (no transaction is held across the Telegram call, so a change in the
+    instant between this read and the send can still let one alert through)."""
+    found = await session.scalar(
+        select(User.id)
+        .join(StaffAlert, StaffAlert.recipient_user_id == User.id)
+        .where(StaffAlert.id == alert_id, User.role.in_(STAFF_ROLES), User.status == "active")
+    )
+    return found is not None
+
+
 async def open_counts(session: AsyncSession) -> OpenCounts:
     """How many reports are open now, and how many of those are urgent."""
     total, urgent = (

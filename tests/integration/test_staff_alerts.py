@@ -240,3 +240,47 @@ def test_the_summary_text() -> None:
     assert bot_moderation.summary_text(alerts.OpenCounts(3, 0)) == (
         "📋 Open reports: 3.\n\nReview them in 🛡 Moderation."
     )
+
+
+async def test_a_role_removed_mid_batch_stops_the_rest(
+    people: dict[str, int],
+    session_factory: Sessions,
+    bot_settings: BotSettings,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    await _file_urgent(session_factory, people, EARLY)
+    job, telegram = _job(session_factory, bot_settings)
+    real_send = StaffAlerts._send
+
+    async def send_then_demote(self: StaffAlerts, alert: alerts.DueAlert, counts: object) -> bool:
+        done = await real_send(self, alert, counts)  # type: ignore[arg-type]
+        # Right after the first alert goes out, both staff lose their roles.
+        async with session_factory() as session:
+            await session.execute(update(User).values(role="user"))
+            await session.commit()
+        return done
+
+    monkeypatch.setattr(StaffAlerts, "_send", send_then_demote)
+    assert await job.tick(EARLY) == 1
+    assert len(telegram.requests) == 1
+    async with session_factory() as session:
+        unsettled = await session.scalar(
+            select(func.count()).select_from(StaffAlert).where(StaffAlert.sent_at.is_(None))
+        )
+        assert unsettled == 0  # the second was settled without sending
+
+
+async def test_open_reports_are_counted_only_for_a_summary(
+    people: dict[str, int],
+    session_factory: Sessions,
+    bot_settings: BotSettings,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    await _file_urgent(session_factory, people, EARLY)
+
+    async def not_now(session: object) -> alerts.OpenCounts:
+        raise AssertionError("counted without a summary to send")
+
+    monkeypatch.setattr(alerts, "open_counts", not_now)
+    job, _ = _job(session_factory, bot_settings)
+    assert await job.tick(EARLY) == 2  # urgent alerts only: no count needed

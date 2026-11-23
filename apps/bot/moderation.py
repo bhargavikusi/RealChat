@@ -248,17 +248,27 @@ class StaffAlerts:
             await alerts.queue_summary(session, now, hour)
             await session.commit()
             claimed = await alerts.claim(session, now, ALERT_BATCH)
-            counts = await alerts.open_counts(session)
+            # Counted only when a summary is going out, not on every tick.
+            summaries = any(alert.kind == "summary" for alert in claimed)
+            counts = await alerts.open_counts(session) if summaries else None
             await session.commit()
             sent = 0
             for alert in claimed:
+                # Checked again right before sending, so a role removed or an account
+                # restricted while the batch is being sent stops the rest of its alerts.
+                still_staff = await alerts.still_staff(session, alert.id)
+                await session.commit()
+                if not still_staff:
+                    await alerts.mark_sent(session, alert.id, now)
+                    await session.commit()
+                    continue
                 if await self._send(alert, counts):
                     await alerts.mark_sent(session, alert.id, now)
                     await session.commit()
                     sent += 1
         return sent
 
-    async def _send(self, alert: alerts.DueAlert, counts: alerts.OpenCounts) -> bool:
+    async def _send(self, alert: alerts.DueAlert, counts: alerts.OpenCounts | None) -> bool:
         """Send one alert; True if it is done with (sent, or never deliverable)."""
         if alert.kind == "urgent" and alert.filed_at is not None:
             text = URGENT_ALERT.format(
@@ -266,8 +276,10 @@ class StaffAlerts:
                 at=f"{alert.filed_at:%H:%M}",
             )
             markup = self._button(alert.report_id)
-        else:
+        elif counts is not None:
             text, markup = summary_text(counts), self._button(None)
+        else:
+            return False  # not reached: counts are loaded whenever a summary is claimed
         try:
             await self._bot.send_message(alert.telegram_user_id, text, reply_markup=markup)
         except TelegramAPIError as exc:
