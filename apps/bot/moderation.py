@@ -4,6 +4,9 @@ The account acted on is told the action and the rule, with how to appeal through
 support contact; the reporter is told only that the report was reviewed, and whether
 action followed, never which; and the partner in a chat the action ended is told the
 chat ended, without the reason. The job also lifts suspensions that have ended.
+
+`StaffAlerts` sends moderators and admins their alerts: urgent reports and the daily
+summary of open reports.
 """
 
 import logging
@@ -11,7 +14,7 @@ from datetime import datetime
 
 from aiogram import Bot
 from aiogram.exceptions import TelegramAPIError
-from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
+from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, WebAppInfo
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from apps.bot.account import DELETE_BUTTON, AccountAction
@@ -21,7 +24,8 @@ from apps.bot.payments import vip_date
 from apps.bot.relay import unreachable
 from backend.config.settings import BotSettings
 from backend.core.logging import exception_summary
-from backend.modules.moderation import actions, service
+from backend.modules.admin.settings import RuntimeSettings, SettingKey
+from backend.modules.moderation import actions, alerts, service
 from backend.modules.moderation.actions import DueNotice
 
 logger = logging.getLogger(__name__)
@@ -179,3 +183,94 @@ class ModerationNotices:
             await send_menu(self._bot, chat_id, price)
         except TelegramAPIError as exc:
             logger.warning("could not send the new-chat menu", extra=exception_summary(exc))
+
+
+# --- Alerts to moderators and admins -------------------------------------------------
+
+ALERT_BATCH = 50
+URGENT_ALERT = "🚨 Urgent report: {reason} · filed {at} UTC.\n\nOpen it in 🛡 Moderation."
+SUMMARY_ALERT = "📋 Open reports: {open}{urgent}.\n\nReview them in 🛡 Moderation."
+OPEN_REPORT_BUTTON = "🛡 Open report"
+OPEN_PANEL_BUTTON = "🛡 Open Moderation"
+# The report reasons as the panel names them.
+REASON_LABELS = {
+    "spam": "Spam or scam",
+    "harassment": "Harassment or hate",
+    "sexual": "Sexual content without consent",
+    "under_18": "Appears under 18",
+    "threats": "Threats or violence",
+    "other": "Other",
+}
+
+
+def summary_text(counts: alerts.OpenCounts) -> str:
+    urgent = f" ({counts.urgent} urgent)" if counts.urgent else ""
+    return SUMMARY_ALERT.format(open=counts.open, urgent=urgent)
+
+
+class StaffAlerts:
+    """Sends moderators and admins their alerts (D-071): urgent reports, queued when
+    filed, and the daily summary of open reports, queued here once its hour has passed
+    (an admin setting, India time). Runs in the worker.
+
+    Alerts carry no chat content, report details, or profiles. With a public address,
+    each has a button that opens the moderation Mini App, on the report for an urgent
+    one. Failures are retried a few times; someone who blocked the bot is given up on.
+    """
+
+    def __init__(
+        self,
+        bot: Bot,
+        sessions: async_sessionmaker[AsyncSession],
+        settings: BotSettings,
+        runtime_settings: RuntimeSettings,
+    ) -> None:
+        self._bot = bot
+        self._sessions = sessions
+        self._base = settings.public_base_url
+        self._runtime = runtime_settings
+
+    def _button(self, report_id: int | None) -> InlineKeyboardMarkup | None:
+        if self._base is None:
+            return None
+        url = f"{str(self._base).rstrip('/')}/moderation/"
+        if report_id is not None:
+            url += f"?report={report_id}"
+        text = OPEN_PANEL_BUTTON if report_id is None else OPEN_REPORT_BUTTON
+        return InlineKeyboardMarkup(
+            inline_keyboard=[[InlineKeyboardButton(text=text, web_app=WebAppInfo(url=url))]]
+        )
+
+    async def tick(self, now: datetime) -> int:
+        """Queue today's summary if due, then send one batch; returns how many were sent."""
+        async with self._sessions() as session:
+            hour = await self._runtime.get(session, SettingKey.REPORT_SUMMARY_HOUR)
+            await alerts.queue_summary(session, now, hour)
+            await session.commit()
+            claimed = await alerts.claim(session, now, ALERT_BATCH)
+            counts = await alerts.open_counts(session)
+            await session.commit()
+            sent = 0
+            for alert in claimed:
+                if await self._send(alert, counts):
+                    await alerts.mark_sent(session, alert.id, now)
+                    await session.commit()
+                    sent += 1
+        return sent
+
+    async def _send(self, alert: alerts.DueAlert, counts: alerts.OpenCounts) -> bool:
+        """Send one alert; True if it is done with (sent, or never deliverable)."""
+        if alert.kind == "urgent" and alert.filed_at is not None:
+            text = URGENT_ALERT.format(
+                reason=REASON_LABELS.get(str(alert.reason), str(alert.reason)),
+                at=f"{alert.filed_at:%H:%M}",
+            )
+            markup = self._button(alert.report_id)
+        else:
+            text, markup = summary_text(counts), self._button(None)
+        try:
+            await self._bot.send_message(alert.telegram_user_id, text, reply_markup=markup)
+        except TelegramAPIError as exc:
+            logger.info("could not send a staff alert", extra=exception_summary(exc))
+            return unreachable(exc)
+        return True

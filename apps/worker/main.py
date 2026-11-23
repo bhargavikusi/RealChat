@@ -16,7 +16,8 @@ were not answered in time or were interrupted, telling the users (D-058); and fi
 refunding activity alerts, telling the buyers (D-059); and sending daily reward
 reminders that are due (D-060); and retrying refunds of Stars payments still owed
 (D-061); and sending what moderation actions owe people and lifting suspensions that
-have ended (D-071).
+have ended, and alerting moderators and admins to urgent reports and the day's open
+reports (D-071).
 """
 
 import asyncio
@@ -31,7 +32,7 @@ from apps.bot.avatars import Avatars
 from apps.bot.chat import ChatNotifier
 from apps.bot.chat_requests import RequestNotices
 from apps.bot.main import create_bot
-from apps.bot.moderation import ModerationNotices
+from apps.bot.moderation import ModerationNotices, StaffAlerts
 from apps.bot.payments import RefundRetries
 from apps.bot.private import PrivateModeNotifier, TelegramDeletions
 from apps.bot.reminders import ReminderMessages
@@ -132,6 +133,7 @@ async def run() -> None:
     deletions = TelegramDeletions(bot, sessions)
     refunds = RefundRetries(bot, sessions)
     moderation = ModerationNotices(bot, sessions, settings)
+    staff_alerts = StaffAlerts(bot, sessions, settings, runtime_settings)
     stop = asyncio.Event()
     loop = asyncio.get_running_loop()
     for signum in (signal.SIGINT, signal.SIGTERM):
@@ -154,6 +156,7 @@ async def run() -> None:
                 ("daily reward reminders", reminders.tick, REMINDERS_SECONDS),
                 ("payment refunds", refunds.tick, REFUNDS_SECONDS),
                 ("moderation", moderation.tick, MODERATION_SECONDS),
+                ("staff alerts", staff_alerts.tick, MODERATION_SECONDS),
             ),
             stop,
         )

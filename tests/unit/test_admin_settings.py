@@ -42,6 +42,7 @@ def test_approved_defaults() -> None:
         SettingKey.ACTIVITY_ALERT_COINS: 1,
         SettingKey.ACTIVITY_ALERT_DAYS: 7,
         SettingKey.REMINDER_LOCAL_HOUR: 18,
+        SettingKey.REPORT_SUMMARY_HOUR: 9,
         SettingKey.PACK_1_COINS: 150,
         SettingKey.PACK_1_STARS: 80,
         SettingKey.PACK_2_COINS: 350,

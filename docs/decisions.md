@@ -840,7 +840,7 @@ Work happens on short-lived issue branches, such as `feature/12-onboarding`, cre
 * Notifications:
   * The user acted on gets a notice naming the rule, the end time for suspensions, and how to appeal through the support contact. A lifted user is told the restriction was lifted.
   * The reporter is told the report was reviewed, plus "and taken action" when there was one, never which action.
-  * Urgent reports are sent to every moderator and admin at once. Other reports are counted in a daily summary. Neither contains chat content.
+  * Urgent reports are sent to every moderator and admin at once. Other reports are counted in a daily summary, sent at an hour set by admins (India time, default 09:00) when any report is open. Neither contains chat content, report details, or anyone's profile. Someone who is no longer an active moderator or admin when an alert is sent doesn't get it. With a public address, an urgent alert opens the Mini App on that report.
 
 **Why:** Owner decisions (requirements §19), choosing a web panel over in-bot screens, Mini App sign-in over a login link, and least privilege for opening chats without a report.
 

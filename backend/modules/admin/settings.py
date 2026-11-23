@@ -48,6 +48,7 @@ class SettingKey(StrEnum):
     ACTIVITY_ALERT_COINS = "activity_alert_coins"
     ACTIVITY_ALERT_DAYS = "activity_alert_days"
     REMINDER_LOCAL_HOUR = "reminder_local_hour"
+    REPORT_SUMMARY_HOUR = "report_summary_hour"
     PACK_1_COINS = "pack_1_coins"
     PACK_1_STARS = "pack_1_stars"
     PACK_2_COINS = "pack_2_coins"
@@ -326,6 +327,16 @@ SPECS: dict[SettingKey, SettingSpec] = {
             default=18,
             minimum=0,
             maximum=23,
+        ),
+        # D-071: when moderators and admins get the day's summary of open reports.
+        SettingSpec(
+            SettingKey.REPORT_SUMMARY_HOUR,
+            "Daily open-reports summary: hour",
+            "o'clock",
+            default=9,
+            minimum=0,
+            maximum=23,
+            note="India time",
         ),
         *(
             spec

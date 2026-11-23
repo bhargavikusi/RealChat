@@ -547,3 +547,24 @@ describe("account lookup", () => {
     expect(screen.getByRole("region", { name: "Open reports" })).toBeTruthy();
   });
 });
+
+describe("opening from an alert", () => {
+  afterEach(() => window.history.replaceState(null, "", "/"));
+
+  it("opens the report named in the address, and Back returns to the queue", async () => {
+    window.history.replaceState(null, "", "/moderation/?report=7");
+    serve(defaultHandler);
+    render(<App />);
+    expect(await screen.findByRole("article", { name: "Report 7" })).toBeTruthy();
+    const back = vi.mocked(window.Telegram?.WebApp?.BackButton?.onClick ?? vi.fn()).mock.calls.at(-1)?.[0];
+    act(() => back?.());
+    expect(await screen.findByRole("region", { name: "Open reports" })).toBeTruthy();
+  });
+
+  it("ignores an address that isn't a report id", async () => {
+    window.history.replaceState(null, "", "/moderation/?report=abc");
+    serve(defaultHandler);
+    render(<App />);
+    expect(await screen.findByRole("region", { name: "Open reports" })).toBeTruthy();
+  });
+});
