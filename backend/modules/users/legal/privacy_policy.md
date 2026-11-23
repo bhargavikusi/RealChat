@@ -35,13 +35,16 @@ Direct messages you send or receive from profile cards (their text or caption, a
 ### 3.5 Interactions with other users
 Profile cards you visit and who visits yours, likes you give and receive, blocks you make and receive, reports you make and receive (including any details you write in a report), and activity alerts you set or that others set about you.
 
-### 3.6 Coins and purchases
+### 3.6 Moderation
+The outcome of reports you make or receive, and any warnings, suspensions, and bans on your account, with the rule concerned and the dates. We also record each time a moderator or admin looks up your account or opens your stored messages, and an admin's reason for opening them.
+
+### 3.7 Coins and purchases
 Your coin balance and every change to it, holds on coins for features in progress, and your purchases: what you bought, the price in Telegram Stars, Telegram's charge identifier, whether a purchase was refunded, and your VIP end date. Payments are handled by Telegram; we never receive your bank or card details.
 
-### 3.7 Activity and settings
+### 3.8 Activity and settings
 When you last used the Service (your RealChat activity, never your Telegram online status), your notification and privacy settings, the versions of this Privacy Policy and our User Agreement you accepted and when, your invite link and who joined through it, and, while daily rewards are offered, when you claim them, to time reminders.
 
-### 3.8 Technical data
+### 3.9 Technical data
 Our servers keep short-lived technical data to run the Service, such as which step of setup you are on and protection against message flooding. Our logs record events and errors without message content.
 
 ## 4. How we use your data and why
@@ -60,21 +63,24 @@ We process your data on the basis of the consent you give when you tap "Continue
 
 Before you tap "Continue", we store only what is needed to show you this Privacy Policy and our User Agreement and to record your acceptance: your Telegram user ID, an empty profile with your RealChat ID, the step of setup you are on, and, if you started RealChat through an invite link, who invited you. If you do not continue, you can ask us to delete it through the support contact shown in the bot's /help.
 
-Some of this processing is automatic: matching pairs users without anyone choosing who you meet, and automatic filters block links, contact details, and flooding in chats. Decisions to restrict or ban an account are made by people reviewing reports.
+Some of this processing is automatic: matching pairs users without anyone choosing who you meet, and automatic filters block links, contact details, and flooding in chats. Decisions to warn, suspend, or ban an account are made by people, our moderators and admins, from a report or their own review. A suspension ends by itself at the end of its period.
 
 ## 5. Who can see your data
 
 ### 5.1 Other users
 Other users see only what the Service shows them: your profile card (nickname, age, gender, country, and any city, bio, photo, and RealChat ID), the messages you send them, and, where the feature applies, that you visited or liked their profile, sent them a direct message, or sent them a chat request. People you block or report are only told that a chat ended.
 
-### 5.2 Service providers
+### 5.2 Our moderators and admins
+Our moderators and admins see what they need to keep the Service safe. When they review a report, they can see the profile cards of the people involved, the account's moderation record, and the content concerned: the stored messages of the reported chat from both people, including Private mode messages, edits, and media, or, for a report about a profile, the direct messages and chat requests between the two people. They can look up an account by its RealChat ID and see its profile card, status, moderation record, and the reports it made and received. Only admins can open an account's stored chats and direct messages outside a report, and only after recording a reason, to investigate abuse, handle an appeal, or comply with the law. Photos and other media are shown to them by having our bot send a copy to their own Telegram chat, protected from forwarding and saving in Telegram apps that honour that setting, which our bot then tries to delete about 10 minutes later. Every look-up and every opening of stored messages or media is recorded in our audit log. They never see your Telegram name, username, or phone number.
+
+### 5.3 Service providers
 - Telegram: every message and button press passes through Telegram, which processes it under its own privacy policy. Purchases with Telegram Stars are processed by Telegram.
 - Hosting: our servers and databases are hosted on Oracle Cloud Infrastructure in India.
 
-### 5.3 Legal requirements
+### 5.4 Legal requirements
 We may disclose data where we are required to by law, by a court order, or by a lawful request from a government authority, or where it is necessary to prevent serious harm, investigate abuse, or protect our rights or the safety of users.
 
-### 5.4 Transfer of the Service
+### 5.5 Transfer of the Service
 If the Service is transferred to another operator, your data may be transferred with it, subject to this Privacy Policy.
 
 ## 6. Information you share with other users
@@ -99,7 +105,7 @@ Profile visits are deleted automatically after a set period. Past chats are list
 Your profile and settings are kept while your account exists. When you delete your account, we immediately erase your profile (including your nickname, age, gender, country, city, bio, photo, change history, and RealChat ID), your coins, any VIP time, your settings, your past chats list and visitors, your invite link, and your acceptances of our terms.
 
 ### 8.4 What we keep after deletion
-After deletion, we keep a minimal record (your Telegram user ID, account status, and dates) so that restrictions cannot be avoided by signing up again, together with blocks and reports you made or received, records of coin changes and purchases needed for accounting and to handle payments and refunds, and records of administrative actions. Messages are still deleted at the end of their retention period.
+After deletion, we keep a minimal record (your Telegram user ID, account status, and dates) so that restrictions cannot be avoided by signing up again, together with blocks and reports you made or received, warnings, suspensions, and bans on your account, records of coin changes and purchases needed for accounting and to handle payments and refunds, and records of administrative actions, including the audit log of who looked up accounts or opened stored messages. A suspension or ban stays in force after deletion. Messages are still deleted at the end of their retention period.
 
 ## 9. How we protect your data
 
