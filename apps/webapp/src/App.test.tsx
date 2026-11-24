@@ -727,11 +727,65 @@ const YEARLY = {
   ],
 };
 
+const NO_REPORTS = { spam: 0, harassment: 0, sexual: 0, under_18: 0, threats: 0, other: 0 };
+const NO_ACTIONS = { close: 0, warn: 0, suspend: 0, ban: 0, lift: 0 };
+
+const MODERATION = {
+  period: "30d",
+  bucket_days: 1,
+  buckets: [
+    { start: "2026-11-21", reports: { ...NO_REPORTS, spam: 2 } },
+    { start: "2026-11-22", reports: { ...NO_REPORTS, harassment: 1, other: 3 } },
+  ],
+  backlog: { open: 4, urgent: 1, oldest_open_at: "2026-11-12T06:30:00Z" },
+  handling: { closed: 2, action_taken: 1, no_action: 1, median_seconds: 738000, longest_seconds: 1468800 },
+  moderators: [
+    { nickname: "Mod Max", public_id: "mmmmmmm", actions: { ...NO_ACTIONS, warn: 2, ban: 1 }, total: 3 },
+    { nickname: null, public_id: null, actions: { ...NO_ACTIONS, close: 1 }, total: 1 },
+  ],
+  most_reported: [
+    { id: 42, nickname: "Moon Child", public_id: "abcdefg", status: "banned", reports: 3, open: 1, findable: true },
+    { id: 43, nickname: null, public_id: null, status: "deleted", reports: 1, open: 1, findable: false },
+  ],
+};
+
+const NO_REFUNDS = { account_deleted: 0, admin: 0, telegram: 0 };
+
+const REVENUE = {
+  period: "30d",
+  bucket_days: 1,
+  buckets: [
+    {
+      start: "2026-11-21",
+      coin_stars: 100,
+      vip_stars: 780,
+      coin_packs: 1,
+      vip_passes: 1,
+      first_vip: 1,
+      refunds: NO_REFUNDS,
+      refunded_stars: 0,
+    },
+    {
+      start: "2026-11-22",
+      coin_stars: 250,
+      vip_stars: 0,
+      coin_packs: 2,
+      vip_passes: 0,
+      first_vip: 0,
+      refunds: { ...NO_REFUNDS, admin: 1, telegram: 2 },
+      refunded_stars: 300,
+    },
+  ],
+  totals: { stars: 5000, refunds_due: 1, refunds_due_stars: 780, vip_buyers: 3, repeat_vip_buyers: 1, onboarded: 40 },
+};
+
 function analyticsHandler(role: "moderator" | "admin") {
   return (path: string, init: RequestInit): { status: number; body: unknown } => {
     if (path.startsWith("/api/moderation/analytics/growth?")) {
       return { status: 200, body: path.endsWith("period=12m") ? YEARLY : GROWTH };
     }
+    if (path.startsWith("/api/moderation/analytics/moderation?")) return { status: 200, body: MODERATION };
+    if (path.startsWith("/api/moderation/analytics/revenue?")) return { status: 200, body: REVENUE };
     return lookupHandler(role)(path, init);
   };
 }
@@ -785,5 +839,128 @@ describe("analytics", () => {
     expect(weeks[0]).toMatch(/^Week of .*2025/);
     expect(weeks[1]).toMatch(/^Week of .*2026/);
     expect(tableCells("Active users")).toEqual(["20", "20", "40", "21", "21", "41"]);
+  });
+
+  it("shows moderation figures, and opens a most-reported account and comes back", async () => {
+    serve(analyticsHandler("admin"));
+    const user = userEvent.setup();
+    render(<App />);
+    await user.click(await screen.findByRole("button", { name: "Analytics" }));
+    await screen.findByRole("list", { name: "Now" });
+    await user.selectOptions(screen.getByLabelText("Period"), "7d");
+    await user.click(screen.getByRole("button", { name: "Moderation" }));
+    expect(screen.getByRole("button", { name: "Moderation" }).getAttribute("aria-pressed")).toBe("true");
+    await waitFor(() => expect(calls.at(-1)?.path).toBe("/api/moderation/analytics/moderation?period=7d"));
+
+    const now = await screen.findByRole("list", { name: "Now" });
+    expect(within(now).getAllByRole("listitem").map((item) => item.textContent)).toContain("4 open reports");
+    const decisions = within(screen.getByRole("list", { name: "Decisions in the period" }))
+      .getAllByRole("listitem")
+      .map((item) => item.textContent);
+    expect(decisions).toContain("8 d 13 h median time to a decision");
+    expect(decisions).toContain("17 d longest time to a decision");
+    // Reasons in order: spam, harassment, sexual, under 18, threats, other.
+    expect(tableCells("Reports by reason")).toEqual(["2", "0", "0", "0", "0", "0", "0", "1", "0", "0", "0", "3"]);
+    // Warnings, suspensions, bans, lifted, closed, total.
+    expect(tableCells("Actions by moderator")).toEqual(["2", "0", "1", "0", "0", "3", "0", "0", "0", "0", "1", "1"]);
+    const moderators = screen.getByRole("region", { name: "Actions by moderator" });
+    expect(within(moderators).getAllByRole("rowheader").map((cell) => cell.textContent)).toEqual([
+      "Mod Max · mmmmmmm",
+      "Deleted account",
+    ]);
+
+    const reported = screen.getByRole("region", { name: "Most-reported accounts" });
+    // A deleted account is listed but can't be opened.
+    expect(within(reported).getByText("Deleted account")).toBeTruthy();
+    expect(within(reported).getAllByRole("button")).toHaveLength(1);
+    await user.click(within(reported).getByRole("button", { name: /Moon Child · abcdefg/ }));
+    await screen.findByRole("article", { name: "Account 42" });
+    expect(screen.queryByRole("region", { name: "Most-reported accounts" })).toBeNull();
+    expect(screen.getByRole("button", { name: "Analytics" }).getAttribute("aria-current")).toBe("page");
+
+    const back = vi.mocked(window.Telegram?.WebApp?.BackButton?.onClick ?? vi.fn()).mock.calls.at(-1)?.[0];
+    act(() => back?.());
+    // The same dashboard and period as before.
+    await screen.findByRole("region", { name: "Most-reported accounts" });
+    expect(screen.getByRole("button", { name: "Moderation" }).getAttribute("aria-pressed")).toBe("true");
+    expect((screen.getByLabelText("Period") as HTMLSelectElement).value).toBe("7d");
+    expect(calls.at(-1)?.path).toBe("/api/moderation/analytics/moderation?period=7d");
+  });
+
+  it("shows revenue, refunds, and VIP conversion", async () => {
+    serve(analyticsHandler("admin"));
+    const user = userEvent.setup();
+    render(<App />);
+    await user.click(await screen.findByRole("button", { name: "Analytics" }));
+    await screen.findByRole("list", { name: "Now" });
+    await user.selectOptions(screen.getByLabelText("Period"), "7d");
+    await user.click(screen.getByRole("button", { name: "Revenue" }));
+    await waitFor(() => expect(calls.at(-1)?.path).toBe("/api/moderation/analytics/revenue?period=7d"));
+
+    const period = await screen.findByRole("list", { name: "In the period" });
+    expect(within(period).getAllByRole("listitem").map((item) => item.textContent)).toEqual([
+      "⭐ 1130 Stars paid and kept",
+      "⭐ 300 Stars refunded",
+    ]);
+    const allTime = within(screen.getByRole("list", { name: "All time" }))
+      .getAllByRole("listitem")
+      .map((item) => item.textContent);
+    expect(allTime).toContain("7.5% of onboarded accounts have bought VIP (3 of 40)");
+    expect(allTime).toContain("1 refund due (⭐ 780)");
+    expect(tableCells("Stars paid")).toEqual(["100", "780", "250", "0"]);
+    expect(tableCells("Purchases")).toEqual(["1", "1", "2", "0"]);
+    expect(tableCells("First-time VIP buyers")).toEqual(["1", "0"]);
+    // By an admin, by Telegram, account deleted.
+    expect(tableCells("Refunds")).toEqual(["0", "0", "0", "1", "2", "0"]);
+    expect(tableCells("Stars refunded")).toEqual(["0", "300"]);
+  });
+
+  it("offers to try again when a dashboard can't be loaded", async () => {
+    let failing = true;
+    serve((path, init) =>
+      path.startsWith("/api/moderation/analytics/revenue?") && failing
+        ? { status: 500, body: { error: "error" } }
+        : analyticsHandler("admin")(path, init),
+    );
+    const user = userEvent.setup();
+    render(<App />);
+    await user.click(await screen.findByRole("button", { name: "Analytics" }));
+    await screen.findByRole("list", { name: "Now" });
+    await user.click(screen.getByRole("button", { name: "Revenue" }));
+    expect(await screen.findByText("The analytics couldn't be loaded.")).toBeTruthy();
+    // The growth figures loaded before aren't shown for revenue.
+    expect(screen.queryByRole("list", { name: "Now" })).toBeNull();
+    failing = false;
+    await user.click(screen.getByRole("button", { name: "Try again" }));
+    expect(await screen.findByRole("list", { name: "All time" })).toBeTruthy();
+  });
+
+  it("never shows earlier figures next to a failure for the same dashboard", async () => {
+    let failing = false;
+    let hold: (() => void) | null = null;
+    const respond = analyticsHandler("admin");
+    serve((path, init) => {
+      if (path.startsWith("/api/moderation/analytics/revenue?") && failing) return { status: 500, body: { error: "error" } };
+      return respond(path, init);
+    });
+    // Moderation's response is held, so Growth's earlier result is still the latest one
+    // loaded when Growth is chosen again.
+    const plain = vi.mocked(fetch).getMockImplementation();
+    vi.mocked(fetch).mockImplementation(async (input, init) => {
+      if (String(input).includes("/analytics/moderation?")) await new Promise<void>((resolve) => (hold = resolve));
+      return plain ? plain(input, init) : new Response("{}");
+    });
+    const user = userEvent.setup();
+    render(<App />);
+    await user.click(await screen.findByRole("button", { name: "Analytics" }));
+    await screen.findByRole("list", { name: "Now" });
+    await user.click(screen.getByRole("button", { name: "Revenue" }));
+    await screen.findByRole("list", { name: "All time" });
+    failing = true;
+    await user.click(screen.getByRole("button", { name: "Moderation" }));
+    await user.click(screen.getByRole("button", { name: "Revenue" }));
+    expect(await screen.findByText("The analytics couldn't be loaded.")).toBeTruthy();
+    expect(screen.queryByRole("list", { name: "All time" })).toBeNull();
+    act(() => hold?.());
   });
 });

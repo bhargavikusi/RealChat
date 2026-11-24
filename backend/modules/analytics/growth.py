@@ -10,35 +10,23 @@ from when that table was added.
 import logging
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
-from enum import StrEnum
-from zoneinfo import ZoneInfo
 
 from redis.asyncio import Redis
-from sqlalchemy import Date, Integer, cast, delete, func, literal, literal_column, select
+from sqlalchemy import Date, delete, func, literal_column, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
-from sqlalchemy.orm import InstrumentedAttribute
 from sqlalchemy.sql.elements import ColumnElement
 
+from backend.modules.analytics.periods import SPANS, ZONE, Period, Window, india_day
 from backend.modules.moderation.review import audit
 from backend.modules.payments.models import StarsInvoice, StarsPayment
 from backend.modules.users.models import Profile, User, UserActivityDay
 
+__all__ = ["SPANS", "ZONE", "Period", "growth"]
+
 logger = logging.getLogger(__name__)
 
-ZONE = ZoneInfo("Asia/Kolkata")
 # How long the days a user was active are kept (owner decision).
 ACTIVITY_DAYS_KEPT = 400
-
-
-class Period(StrEnum):
-    WEEK = "7d"
-    MONTH = "30d"
-    QUARTER = "90d"
-    YEAR = "12m"
-
-
-# Days covered, and the bucket size in days (a year is shown by week).
-SPANS = {Period.WEEK: (7, 1), Period.MONTH: (30, 1), Period.QUARTER: (90, 1), Period.YEAR: (364, 7)}
 
 
 @dataclass(frozen=True)
@@ -70,28 +58,13 @@ class Growth:
     totals: Totals
 
 
-def _india_day(
-    column: InstrumentedAttribute[datetime] | InstrumentedAttribute[datetime | None],
-) -> ColumnElement[date]:
-    """A timestamp column as its India calendar date."""
-    return cast(func.timezone("Asia/Kolkata", column), Date)
-
-
 async def _per_bucket(
-    session: AsyncSession,
-    day: ColumnElement[date],
-    *where: ColumnElement[bool],
-    first: date,
-    size: int,
+    session: AsyncSession, window: Window, day: ColumnElement[date], *where: ColumnElement[bool]
 ) -> dict[date, int]:
-    """Counts by bucket start for rows whose India day falls in the period. In
-    PostgreSQL, a date minus a date is a number of days, and a date plus a number of
-    days is a date."""
-    start = literal(first, Date)
-    bucket = start + cast(day - start, Integer) // size * size
+    """Counts by bucket start for rows whose India day falls in the window."""
     rows = await session.execute(
-        select(cast(bucket, Date), func.count())
-        .where(day >= start, *where)
+        select(window.bucket(day), func.count())
+        .where(window.contains(day), *where)
         .group_by(literal_column("1"))
     )
     return {row[0]: int(row[1]) for row in rows.all()}
@@ -101,28 +74,22 @@ async def growth(
     session: AsyncSession, actor_user_id: int, period: Period, now: datetime
 ) -> Growth:
     """The growth figures for `period`, ending today (India). The view is audited."""
-    today = now.astimezone(ZONE).date()
-    days, size = SPANS[period]
-    first = today - timedelta(days=days - 1)
-    starts = [first + timedelta(days=offset) for offset in range(0, days, size)]
-
-    signups = await _per_bucket(session, _india_day(User.created_at), first=first, size=size)
+    window = Window.of(period, now)
+    signups = await _per_bucket(session, window, india_day(User.created_at))
     onboarded = await _per_bucket(
         session,
-        _india_day(Profile.onboarding_completed_at),
+        window,
+        india_day(Profile.onboarding_completed_at),
         Profile.onboarding_completed_at.is_not(None),
-        first=first,
-        size=size,
     )
     vip = await _per_bucket(
         session,
-        _india_day(StarsPayment.created_at),
+        window,
+        india_day(StarsPayment.created_at),
         StarsPayment.status == "paid",
         StarsPayment.invoice_id.in_(select(StarsInvoice.id).where(StarsInvoice.product == "vip")),
-        first=first,
-        size=size,
     )
-    active = await _active(session, starts, size)
+    active = await _active(session, window.starts, window.size)
 
     buckets = [
         Bucket(
@@ -134,10 +101,10 @@ async def growth(
             active_7d=active[start][1],
             active_30d=active[start][2],
         )
-        for start in starts
+        for start in window.starts
     ]
     session.add(audit(actor_user_id, "analytics_viewed", None, f"growth {period.value}"))
-    return Growth(period.value, size, buckets, await _totals(session, today, now))
+    return Growth(period.value, window.size, buckets, await _totals(session, window.today, now))
 
 
 async def _active(
