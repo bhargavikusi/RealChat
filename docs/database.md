@@ -333,7 +333,7 @@ The India days on which each account used RealChat (D-072), for active-user anal
 | `user_id` | bigint | References `users.id` (cascade). Part of the primary key. |
 | `day` | date | An India calendar day. Part of the primary key, so each day is recorded once. |
 
-Written by `users.record_activity` together with `users.last_active_at`, so at most once a minute per account, and only for active accounts. Deleted after 400 days by a daily worker job (`ActivityRetention`, `retention:user_activity_days:last_run` in Redis) and erased by account deletion. The index on `day` serves the daily counts and the cleanup.
+At most one row per account per India day. Written by the activity middleware (`users.record_active_day`) the first time each process sees an active account each day, only once the account has accepted the terms; that is separate from `users.last_active_at`, which is updated at most once a minute. Deleted after 400 days by a daily worker job (`ActivityRetention`, `retention:user_activity_days:last_run` in Redis) and erased by account deletion. The index on `day` serves the daily counts and the cleanup.
 
 ### `staff_alerts`
 

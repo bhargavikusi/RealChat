@@ -717,11 +717,28 @@ const GROWTH = {
   },
 };
 
+const YEARLY = {
+  ...GROWTH,
+  period: "12m",
+  bucket_days: 7,
+  buckets: [
+    { start: "2025-12-29", signups: 4, onboarded: 3, vip_purchases: 2, active: 20, active_7d: 20, active_30d: 40 },
+    { start: "2026-01-05", signups: 5, onboarded: 4, vip_purchases: 1, active: 21, active_7d: 21, active_30d: 41 },
+  ],
+};
+
 function analyticsHandler(role: "moderator" | "admin") {
   return (path: string, init: RequestInit): { status: number; body: unknown } => {
-    if (path.startsWith("/api/moderation/analytics/growth?")) return { status: 200, body: GROWTH };
+    if (path.startsWith("/api/moderation/analytics/growth?")) {
+      return { status: 200, body: path.endsWith("period=12m") ? YEARLY : GROWTH };
+    }
     return lookupHandler(role)(path, init);
   };
+}
+
+function tableCells(region: string): (string | null)[] {
+  const chart = screen.getByRole("region", { name: region });
+  return within(within(chart).getByRole("table")).getAllByRole("cell").map((cell) => cell.textContent);
 }
 
 describe("analytics", () => {
@@ -755,12 +772,18 @@ describe("analytics", () => {
     expect(figures).toContain("1 banned");
     expect(calls.at(-1)?.path).toBe("/api/moderation/analytics/growth?period=30d");
 
-    const signups = screen.getByRole("region", { name: "Sign-ups and finished onboardings" });
-    const table = within(signups).getByRole("table");
-    const cells = within(table).getAllByRole("cell").map((cell) => cell.textContent);
-    expect(cells).toEqual(["2", "1", "7", "6"]);
+    expect(tableCells("Sign-ups and finished onboardings")).toEqual(["2", "1", "7", "6"]);
+    expect(tableCells("Active users")).toEqual(["3", "4", "5", "8", "9", "10"]);
+    expect(tableCells("VIP passes bought")).toEqual(["0", "1"]);
+    expect(figures).toContain("9 active in the last 7 days");
 
     await user.selectOptions(screen.getByLabelText("Period"), "12m");
     await waitFor(() => expect(calls.at(-1)?.path).toBe("/api/moderation/analytics/growth?period=12m"));
+    // Weeks, with their year, across New Year.
+    const signups = await screen.findByRole("region", { name: "Sign-ups and finished onboardings" });
+    const weeks = within(within(signups).getByRole("table")).getAllByRole("rowheader").map((cell) => cell.textContent);
+    expect(weeks[0]).toMatch(/^Week of .*2025/);
+    expect(weeks[1]).toMatch(/^Week of .*2026/);
+    expect(tableCells("Active users")).toEqual(["20", "20", "40", "21", "21", "41"]);
   });
 });

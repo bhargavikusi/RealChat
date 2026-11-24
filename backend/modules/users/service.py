@@ -10,7 +10,7 @@ from datetime import date, datetime, timedelta
 from enum import StrEnum
 from zoneinfo import ZoneInfo
 
-from sqlalchemy import delete, func, or_, select, update
+from sqlalchemy import Date, delete, exists, func, literal, or_, select, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -100,14 +100,12 @@ ACTIVITY_ZONE = ZoneInfo("Asia/Kolkata")
 async def record_activity(
     session: AsyncSession, telegram_user_id: int, now: datetime, every: timedelta
 ) -> None:
-    """Note that an active account used RealChat at `now` (D-051), and on which day
-    (D-072).
+    """Note that an active account used RealChat at `now` (D-051).
 
     Written only when the stored time is at least `every` old, so a busy user causes at
-    most one write per interval; the day is added once (it is the primary key). This is
-    RealChat activity, never Telegram presence.
+    most one write per interval. This is RealChat activity, never Telegram presence.
     """
-    updated = await session.execute(
+    await session.execute(
         update(User)
         .where(
             User.telegram_user_id == telegram_user_id,
@@ -115,15 +113,38 @@ async def record_activity(
             User.last_active_at <= now - every,
         )
         .values(last_active_at=now)
-        .returning(User.id)
     )
-    user_id = updated.scalar_one_or_none()
-    if user_id is not None:
-        await session.execute(
-            insert(UserActivityDay)
-            .values(user_id=user_id, day=now.astimezone(ACTIVITY_ZONE).date())
-            .on_conflict_do_nothing()
-        )
+
+
+def activity_day(now: datetime) -> date:
+    """The India day `now` falls on, as active days are recorded (D-072)."""
+    return now.astimezone(ACTIVITY_ZONE).date()
+
+
+async def record_active_day(session: AsyncSession, telegram_user_id: int, day: date) -> bool:
+    """Note that an account used RealChat on `day` (D-072), once: the day is part of the
+    primary key. Only active accounts that have accepted the terms are recorded, so
+    nothing is kept before the user agrees (as the Privacy Policy says). Returns whether
+    the day is recorded now (added, or already there)."""
+    account = select(User.id, literal(day, Date)).where(
+        User.telegram_user_id == telegram_user_id,
+        User.status == "active",
+        exists().where(TermsAcceptance.user_id == User.id),
+    )
+    added = await session.execute(
+        insert(UserActivityDay)
+        .from_select(["user_id", "day"], account)
+        .on_conflict_do_nothing()
+        .returning(UserActivityDay.user_id)
+    )
+    if added.first() is not None:
+        return True
+    recorded = await session.scalar(
+        select(UserActivityDay.user_id)
+        .join(User, User.id == UserActivityDay.user_id)
+        .where(User.telegram_user_id == telegram_user_id, UserActivityDay.day == day)
+    )
+    return recorded is not None
 
 
 async def get_user(session: AsyncSession, user_id: int) -> User:

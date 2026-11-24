@@ -42,7 +42,7 @@ The outcome of reports you make or receive, and any warnings, suspensions, and b
 Your coin balance and every change to it, holds on coins for features in progress, and your purchases: what you bought, the price in Telegram Stars, Telegram's charge identifier, whether a purchase was refunded, and your VIP end date. Payments are handled by Telegram; we never receive your bank or card details.
 
 ### 3.8 Activity and settings
-When you last used the Service, and the days on which you used it (your RealChat activity, never your Telegram online status), your notification and privacy settings, the versions of this Privacy Policy and our User Agreement you accepted and when, your invite link and who joined through it, and, while daily rewards are offered, when you claim them, to time reminders.
+When you last used the Service, and the days on which you used it (counted by India date; your RealChat activity, never your Telegram online status), your notification and privacy settings, the versions of this Privacy Policy and our User Agreement you accepted and when, your invite link and who joined through it, and, while daily rewards are offered, when you claim them, to time reminders.
 
 ### 3.9 Technical data
 Our servers keep short-lived technical data to run the Service, such as which step of setup you are on and protection against message flooding. Our logs record events and errors without message content.

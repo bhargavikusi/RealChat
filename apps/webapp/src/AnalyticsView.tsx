@@ -47,7 +47,7 @@ interface Series {
 
 function label(start: string, weekly: boolean): string {
   const day = new Date(`${start}T00:00:00`);
-  const text = day.toLocaleDateString(undefined, { day: "numeric", month: "short" });
+  const text = day.toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" });
   return weekly ? `Week of ${text}` : text;
 }
 
@@ -208,10 +208,10 @@ export function AnalyticsView({ launchData, onFailure }: Props) {
               <strong>{totals.active_today}</strong> active today
             </li>
             <li>
-              <strong>{totals.active_7d}</strong> active in 7 days
+              <strong>{totals.active_7d}</strong> active in the last 7 days
             </li>
             <li>
-              <strong>{totals.active_30d}</strong> active in 30 days
+              <strong>{totals.active_30d}</strong> active in the last 30 days
             </li>
             <li>
               <strong>{totals.onboarded}</strong> onboarded accounts
@@ -244,8 +244,8 @@ export function AnalyticsView({ launchData, onFailure }: Props) {
             weekly={weekly}
             series={[
               { key: "active", label: weekly ? "Active in the week" : "Active that day", color: COLORS.primary },
-              { key: "active_7d", label: "Active in 7 days", color: COLORS.second },
-              { key: "active_30d", label: "Active in 30 days", color: COLORS.third },
+              { key: "active_7d", label: "Active in the last 7 days", color: COLORS.second },
+              { key: "active_30d", label: "Active in the last 30 days", color: COLORS.third },
             ]}
           />
           <Chart

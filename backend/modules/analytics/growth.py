@@ -264,5 +264,8 @@ class ActivityRetention:
             total += deleted
             if deleted < BATCH_SIZE:
                 break
+            # Still going: keep this run's hold, as the other retention jobs do, so a
+            # long cleanup isn't started again by another worker meanwhile.
+            await self._redis.set(RUN_KEY, now.isoformat(), ex=int(RETRY_INTERVAL.total_seconds()))
         logger.info("deleted old activity days", extra={"count": total})
         return total

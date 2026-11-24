@@ -5,17 +5,20 @@ from itertools import pairwise
 from typing import Any
 
 import pytest
+from aiogram.types import Chat, TelegramObject, Update
+from aiogram.types import User as TelegramUser
 from redis.asyncio import Redis
 from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from apps.bot.db import ACTIVITY_INTERVAL
+from apps.bot.db import ActivityMiddleware
 from backend.modules.admin.models import AdminAuditEntry
 from backend.modules.analytics import growth
 from backend.modules.analytics.growth import ActivityRetention, Period
 from backend.modules.payments.models import StarsInvoice, StarsPayment
 from backend.modules.users import service as users
 from backend.modules.users.models import Profile, User, UserActivityDay
+from backend.modules.users.terms import TERMS_VERSION
 from tests.support.moderation import ADMIN, ALICE, BOB, MODERATOR, Panel
 from tests.support.webapp import authorization
 
@@ -42,41 +45,92 @@ async def _active_days(sessions: Sessions, user_id: int, *days: date) -> None:
 # --- Recording activity --------------------------------------------------------------
 
 
-async def test_activity_is_recorded_once_a_day_in_india_time(
+async def _accept_terms(sessions: Sessions, *user_ids: int) -> None:
+    async with sessions() as session:
+        for user_id in user_ids:
+            await users.accept_terms(session, user_id, TERMS_VERSION)
+        await session.commit()
+
+
+async def _through_middleware(
+    sessions: Sessions, middleware: ActivityMiddleware, telegram_id: int
+) -> None:
+    """One private-chat update from `telegram_id` passing the activity middleware."""
+
+    async def handler(event: TelegramObject, data: dict[str, Any]) -> None:
+        return None
+
+    async with sessions() as session:
+        await middleware(
+            handler,
+            Update(update_id=1),
+            {
+                "event_from_user": TelegramUser(id=telegram_id, is_bot=False, first_name="T"),
+                "event_chat": Chat(id=telegram_id, type="private"),
+                "session": session,
+            },
+        )
+
+
+async def _days(sessions: Sessions, user_id: int) -> list[date]:
+    async with sessions() as session:
+        found = await session.scalars(
+            select(UserActivityDay.day)
+            .where(UserActivityDay.user_id == user_id)
+            .order_by(UserActivityDay.day)
+        )
+        return list(found.all())
+
+
+async def test_each_india_day_is_recorded_once(
     people: dict[str, int], session_factory: Sessions
 ) -> None:
+    await _accept_terms(session_factory, people["alice"])
+    # 23:59:30 India time, then 00:00:10: under a minute apart, across midnight.
+    before_midnight = datetime(2026, 11, 22, 18, 29, 30, tzinfo=UTC)
+    moments = iter(
+        [NOON, before_midnight, before_midnight + timedelta(seconds=40), NOON + timedelta(days=1)]
+    )
+    middleware = ActivityMiddleware(clock=lambda: next(moments))
+    for _ in range(4):
+        await _through_middleware(session_factory, middleware, ALICE)
+    assert await _days(session_factory, people["alice"]) == [TODAY, TODAY + timedelta(days=1)]
+
+
+async def test_a_first_short_visit_is_recorded(
+    people: dict[str, int], session_factory: Sessions
+) -> None:
+    # The account's last-active time is just now, so the minute throttle skips it; the
+    # day is still recorded.
+    await _accept_terms(session_factory, people["alice"])
     async with session_factory() as session:
-        await session.execute(update(User).values(last_active_at=NOON - timedelta(days=2)))
+        await session.execute(update(User).values(last_active_at=NOON))
         await session.commit()
-    # 23:59 and 00:01 India time on either side of midnight, then again later that day.
-    before_midnight = datetime(2026, 11, 22, 18, 29, tzinfo=UTC)
-    after_midnight = before_midnight + ACTIVITY_INTERVAL + timedelta(minutes=1)
-    for moment in (NOON, before_midnight, after_midnight, after_midnight + timedelta(hours=2)):
-        async with session_factory() as session:
-            await users.record_activity(session, ALICE, moment, ACTIVITY_INTERVAL)
-            await session.commit()
-    async with session_factory() as session:
-        days = (
-            await session.scalars(
-                select(UserActivityDay.day)
-                .where(UserActivityDay.user_id == people["alice"])
-                .order_by(UserActivityDay.day)
-            )
-        ).all()
-    assert days == [TODAY, TODAY + timedelta(days=1)]
+    middleware = ActivityMiddleware(clock=lambda: NOON + timedelta(seconds=5))
+    await _through_middleware(session_factory, middleware, ALICE)
+    assert await _days(session_factory, people["alice"]) == [TODAY]
+
+
+async def test_no_day_is_recorded_before_the_terms_are_accepted(
+    people: dict[str, int], session_factory: Sessions
+) -> None:
+    middleware = ActivityMiddleware(clock=lambda: NOON)
+    await _through_middleware(session_factory, middleware, ALICE)
+    assert await _days(session_factory, people["alice"]) == []
+    # Accepting later the same day: the next update records it.
+    await _accept_terms(session_factory, people["alice"])
+    await _through_middleware(session_factory, middleware, ALICE)
+    assert await _days(session_factory, people["alice"]) == [TODAY]
 
 
 async def test_restricted_accounts_record_no_activity(
     people: dict[str, int], session_factory: Sessions
 ) -> None:
+    await _accept_terms(session_factory, people["bob"])
     async with session_factory() as session:
-        await session.execute(
-            update(User)
-            .where(User.id == people["bob"])
-            .values(status="banned", last_active_at=NOON - timedelta(days=1))
-        )
+        await session.execute(update(User).where(User.id == people["bob"]).values(status="banned"))
         await session.commit()
-        await users.record_activity(session, BOB, NOON, ACTIVITY_INTERVAL)
+        assert not await users.record_active_day(session, BOB, TODAY)
         await session.commit()
         assert await session.scalar(select(func.count()).select_from(UserActivityDay)) == 0
 
