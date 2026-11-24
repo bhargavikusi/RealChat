@@ -869,10 +869,22 @@ Work happens on short-lived issue branches, such as `feature/12-onboarding`, cre
   * now: users by status, onboarded accounts, VIP count, and users active today, in 7 days, and in 30 days.
 * Days are India calendar days. Finished onboardings count only accounts that still exist.
 * Active users need a new record, `user_activity_days` (owner decision): one row per account per India day it used RealChat, written the first time an account is seen each day (only for active accounts that have accepted the terms, so nothing is recorded before acceptance or while suspended or banned), kept 400 days, and erased with the account. History starts when it ships.
-* Charts use Recharts (owner choice), loaded only when Analytics is opened, with a data table under each chart.
+* Moderation analytics (admins only, audited as `analytics_viewed`), for the same periods:
+  * reports made, by reason;
+  * now: open reports, urgent ones, and the oldest open report;
+  * reports closed in the period (owner decision): how many, with or without action, and the median and longest time from report to decision;
+  * actions per moderator, by kind;
+  * the 10 accounts with the most reports made in the period (owner decision), with how many are still open, opening into the account view. An account lookup can't find (deleted) is listed without its nickname or RealChat ID and can't be opened.
+* Revenue analytics (admins only, audited as `analytics_viewed`), for the same periods:
+  * Stars paid for coin packs and VIP passes, and how many of each, counted on the day of purchase and leaving out payments refunded or due for a refund (owner decision: net, refunds separate);
+  * refunds by reason and the Stars refunded, on the day of the refund;
+  * first-time VIP buyers;
+  * all time: Stars kept, refunds due, and VIP conversion (owner decision): the share of existing onboarded accounts with at least one kept VIP pass, and how many have two or more.
+  * Stars are what users paid through Telegram, not earnings; the screen says so.
+* Charts use Recharts (owner choice), loaded only when Analytics is opened, with a data table under each chart. Analytics opens on Growth, with Moderation and Revenue a tap away; going back from an account opened there returns to the same dashboard and period.
 * The legal documents move to version 1.2 (effective 24 November 2026). The version is shared, so users accept both the User Agreement and the Privacy Policy again, although only the Privacy Policy's text changes: it now says the days of use are recorded (by India date), kept about 400 days, and erased on deletion, and that usage is analysed as totals only.
 
-**Why:** Owner request for an admin page to see all users and find groups such as VIPs or the most active, and for growth analytics, with least privilege (admins only) and auditing.
+**Why:** Owner request for an admin page to see all users and find groups such as VIPs or the most active, and for growth, moderation, and revenue analytics, with least privilege (admins only) and auditing.
 
 ## Open
 

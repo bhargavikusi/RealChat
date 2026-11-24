@@ -1,6 +1,7 @@
 import { lazy, Suspense, useCallback, useEffect, useState } from "react";
 
 import { AccountView } from "./AccountView";
+import { DEFAULT_ANALYTICS, type AnalyticsChoice } from "./analytics";
 import { ApiError, getJson, type Failure, type Me } from "./api";
 import { Lookup } from "./Lookup";
 import { Queue } from "./Queue";
@@ -64,6 +65,8 @@ export function App() {
   const [notice, setNotice] = useState<string | null>(null);
   // Kept here, so going back from an account to the directory keeps the search.
   const [userFilters, setUserFilters] = useState<UserFilters>(DEFAULT_FILTERS);
+  // And going back from an account to the analytics keeps the dashboard and period.
+  const [analytics, setAnalytics] = useState<AnalyticsChoice>(DEFAULT_ANALYTICS);
 
   // Sign-in problems end the session; anything else returns to the reports with a
   // notice. Failures within a screen are shown there, with a way to try again.
@@ -205,7 +208,16 @@ export function App() {
           )}
           {screen.name === "analytics" && state.me.role === "admin" && (
             <Suspense fallback={<p className="hint">Loading…</p>}>
-              <AnalyticsView launchData={launchData} onFailure={fail} />
+              <AnalyticsView
+                launchData={launchData}
+                choice={analytics}
+                onChoice={setAnalytics}
+                onOpenAccount={(id) => {
+                  setNotice(null);
+                  setScreen({ name: "account", id, back: { name: "analytics" } });
+                }}
+                onFailure={fail}
+              />
             </Suspense>
           )}
           {screen.name === "users" && state.me.role === "admin" && (
