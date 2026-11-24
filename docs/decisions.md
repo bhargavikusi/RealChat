@@ -862,7 +862,17 @@ Work happens on short-lived issue branches, such as `feature/12-onboarding`, cre
 * "Most active" means chats started in the last 30 days (owner decision), from stored conversations; "last active" is RealChat activity, never Telegram online status.
 * Rows never include Telegram ids, usernames, or chat content. Each listing is audited (`users_listed`), with the filters used in the audit log's `reason` column.
 
-**Why:** Owner request for an admin page to see all users and find groups such as VIPs or the most active, with least privilege (admins only) and auditing.
+* Growth and activity analytics (admins only, audited as `analytics_viewed`) show totals for the last 7, 30, or 90 days by day, or 12 months by week:
+  * sign-ups and finished onboardings;
+  * users active in each period, and in the rolling 7 and 30 days;
+  * VIP passes bought (refunded ones excluded);
+  * now: users by status, onboarded accounts, VIP count, and users active today, in 7 days, and in 30 days.
+* Days are India calendar days. Finished onboardings count only accounts that still exist.
+* Active users need a new record, `user_activity_days` (owner decision): one row per account per India day it used RealChat, written the first time an account is seen each day (only for active accounts that have accepted the terms, so nothing is recorded before acceptance or while suspended or banned), kept 400 days, and erased with the account. History starts when it ships.
+* Charts use Recharts (owner choice), loaded only when Analytics is opened, with a data table under each chart.
+* The legal documents move to version 1.2 (effective 24 November 2026). The version is shared, so users accept both the User Agreement and the Privacy Policy again, although only the Privacy Policy's text changes: it now says the days of use are recorded (by India date), kept about 400 days, and erased on deletion, and that usage is analysed as totals only.
+
+**Why:** Owner request for an admin page to see all users and find groups such as VIPs or the most active, and for growth analytics, with least privilege (admins only) and auditing.
 
 ## Open
 

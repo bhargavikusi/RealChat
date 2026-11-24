@@ -32,6 +32,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from backend.core.logging import exception_summary
 from backend.modules.admin import directory
 from backend.modules.admin.models import REASON_MAX_LENGTH
+from backend.modules.analytics import growth
 from backend.modules.moderation import actions, lookup, review
 from backend.modules.moderation.actions import MODERATION_ROLES
 from backend.modules.moderation.models import Report
@@ -478,6 +479,16 @@ def create_router(token: str) -> APIRouter:
         )
         await session.commit()
         return page
+
+    @router.get("/analytics/growth")
+    async def growth_analytics(
+        period: growth.Period, member: Staff, session: Database
+    ) -> growth.Growth:
+        """Growth and activity totals for a period: admins only; audited (D-072)."""
+        admin(member)
+        found = await growth.growth(session, member.user_id, period, datetime.now(UTC))
+        await session.commit()
+        return found
 
     return router
 

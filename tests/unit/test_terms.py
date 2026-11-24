@@ -59,8 +59,8 @@ def test_the_documents_state_the_owner_decisions() -> None:
 def test_titles_and_version_line() -> None:
     assert document_title(Document.USER_AGREEMENT) == "User Agreement"
     assert document_title(Document.PRIVACY_POLICY) == "Privacy Policy"
-    assert TERMS_VERSION == "1.1"
-    assert effective_label() == "Version 1.1 · Effective 23 November 2026"
+    assert TERMS_VERSION == "1.2"
+    assert effective_label() == "Version 1.2 · Effective 24 November 2026"
 
 
 def _bold(message: dict[str, object]) -> set[str]:

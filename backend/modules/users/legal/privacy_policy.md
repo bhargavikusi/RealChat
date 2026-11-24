@@ -42,7 +42,7 @@ The outcome of reports you make or receive, and any warnings, suspensions, and b
 Your coin balance and every change to it, holds on coins for features in progress, and your purchases: what you bought, the price in Telegram Stars, Telegram's charge identifier, whether a purchase was refunded, and your VIP end date. Payments are handled by Telegram; we never receive your bank or card details.
 
 ### 3.8 Activity and settings
-When you last used the Service (your RealChat activity, never your Telegram online status), your notification and privacy settings, the versions of this Privacy Policy and our User Agreement you accepted and when, your invite link and who joined through it, and, while daily rewards are offered, when you claim them, to time reminders.
+When you last used the Service, and the days on which you used it (counted by India date; your RealChat activity, never your Telegram online status), your notification and privacy settings, the versions of this Privacy Policy and our User Agreement you accepted and when, your invite link and who joined through it, and, while daily rewards are offered, when you claim them, to time reminders.
 
 ### 3.9 Technical data
 Our servers keep short-lived technical data to run the Service, such as which step of setup you are on and protection against message flooding. Our logs record events and errors without message content.
@@ -57,7 +57,7 @@ We use your data to:
 - process purchases, manage coins and VIP, and handle refunds and support;
 - send you notifications you have not turned off, such as visit, like, and reminder messages;
 - keep records we need for accounting, security, and to comply with the law; and
-- maintain and improve the Service.
+- understand how the Service is used, as totals only (such as how many people sign up or use it each day), and maintain and improve it.
 
 We process your data on the basis of the consent you give when you tap "Continue", for the purposes described in this Privacy Policy, and, where applicable law allows, for legitimate uses such as complying with the law, responding to legal requests, and protecting the safety of users. We use your data only for these purposes.
 
@@ -99,10 +99,10 @@ We may move the Service and your data to different servers or hosting providers 
 Chat messages and direct messages are deleted automatically after a retention period that we set and may change. Messages that are part of a report still under review are kept until the review ends.
 
 ### 8.2 Visits and past chats
-Profile visits are deleted automatically after a set period. Past chats are listed for a set period after they end.
+Profile visits are deleted automatically after a set period. Past chats are listed for a set period after they end. Records of the days you used the Service are deleted after about 400 days.
 
 ### 8.3 Your profile and account
-Your profile and settings are kept while your account exists. When you delete your account, we immediately erase your profile (including your nickname, age, gender, country, city, bio, photo, change history, and RealChat ID), your coins, any VIP time, your settings, your past chats list and visitors, your invite link, and your acceptances of our terms.
+Your profile and settings are kept while your account exists. When you delete your account, we immediately erase your profile (including your nickname, age, gender, country, city, bio, photo, change history, and RealChat ID), your coins, any VIP time, your settings, your past chats list and visitors, the record of the days you used the Service, your invite link, and your acceptances of our terms.
 
 ### 8.4 What we keep after deletion
 After deletion, we keep a minimal record (your Telegram user ID, account status, and dates) so that restrictions cannot be avoided by signing up again, together with blocks and reports you made or received, warnings, suspensions, and bans on your account, records of coin changes and purchases needed for accounting and to handle payments and refunds, and records of administrative actions, including the audit log of who looked up accounts or opened stored messages. A suspension or ban stays in force after deletion. Messages are still deleted at the end of their retention period.

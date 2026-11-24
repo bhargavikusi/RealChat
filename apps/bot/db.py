@@ -2,7 +2,7 @@
 RealChat activity recorded for each update (D-051)."""
 
 from collections.abc import Callable
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from typing import Any
 
 from aiogram import BaseMiddleware
@@ -31,16 +31,27 @@ class DbSessionMiddleware(BaseMiddleware):
 ACTIVITY_INTERVAL = timedelta(seconds=60)
 
 
+# The most accounts remembered as already recorded today, per process, before the
+# memory is cleared (a cleared entry only costs one more idempotent insert).
+SEEN_LIMIT = 100_000
+
+
 class ActivityMiddleware(BaseMiddleware):
-    """Records RealChat activity for every private-chat update that reaches the handlers.
+    """Records RealChat activity for every private-chat update that reaches the handlers:
+    the last-active time (D-051), and each India day the account is active (D-072).
 
     Registered after the access gate, so suspended and banned users are not counted, and
     committed before the handler runs, so the write holds no lock while it works. A
-    refund reported by Telegram is not the user's activity (D-065).
+    refund reported by Telegram is not the user's activity (D-065). The day is written
+    the first time this process sees the account each day, whatever the last-active
+    interval, so no day is missed; repeats are skipped in memory, and the insert itself
+    is idempotent.
     """
 
     def __init__(self, clock: Callable[[], datetime] = lambda: datetime.now(UTC)) -> None:
         self._clock = clock
+        self._day: date | None = None
+        self._seen: set[int] = set()
 
     async def __call__(self, handler: Handler, event: TelegramObject, data: dict[str, Any]) -> Any:
         user = data.get("event_from_user")
@@ -53,6 +64,14 @@ class ActivityMiddleware(BaseMiddleware):
             and chat.type == ChatType.PRIVATE
             and not is_refund(event)
         ):
-            await users.record_activity(session, user.id, self._clock(), ACTIVITY_INTERVAL)
+            now = self._clock()
+            await users.record_activity(session, user.id, now, ACTIVITY_INTERVAL)
+            day = users.activity_day(now)
+            if day != self._day or len(self._seen) >= SEEN_LIMIT:
+                self._day, self._seen = day, set()
+            # Remembered only once recorded, so an account that accepts the terms later
+            # that day is still counted.
+            if user.id not in self._seen and await users.record_active_day(session, user.id, day):
+                self._seen.add(user.id)
             await session.commit()
         return await handler(event, data)

@@ -42,6 +42,7 @@ from backend.core.redis import create_redis
 from backend.database.engine import create_engine, create_session_factory
 from backend.modules.activity_alerts.service import AlertJobs
 from backend.modules.admin.settings import RuntimeSettings
+from backend.modules.analytics.growth import ActivityRetention
 from backend.modules.chat.idle import IdleChats
 from backend.modules.chat.private import PrivateModeJob
 from backend.modules.chat.retention import ChatRetention
@@ -123,6 +124,7 @@ async def run() -> None:
     idle_chats = IdleChats(sessions, runtime_settings, notifier)
     retention = ChatRetention(redis, sessions, runtime_settings)
     visit_retention = VisitRetention(redis, sessions, runtime_settings)
+    activity_retention = ActivityRetention(redis, sessions)
     pending_messages = PendingSweep(sessions)
     chat_requests = RequestJobs(sessions, runtime_settings, RequestNotices(bot, sessions))
     activity_alerts = AlertJobs(
@@ -150,6 +152,7 @@ async def run() -> None:
                 ("private mode deletions", deletions.tick, DELETIONS_SECONDS),
                 ("chat retention", retention.tick, RETENTION_CHECK_SECONDS),
                 ("visit retention", visit_retention.tick, RETENTION_CHECK_SECONDS),
+                ("activity retention", activity_retention.tick, RETENTION_CHECK_SECONDS),
                 ("pending direct messages", pending_messages.tick, PENDING_SWEEP_SECONDS),
                 ("chat requests", chat_requests.tick, CHAT_REQUESTS_SECONDS),
                 ("activity alerts", activity_alerts.tick, ACTIVITY_ALERTS_SECONDS),
