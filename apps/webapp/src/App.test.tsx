@@ -847,9 +847,10 @@ describe("analytics", () => {
     render(<App />);
     await user.click(await screen.findByRole("button", { name: "Analytics" }));
     await screen.findByRole("list", { name: "Now" });
+    await user.selectOptions(screen.getByLabelText("Period"), "7d");
     await user.click(screen.getByRole("button", { name: "Moderation" }));
     expect(screen.getByRole("button", { name: "Moderation" }).getAttribute("aria-pressed")).toBe("true");
-    await waitFor(() => expect(calls.at(-1)?.path).toBe("/api/moderation/analytics/moderation?period=30d"));
+    await waitFor(() => expect(calls.at(-1)?.path).toBe("/api/moderation/analytics/moderation?period=7d"));
 
     const now = await screen.findByRole("list", { name: "Now" });
     expect(within(now).getAllByRole("listitem").map((item) => item.textContent)).toContain("4 open reports");
@@ -873,13 +874,17 @@ describe("analytics", () => {
     expect(within(reported).getByText("Deleted account")).toBeTruthy();
     expect(within(reported).getAllByRole("button")).toHaveLength(1);
     await user.click(within(reported).getByRole("button", { name: /Moon Child · abcdefg/ }));
-    await waitFor(() => expect(calls.at(-1)?.path).toBe("/api/moderation/accounts/42"));
+    await screen.findByRole("article", { name: "Account 42" });
+    expect(screen.queryByRole("region", { name: "Most-reported accounts" })).toBeNull();
     expect(screen.getByRole("button", { name: "Analytics" }).getAttribute("aria-current")).toBe("page");
 
     const back = vi.mocked(window.Telegram?.WebApp?.BackButton?.onClick ?? vi.fn()).mock.calls.at(-1)?.[0];
     act(() => back?.());
+    // The same dashboard and period as before.
     await screen.findByRole("region", { name: "Most-reported accounts" });
     expect(screen.getByRole("button", { name: "Moderation" }).getAttribute("aria-pressed")).toBe("true");
+    expect((screen.getByLabelText("Period") as HTMLSelectElement).value).toBe("7d");
+    expect(calls.at(-1)?.path).toBe("/api/moderation/analytics/moderation?period=7d");
   });
 
   it("shows revenue, refunds, and VIP conversion", async () => {
@@ -901,7 +906,7 @@ describe("analytics", () => {
       .getAllByRole("listitem")
       .map((item) => item.textContent);
     expect(allTime).toContain("7.5% of onboarded accounts have bought VIP (3 of 40)");
-    expect(allTime).toContain("1 refunds due (⭐ 780)");
+    expect(allTime).toContain("1 refund due (⭐ 780)");
     expect(tableCells("Stars paid")).toEqual(["100", "780", "250", "0"]);
     expect(tableCells("Purchases")).toEqual(["1", "1", "2", "0"]);
     expect(tableCells("First-time VIP buyers")).toEqual(["1", "0"]);
@@ -928,5 +933,34 @@ describe("analytics", () => {
     failing = false;
     await user.click(screen.getByRole("button", { name: "Try again" }));
     expect(await screen.findByRole("list", { name: "All time" })).toBeTruthy();
+  });
+
+  it("never shows earlier figures next to a failure for the same dashboard", async () => {
+    let failing = false;
+    let hold: (() => void) | null = null;
+    const respond = analyticsHandler("admin");
+    serve((path, init) => {
+      if (path.startsWith("/api/moderation/analytics/revenue?") && failing) return { status: 500, body: { error: "error" } };
+      return respond(path, init);
+    });
+    // Moderation's response is held, so Growth's earlier result is still the latest one
+    // loaded when Growth is chosen again.
+    const plain = vi.mocked(fetch).getMockImplementation();
+    vi.mocked(fetch).mockImplementation(async (input, init) => {
+      if (String(input).includes("/analytics/moderation?")) await new Promise<void>((resolve) => (hold = resolve));
+      return plain ? plain(input, init) : new Response("{}");
+    });
+    const user = userEvent.setup();
+    render(<App />);
+    await user.click(await screen.findByRole("button", { name: "Analytics" }));
+    await screen.findByRole("list", { name: "Now" });
+    await user.click(screen.getByRole("button", { name: "Revenue" }));
+    await screen.findByRole("list", { name: "All time" });
+    failing = true;
+    await user.click(screen.getByRole("button", { name: "Moderation" }));
+    await user.click(screen.getByRole("button", { name: "Revenue" }));
+    expect(await screen.findByText("The analytics couldn't be loaded.")).toBeTruthy();
+    expect(screen.queryByRole("list", { name: "All time" })).toBeNull();
+    act(() => hold?.());
   });
 });

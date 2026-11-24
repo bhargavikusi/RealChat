@@ -64,7 +64,7 @@ async def _per_bucket(
     """Counts by bucket start for rows whose India day falls in the window."""
     rows = await session.execute(
         select(window.bucket(day), func.count())
-        .where(day >= window.first, *where)
+        .where(window.contains(day), *where)
         .group_by(literal_column("1"))
     )
     return {row[0]: int(row[1]) for row in rows.all()}

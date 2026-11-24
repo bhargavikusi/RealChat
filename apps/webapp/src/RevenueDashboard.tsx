@@ -59,7 +59,8 @@ export function RevenueDashboard({ data }: { data: Revenue }) {
           <strong>{totals.repeat_vip_buyers}</strong> bought VIP more than once
         </li>
         <li>
-          <strong>{totals.refunds_due}</strong> refunds due (⭐ {totals.refunds_due_stars})
+          <strong>{totals.refunds_due}</strong> {totals.refunds_due === 1 ? "refund" : "refunds"} due (⭐{" "}
+          {totals.refunds_due_stars})
         </li>
       </ul>
       <p className="hint">

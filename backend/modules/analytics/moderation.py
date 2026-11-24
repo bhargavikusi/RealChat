@@ -109,7 +109,7 @@ async def _buckets(session: AsyncSession, window: Window) -> list[Bucket]:
     day = india_day(Report.created_at)
     rows = await session.execute(
         select(window.bucket(day), Report.reason, func.count())
-        .where(day >= window.first)
+        .where(window.contains(day))
         .group_by(literal_column("1"), Report.reason)
     )
     counts: dict[date, dict[str, int]] = {}
@@ -144,7 +144,7 @@ async def _handling(session: AsyncSession, window: Window) -> Handling:
                 func.count().filter(Report.outcome == "no_action"),
                 func.percentile_cont(0.5).within_group(seconds),
                 func.max(seconds),
-            ).where(Report.status == "closed", india_day(Report.closed_at) >= window.first)
+            ).where(Report.status == "closed", window.contains(india_day(Report.closed_at)))
         )
     ).one()
     return Handling(
@@ -159,7 +159,7 @@ async def _handling(session: AsyncSession, window: Window) -> Handling:
 async def _moderators(session: AsyncSession, window: Window) -> list[Moderator]:
     rows = await session.execute(
         select(ModerationAction.actor_user_id, ModerationAction.kind, func.count())
-        .where(india_day(ModerationAction.created_at) >= window.first)
+        .where(window.contains(india_day(ModerationAction.created_at)))
         .group_by(ModerationAction.actor_user_id, ModerationAction.kind)
     )
     counts: dict[int, dict[str, int]] = {}
@@ -204,7 +204,7 @@ async def _most_reported(session: AsyncSession, window: Window) -> list[Reported
         .select_from(Report)
         .join(User, User.id == Report.reported_user_id)
         .outerjoin(Profile, Profile.user_id == User.id)
-        .where(india_day(Report.created_at) >= window.first)
+        .where(window.contains(india_day(Report.created_at)))
         .group_by(User.id, Profile.user_id)
         .order_by(reports.desc(), func.max(Report.created_at).desc(), User.id)
         .limit(MOST_REPORTED)

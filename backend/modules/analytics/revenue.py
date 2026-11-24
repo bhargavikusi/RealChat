@@ -96,7 +96,7 @@ async def _purchases(
     rows = await session.execute(
         select(window.bucket(day), StarsInvoice.product, func.count(), func.sum(StarsPayment.stars))
         .join(StarsInvoice, StarsInvoice.id == StarsPayment.invoice_id)
-        .where(KEPT, day >= window.first)
+        .where(KEPT, window.contains(day))
         .group_by(literal_column("1"), StarsInvoice.product)
     )
     found: dict[date, dict[str, tuple[int, int]]] = {}
@@ -116,7 +116,7 @@ async def _first_vip(session: AsyncSession, window: Window) -> dict[date, int]:
     rows = await session.execute(
         select(window.bucket(day), func.count())
         .select_from(first)
-        .where(day >= window.first)
+        .where(window.contains(day))
         .group_by(literal_column("1"))
     )
     return {row[0]: int(row[1]) for row in rows.all()}
@@ -132,7 +132,7 @@ async def _refunds(session: AsyncSession, window: Window) -> dict[date, dict[str
             func.count(),
             func.sum(StarsPayment.stars),
         )
-        .where(StarsPayment.status == "refunded", day >= window.first)
+        .where(StarsPayment.status == "refunded", window.contains(day))
         .group_by(literal_column("1"), StarsPayment.refund_reason)
     )
     found: dict[date, dict[str, tuple[int, int]]] = {}

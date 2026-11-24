@@ -223,3 +223,15 @@ async def test_older_reports_stay_out_of_the_first_week(
     buckets = _get(panel, period="12m").json()["buckets"]
     assert len(buckets) == 52
     assert all(sum(bucket["reports"].values()) == 0 for bucket in buckets)
+
+
+async def test_nothing_after_today_is_counted(
+    panel: Panel, people: dict[str, int], session_factory: Sessions
+) -> None:
+    later = datetime.now(UTC) + 2 * DAY
+    alice, bob = people["alice"], people["bob"]
+    await make_report(session_factory, alice, bob, None, created_at=later - HOUR, **_closed(later))
+    await _action(session_factory, people["moderator"], bob, "warn", later, rule="spam")
+    data = _get(panel, period="7d").json()
+    assert data["handling"]["closed"] == 0
+    assert (data["moderators"], data["most_reported"]) == ([], [])

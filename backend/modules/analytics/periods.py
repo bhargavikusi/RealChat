@@ -6,7 +6,7 @@ from enum import StrEnum
 from typing import Any
 from zoneinfo import ZoneInfo
 
-from sqlalchemy import Date, Integer, cast, func, literal
+from sqlalchemy import Date, Integer, and_, cast, func, literal
 from sqlalchemy.orm import InstrumentedAttribute
 from sqlalchemy.sql.elements import ColumnElement
 
@@ -39,6 +39,13 @@ class Window:
         days, size = SPANS[period]
         first = today - timedelta(days=days - 1)
         return cls(today, first, size, [first + timedelta(days=n) for n in range(0, days, size)])
+
+    def contains(self, day: ColumnElement[date]) -> ColumnElement[bool]:
+        """Whether an India day is in the window, from its first day to today. Every
+        period figure uses it: without the lower bound, PostgreSQL's integer division
+        (which rounds toward zero) would put days just before the window into the
+        first week; the upper bound keeps anything dated after today out."""
+        return and_(day >= self.first, day <= self.today)
 
     def bucket(self, day: ColumnElement[date]) -> ColumnElement[date]:
         """The start of the bucket an India day falls in. In PostgreSQL, a date minus a

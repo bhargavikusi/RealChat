@@ -133,8 +133,9 @@ export function AnalyticsView({ launchData, choice, onChoice, onOpenAccount, onF
     };
   }, [launchData, section, period, onFailure, attempt]);
 
-  const current = loaded?.for === wanted ? loaded.value : null;
   const showFailure = failed === wanted;
+  // Not an earlier result for this choice either, once loading it again has failed.
+  const current = loaded?.for === wanted && !showFailure ? loaded.value : null;
   return (
     <section aria-label="Analytics">
       <h2>Analytics</h2>

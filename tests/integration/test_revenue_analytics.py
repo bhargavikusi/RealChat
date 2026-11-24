@@ -108,6 +108,17 @@ async def test_revenue_figures(
         now - 10 * DAY,
         "telegram",
     )
+    # A coin pack refunded yesterday because its account was deleted.
+    await _pay(
+        session_factory,
+        moderator,
+        "coins",
+        60,
+        now - 6 * DAY,
+        "refunded",
+        now - DAY,
+        "account_deleted",
+    )
     async with session_factory() as session:
         await users.delete_account(session, moderator, now)
         await session.commit()
@@ -143,7 +154,9 @@ async def test_revenue_figures(
         "refunds": {**none, "admin": 1},
         "refunded_stars": 250,
     }
-    assert day(1) == empty  # Bob's refunded pack and Carol's refund due aren't kept
+    # Bob's refunded pack and Carol's refund due aren't kept; the deleted account's
+    # pack was refunded.
+    assert day(1) == {**empty, "refunds": {**none, "account_deleted": 1}, "refunded_stars": 60}
     assert day(2) == {
         **empty,
         "vip_stars": 780,
