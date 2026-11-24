@@ -10,7 +10,7 @@ from datetime import date, datetime, timedelta
 from enum import StrEnum
 from zoneinfo import ZoneInfo
 
-from sqlalchemy import Date, delete, exists, func, literal, or_, select, update
+from sqlalchemy import delete, func, or_, select, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -125,26 +125,28 @@ async def record_active_day(session: AsyncSession, telegram_user_id: int, day: d
     """Note that an account used RealChat on `day` (D-072), once: the day is part of the
     primary key. Only active accounts that have accepted the terms are recorded, so
     nothing is kept before the user agrees (as the Privacy Policy says). Returns whether
-    the day is recorded now (added, or already there)."""
-    account = select(User.id, literal(day, Date)).where(
-        User.telegram_user_id == telegram_user_id,
-        User.status == "active",
-        exists().where(TermsAcceptance.user_id == User.id),
+    the day is recorded now (added, or already there).
+
+    The account row is share-locked first, so this and an account deletion (which locks
+    the row for update) run one after the other: after a deletion the account is no
+    longer active, or no longer has accepted terms, and nothing is written.
+    """
+    user_id = await session.scalar(
+        select(User.id)
+        .where(User.telegram_user_id == telegram_user_id, User.status == "active")
+        .with_for_update(read=True)
     )
-    added = await session.execute(
-        insert(UserActivityDay)
-        .from_select(["user_id", "day"], account)
-        .on_conflict_do_nothing()
-        .returning(UserActivityDay.user_id)
+    if user_id is None:
+        return False
+    accepted = await session.scalar(
+        select(TermsAcceptance.id).where(TermsAcceptance.user_id == user_id).limit(1)
     )
-    if added.first() is not None:
-        return True
-    recorded = await session.scalar(
-        select(UserActivityDay.user_id)
-        .join(User, User.id == UserActivityDay.user_id)
-        .where(User.telegram_user_id == telegram_user_id, UserActivityDay.day == day)
+    if accepted is None:
+        return False
+    await session.execute(
+        insert(UserActivityDay).values(user_id=user_id, day=day).on_conflict_do_nothing()
     )
-    return recorded is not None
+    return True
 
 
 async def get_user(session: AsyncSession, user_id: int) -> User:

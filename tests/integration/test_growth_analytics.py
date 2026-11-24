@@ -1,5 +1,6 @@
 """Growth and activity analytics for admins, and the daily activity they count (D-072)."""
 
+import asyncio
 from datetime import UTC, date, datetime, timedelta
 from itertools import pairwise
 from typing import Any
@@ -19,6 +20,7 @@ from backend.modules.payments.models import StarsInvoice, StarsPayment
 from backend.modules.users import service as users
 from backend.modules.users.models import Profile, User, UserActivityDay
 from backend.modules.users.terms import TERMS_VERSION
+from tests.support.db import wait_until_blocked
 from tests.support.moderation import ADMIN, ALICE, BOB, MODERATOR, Panel
 from tests.support.webapp import authorization
 
@@ -145,6 +147,27 @@ async def test_deleting_an_account_erases_its_activity_days(
         await session.commit()
         owners = (await session.scalars(select(UserActivityDay.user_id))).all()
     assert owners == [people["bob"]]
+
+
+async def test_activity_waits_for_a_deletion_in_progress(
+    people: dict[str, int], session_factory: Sessions
+) -> None:
+    await _accept_terms(session_factory, people["alice"])
+    async with session_factory() as deleting:
+        await users.delete_account(deleting, people["alice"], NOON)
+
+        async def record() -> bool:
+            async with session_factory() as session:
+                recorded = await users.record_active_day(session, ALICE, TODAY)
+                await session.commit()
+                return recorded
+
+        task = asyncio.create_task(record())
+        await wait_until_blocked(session_factory)
+        assert not task.done()  # waits for the deletion's row lock
+        await deleting.commit()
+        assert not await task
+    assert await _days(session_factory, people["alice"]) == []
 
 
 async def test_activity_days_are_kept_400_days(

@@ -868,7 +868,7 @@ Work happens on short-lived issue branches, such as `feature/12-onboarding`, cre
   * VIP passes bought (refunded ones excluded);
   * now: users by status, onboarded accounts, VIP count, and users active today, in 7 days, and in 30 days.
 * Days are India calendar days. Finished onboardings count only accounts that still exist.
-* Active users need a new record, `user_activity_days` (owner decision): one row per account per India day it used RealChat, written the first time an account is seen each day (once it has accepted the terms), kept 400 days, and erased with the account. History starts when it ships.
+* Active users need a new record, `user_activity_days` (owner decision): one row per account per India day it used RealChat, written the first time an account is seen each day (only for active accounts that have accepted the terms, so nothing is recorded before acceptance or while suspended or banned), kept 400 days, and erased with the account. History starts when it ships.
 * Charts use Recharts (owner choice), loaded only when Analytics is opened, with a data table under each chart.
 * The legal documents move to version 1.2 (effective 24 November 2026). The version is shared, so users accept both the User Agreement and the Privacy Policy again, although only the Privacy Policy's text changes: it now says the days of use are recorded (by India date), kept about 400 days, and erased on deletion, and that usage is analysed as totals only.
 
